@@ -22,6 +22,8 @@ export interface DingTalkOwnerActionSink {
 export interface DingTalkStreamSdkPort {
   subscribe(topic: "robot" | "card", handler: (message: DingTalkStreamEnvelope) => MaybePromise<void>): void;
   connect(): Promise<{ connected: boolean }>;
+  reconnect(): Promise<{ connected: boolean }>;
+  state(): "connected" | "reconnecting" | "stopped";
   disconnect(): void;
   acknowledge(transportMessageId: string): void;
 }

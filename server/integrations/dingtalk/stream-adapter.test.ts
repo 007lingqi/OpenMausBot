@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { InboundMessageOutcome } from "../../collaboration/inbound.ts";
 import type { OwnerActionOutcome } from "../../collaboration/actions.ts";
@@ -67,7 +67,9 @@ class FakeSdk implements DingTalkStreamSdkPort {
   readonly acknowledgements: string[] = [];
   connectCalls = 0;
   disconnectCalls = 0;
+  reconnectCalls = 0;
   connected = true;
+  acknowledgeError: Error | null = null;
 
   subscribe(topic: "robot" | "card", handler: (message: DingTalkStreamEnvelope) => MaybePromise<void>): void {
     if (this.handlers.has(topic)) throw new Error("duplicate_handler");
@@ -84,7 +86,18 @@ class FakeSdk implements DingTalkStreamSdkPort {
   }
 
   acknowledge(messageId: string): void {
+    if (this.acknowledgeError) throw this.acknowledgeError;
     this.acknowledgements.push(messageId);
+  }
+
+  async reconnect(): Promise<{ connected: boolean }> {
+    this.reconnectCalls += 1;
+    this.connected = true;
+    return { connected: true };
+  }
+
+  state(): "connected" | "reconnecting" | "stopped" {
+    return this.connected ? "connected" : "reconnecting";
   }
 
   async emit(topic: "robot" | "card", message: DingTalkStreamEnvelope): Promise<void> {
@@ -180,6 +193,29 @@ describe("DingTalk Stream adapter", () => {
     await failed.start();
     await failedSdk.emit("robot", envelope("bot-message-text.json", "transport-failed"));
     expect(failedSdk.acknowledgements).toEqual([]);
+  });
+
+  it("requests a Stream reconnect when a durable message cannot be acknowledged", async () => {
+    const sdk = new FakeSdk();
+    sdk.acknowledgeError = new Error("socket_not_open");
+    const logged: Array<{ event: string; code?: string }> = [];
+    const adapter = new DingTalkStreamAdapter(
+      sdk,
+      { ingest: (message) => inboundOutcome(message) },
+      { perform: () => ownerOutcome() },
+      new DingTalkSessionReplyRegistry(() => 1_700_000_000_000),
+      { write: (event) => logged.push(event) },
+    );
+    await adapter.start();
+
+    await sdk.emit("robot", envelope("bot-message-text.json", "transport-ack-failed"));
+
+    await vi.waitFor(() => expect(sdk.reconnectCalls).toBe(1));
+    expect(sdk.acknowledgements).toEqual([]);
+    expect(logged).toContainEqual(expect.objectContaining({
+      event: "dingtalk.message.not_acknowledged",
+      code: "dingtalk_transport_error",
+    }));
   });
 
   it("acknowledges and discards messages outside the configured conversation allowlist", async () => {

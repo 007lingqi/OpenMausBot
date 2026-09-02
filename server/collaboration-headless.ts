@@ -568,6 +568,7 @@ function productionRuntimeOptions(
           },
           stop: () => adapter.stop(),
           state: () => adapter.state(),
+          maintain: () => adapter.maintain(),
         };
       },
     },

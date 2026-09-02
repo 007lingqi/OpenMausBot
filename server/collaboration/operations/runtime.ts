@@ -59,6 +59,7 @@ export interface RuntimeStream {
   start(): Promise<"connected" | "reconnecting">;
   stop(): void | Promise<void>;
   state(): string;
+  maintain?(): Promise<string>;
 }
 
 export interface RuntimeDingTalkSinks {
@@ -661,10 +662,28 @@ export class CollaborationHeadlessRuntime {
     } catch {
       lowDisk = false;
     }
+    const currentStreamState = this.stream?.state();
+    const liveDingTalkState = currentStreamState
+      ? currentStreamState === "connected"
+        ? "connected"
+        : currentStreamState === "stopped"
+          ? "stopped"
+          : "reconnecting"
+      : this.dingTalkState;
+    const streamReason =
+      this.options.probeOnly !== true &&
+      this.options.dingTalk?.enabled === true &&
+      this.currentState === "running" &&
+      liveDingTalkState !== "connected"
+        ? liveDingTalkState === "stopped"
+          ? "dingtalk_connection_failed"
+          : "dingtalk_reconnecting"
+        : null;
     const reason =
       this.reason ??
       collaborationHealth?.degradation?.reason ??
-      (lowDisk || collaborationHealth?.executionGated === "low_disk" ? "low_disk" : null);
+      (lowDisk || collaborationHealth?.executionGated === "low_disk" ? "low_disk" : null) ??
+      streamReason;
     const ready =
       this.currentState === "running" &&
       !reason &&
@@ -685,7 +704,7 @@ export class CollaborationHeadlessRuntime {
           }
         : {}),
       instanceLease: this.lease ? "held" : "not_held",
-      dingtalk: { enabled: this.options.dingTalk?.enabled === true, state: this.dingTalkState },
+      dingtalk: { enabled: this.options.dingTalk?.enabled === true, state: liveDingTalkState },
       executionMode: this.executionEnabled()
         ? "execute"
         : this.platform === "darwin"
@@ -1107,6 +1126,14 @@ export class CollaborationHeadlessRuntime {
       this.currentState = "degraded";
       this.lease = null;
       return { dispatched: null, maintained: false };
+    }
+    if (this.stream?.maintain) {
+      try {
+        const streamState = await this.stream.maintain();
+        this.dingTalkState = streamState === "connected" ? "connected" : "reconnecting";
+      } catch {
+        this.dingTalkState = "reconnecting";
+      }
     }
     let dispatched: DispatchOutcome | null = null;
     const serviceReady = !this.reason && this.service!.health().ready;

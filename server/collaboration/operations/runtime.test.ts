@@ -398,6 +398,44 @@ describe("production-isomorphic collaboration runtime", () => {
     await runtime.stop();
   });
 
+  it("reports live Stream degradation and maintains reconnection from the runtime loop", async () => {
+    let streamState = "connected";
+    const maintain = vi.fn(async () => streamState);
+    const runtime = new CollaborationHeadlessRuntime({
+      dataDirectory: temporaryDirectory(),
+      platform: "linux",
+      dingTalk: {
+        enabled: true,
+        credentials: { load: () => ({ clientId: "id", clientSecret: "secret" }) },
+        createStream: () => ({
+          start: async () => "connected",
+          stop() {},
+          state: () => streamState,
+          maintain,
+        }),
+      },
+    });
+    await runtime.start();
+
+    streamState = "reconnecting";
+    expect(runtime.health()).toMatchObject({
+      status: "degraded",
+      ready: false,
+      reason: "dingtalk_reconnecting",
+      dingtalk: { state: "reconnecting" },
+    });
+    await runtime.drainOnce();
+    expect(maintain).toHaveBeenCalledTimes(1);
+
+    streamState = "connected";
+    expect(runtime.health()).toMatchObject({
+      status: "healthy",
+      ready: true,
+      dingtalk: { state: "connected" },
+    });
+    await runtime.stop();
+  });
+
   it("keeps restored ledgers in review and does not dispatch or maintain them", async () => {
     const dataDirectory = temporaryDirectory();
     const ledger = openCollaborationLedger(join(dataDirectory, "collaboration"));

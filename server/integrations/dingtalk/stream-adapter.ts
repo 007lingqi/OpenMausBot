@@ -46,7 +46,41 @@ export class DingTalkStreamAdapter {
   }
 
   state(): DingTalkStreamState {
+    if (this.currentState === "connected" || this.currentState === "reconnecting") {
+      return this.sdk.state();
+    }
     return this.currentState;
+  }
+
+  async maintain(): Promise<DingTalkStreamState> {
+    if (this.currentState === "stopped" || this.currentState === "stopping") return this.currentState;
+    if (this.sdk.state() === "connected") {
+      this.currentState = "connected";
+      return this.currentState;
+    }
+    this.requestReconnect();
+    return this.currentState;
+  }
+
+  private requestReconnect(): void {
+    if (this.currentState === "stopped" || this.currentState === "stopping") return;
+    this.currentState = "reconnecting";
+    void this.sdk.reconnect()
+      .then(({ connected }) => {
+        if (this.currentState === "reconnecting") {
+          this.currentState = connected ? "connected" : "reconnecting";
+        }
+      })
+      .catch(() => undefined);
+  }
+
+  private acknowledge(transportMessageId: string): void {
+    try {
+      this.sdk.acknowledge(transportMessageId);
+    } catch (error) {
+      this.requestReconnect();
+      throw error;
+    }
   }
 
   start(): Promise<DingTalkStreamState> {
@@ -92,7 +126,7 @@ export class DingTalkStreamAdapter {
         this.options.allowedConversationIds &&
         !this.options.allowedConversationIds.has(normalized.message.conversationId)
       ) {
-        this.sdk.acknowledge(envelope.headers.messageId);
+        this.acknowledge(envelope.headers.messageId);
         this.logger.write({
           event: "dingtalk.message.ignored",
           topic: "robot",
@@ -106,7 +140,7 @@ export class DingTalkStreamAdapter {
       const ownerAction = parseDingTalkOwnerTextAction(normalized.message);
       if (ownerAction) {
         const outcome = await this.ownerActions.perform(ownerAction);
-        this.sdk.acknowledge(envelope.headers.messageId);
+        this.acknowledge(envelope.headers.messageId);
         this.logger.write({
           event: "dingtalk.text_action.committed",
           topic: "robot",
@@ -121,7 +155,7 @@ export class DingTalkStreamAdapter {
       if (ownerCommand) {
         if (!this.ownerActions.performCommand) throw new Error("dingtalk_owner_text_commands_not_configured");
         const outcome = await this.ownerActions.performCommand(ownerCommand);
-        this.sdk.acknowledge(envelope.headers.messageId);
+        this.acknowledge(envelope.headers.messageId);
         this.logger.write({
           event: "dingtalk.text_command.committed",
           topic: "robot",
@@ -134,7 +168,7 @@ export class DingTalkStreamAdapter {
       }
       const outcome = await this.inbound.ingest(normalized.message);
       // Success/duplicate both mean the authoritative transaction is durable.
-      this.sdk.acknowledge(envelope.headers.messageId);
+      this.acknowledge(envelope.headers.messageId);
       this.logger.write({
         event: "dingtalk.message.committed",
         topic: "robot",
@@ -158,7 +192,7 @@ export class DingTalkStreamAdapter {
     try {
       const action = normalizeCardAction(envelope);
       const outcome = await this.ownerActions.perform(action);
-      this.sdk.acknowledge(envelope.headers.messageId);
+      this.acknowledge(envelope.headers.messageId);
       this.logger.write({
         event: "dingtalk.card_action.committed",
         topic: "card",
