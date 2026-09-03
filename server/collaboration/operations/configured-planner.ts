@@ -2,7 +2,9 @@ import type { PlanningPolicy } from "../graph.ts";
 import type { PlannerPort, PlannerProposal } from "../planner.ts";
 import type { WorkItemSnapshot } from "../snapshot.ts";
 
-const AGENT_ID = "codex-patch";
+const META_AGENT_ID = "meta-coordinator";
+const PATCH_AGENT_ID = "codex-patch";
+const VERIFIER_AGENT_ID = "codex-verifier";
 
 export interface ConfiguredPlannerOptions {
   repository: string;
@@ -45,7 +47,6 @@ export class ConfiguredSequentialPlanner implements PlannerPort {
       maxTokens: this.options.maxTokens,
     };
     const common = {
-      agentId: AGENT_ID,
       inputEvidence: evidence,
       readScope: ["**/*"],
       denyScope: [...this.options.denyScopes],
@@ -58,6 +59,7 @@ export class ConfiguredSequentialPlanner implements PlannerPort {
       nodes: [
         {
           ...common,
+          agentId: META_AGENT_ID,
           id: "analyze",
           type: "analyze",
           dependsOn: [],
@@ -70,6 +72,7 @@ export class ConfiguredSequentialPlanner implements PlannerPort {
         },
         {
           ...common,
+          agentId: PATCH_AGENT_ID,
           id: "modify",
           type: "modify",
           dependsOn: ["analyze"],
@@ -82,6 +85,7 @@ export class ConfiguredSequentialPlanner implements PlannerPort {
         },
         {
           ...common,
+          agentId: VERIFIER_AGENT_ID,
           id: "validate",
           type: "validate",
           dependsOn: ["modify"],
@@ -94,6 +98,7 @@ export class ConfiguredSequentialPlanner implements PlannerPort {
         },
         {
           ...common,
+          agentId: META_AGENT_ID,
           id: "report",
           type: "report",
           dependsOn: ["validate"],
@@ -111,10 +116,10 @@ export class ConfiguredSequentialPlanner implements PlannerPort {
 
 export function configuredPlanningPolicy(options: ConfiguredPlannerOptions): PlanningPolicy {
   const supportedAgents = {
-    analyze: [AGENT_ID],
-    modify: [AGENT_ID],
-    validate: [AGENT_ID],
-    report: [AGENT_ID],
+    analyze: [META_AGENT_ID],
+    modify: [PATCH_AGENT_ID],
+    validate: [VERIFIER_AGENT_ID],
+    report: [META_AGENT_ID],
   };
   return {
     allowedRepositories: [options.repository],

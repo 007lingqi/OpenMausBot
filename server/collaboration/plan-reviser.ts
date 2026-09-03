@@ -7,6 +7,7 @@ import { enqueueInboundCard } from "./outbox.ts";
 import { parsePlannerProposal, PlanValidationError, type PlannerPort, type WorkNodeType } from "./planner.ts";
 import { evaluateDefinitionReadiness, type ClarificationQuestion } from "./readiness.ts";
 import { assertLedgerArmed } from "./restore-guard.ts";
+import { buildDefinitionPatchFromText } from "./spec-builder.ts";
 import {
   appendWorkItemSnapshot,
   readLatestWorkItemSnapshot,
@@ -202,18 +203,11 @@ export class PlanningCoordinator {
     const latest = readLatestWorkItemSnapshot(this.database, workItemId);
     const normalized = text.trim();
     if (latest?.facts.includes(normalized)) return null;
-    const facts = [...(latest?.facts ?? []), normalized];
-    if (!latest && this.options.defaultDefinition) {
-      return this.reviseDefinition(workItemId, {
-        goal: normalized,
-        goalConfirmed: true,
-        repository: this.options.defaultDefinition.repository,
-        acceptanceConditions: this.options.defaultDefinition.acceptanceConditions,
-        blockingAmbiguities: [],
-        facts,
-      }, now);
-    }
-    return this.reviseDefinition(workItemId, { facts }, now);
+    return this.reviseDefinition(
+      workItemId,
+      buildDefinitionPatchFromText(normalized, latest, this.options.defaultDefinition),
+      now,
+    );
   }
 
   close(): void {

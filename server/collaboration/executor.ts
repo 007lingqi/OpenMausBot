@@ -791,10 +791,12 @@ export class CandidateExecutor {
       this.database
         .prepare(
           "UPDATE collaboration_work_nodes SET execution_status = CASE " +
-            "WHEN node_type IN ('modify', 'validate', 'report') THEN ? ELSE execution_status END " +
+            "WHEN node_type = 'modify' THEN ? " +
+            "WHEN node_type IN ('validate', 'report') AND ? = 'candidate_ready' THEN 'not_started' " +
+            "WHEN node_type IN ('validate', 'report') THEN ? ELSE execution_status END " +
             ", version = version + 1 WHERE work_item_id = ? AND plan_revision = ? AND active = 1",
         )
-        .run(executionStatus, workItemId, node.current_plan_revision);
+        .run(executionStatus, executionStatus, executionStatus, workItemId, node.current_plan_revision);
       appendExecutionAudit(this.database, {
         runId,
         action: "candidate.finalized",

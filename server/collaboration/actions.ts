@@ -4,6 +4,10 @@ import { DatabaseSync } from "node:sqlite";
 import type { DingTalkSender } from "../integrations/dingtalk/types.ts";
 import { appendControlAudit } from "./audit.ts";
 import {
+  CANDIDATE_VERIFICATION_MAX_ATTEMPTS,
+  candidateHasPassedMetaReview,
+} from "./candidate-verification.ts";
+import {
   capabilityForAction,
   evaluateOwnerPolicy,
   type WorkItemControlAction,
@@ -44,13 +48,15 @@ export interface PerformOwnerActionInput {
   now?: number;
 }
 
-export type DirectOwnerControlAction = Exclude<WorkItemControlAction, "accept" | "reject">;
+export type DirectOwnerControlAction = WorkItemControlAction;
 
 export interface PerformDirectOwnerActionInput {
   sourceEventId: string;
   action: DirectOwnerControlAction;
   workItemId: string;
   sender: DingTalkSender;
+  candidateSha?: string;
+  reason?: string;
   now?: number;
 }
 
@@ -86,6 +92,7 @@ interface WorkItemRow {
   version: number;
   control_state: WorkItemControlState;
   current_plan_revision: number | null;
+  definition_status: string;
 }
 
 interface CandidateRow {
@@ -127,6 +134,8 @@ function directCommandHash(input: PerformDirectOwnerActionInput): string {
     senderCorpId: input.sender.senderCorpId ?? null,
     senderStaffId: input.sender.senderStaffId ?? null,
     senderId: input.sender.senderId,
+    candidateSha: input.candidateSha ?? null,
+    reason: input.reason?.trim() || null,
   })).digest("hex");
 }
 
@@ -148,7 +157,7 @@ function rejectionReason(value: string | undefined): string {
 function readWorkItem(database: DatabaseSync, workItemId: string): WorkItemRow {
   const row = database
     .prepare(
-      "SELECT id, status, version, control_state, current_plan_revision " +
+      "SELECT id, status, version, control_state, current_plan_revision, definition_status " +
         "FROM collaboration_work_items WHERE id = ?",
     )
     .get(workItemId) as WorkItemRow | undefined;
@@ -175,7 +184,11 @@ function readCandidate(
 }
 
 function hasRequiredEvidence(database: DatabaseSync, workItem: WorkItemRow, candidate: CandidateRow): boolean {
-  if (candidate.state !== "target_tests_passed" || workItem.current_plan_revision === null) return false;
+  if (
+    candidate.state !== "target_tests_passed" || workItem.current_plan_revision === null ||
+    workItem.definition_status !== "ready_for_execution" ||
+    !candidateHasPassedMetaReview(database, candidate.run_id, candidate.result_sha)
+  ) return false;
   const validate = database
     .prepare(
       "SELECT commands_json FROM collaboration_work_nodes " +
@@ -207,6 +220,32 @@ function hasRetryableResult(database: DatabaseSync, workItem: WorkItemRow): bool
   return Boolean(row);
 }
 
+function candidateVerificationAttemptsExhausted(database: DatabaseSync, workItem: WorkItemRow): boolean {
+  if (workItem.current_plan_revision === null) return false;
+  const row = database.prepare(
+    "SELECT r.id AS run_id,c.result_sha,COALESCE((" +
+      "SELECT count(*) FROM collaboration_candidate_reviews review " +
+      "WHERE review.candidate_run_id = r.id AND review.stage = 'verifier' " +
+      "AND review.spec_hash = (SELECT latest_review.spec_hash FROM collaboration_candidate_reviews latest_review " +
+      "WHERE latest_review.candidate_run_id = r.id AND latest_review.stage = 'verifier' " +
+      "ORDER BY latest_review.attempt DESC LIMIT 1)),0) AS contract_attempts " +
+      "FROM collaboration_runs r JOIN collaboration_candidates c ON c.run_id = r.id " +
+      "WHERE r.work_item_id = ? AND r.plan_revision = ? AND r.status = 'succeeded' " +
+      "AND c.state = 'target_tests_passed' AND c.result_sha IS NOT NULL " +
+      "AND r.attempt = (SELECT MAX(latest.attempt) FROM collaboration_runs latest " +
+      "WHERE latest.work_item_id = r.work_item_id AND latest.plan_revision = r.plan_revision) " +
+      "ORDER BY r.finished_at DESC LIMIT 1",
+  ).get(workItem.id, workItem.current_plan_revision) as {
+    run_id: string;
+    result_sha: string;
+    contract_attempts: number;
+  } | undefined;
+  return Boolean(
+    row && row.contract_attempts >= CANDIDATE_VERIFICATION_MAX_ATTEMPTS &&
+    !candidateHasPassedMetaReview(database, row.run_id, row.result_sha)
+  );
+}
+
 function transitionProblem(
   database: DatabaseSync,
   action: WorkItemControlAction,
@@ -217,7 +256,12 @@ function transitionProblem(
   if (workItem.control_state === "cancelled") return "work_item_cancelled";
   if (action === "pause") return workItem.control_state === "active" ? null : "work_item_not_active";
   if (action === "resume") return workItem.control_state === "paused" ? null : "work_item_not_paused";
-  if (action === "retry") return hasRetryableResult(database, workItem) ? null : "work_item_not_retryable";
+  if (action === "retry") {
+    if (candidateVerificationAttemptsExhausted(database, workItem)) {
+      return "verification_attempt_limit_exhausted";
+    }
+    return hasRetryableResult(database, workItem) ? null : "work_item_not_retryable";
+  }
   if (action === "cancel") return null;
   if (!candidate) return "candidate_not_current";
   if (action === "accept" && !hasRequiredEvidence(database, workItem, candidate)) return "required_evidence_missing";
@@ -578,13 +622,23 @@ export class OwnerActionController {
         });
       } else {
         let workItem: WorkItemRow | null = null;
+        let candidate: CandidateRow | null = null;
+        let reason: string | null = null;
         try {
           workItem = readWorkItem(this.database, workItemId);
         } catch {
           decision = outcome({ allowed: false, action: input.action, workItemId, reason: "unknown_work_item" });
         }
         if (workItem) {
-          const problem = transitionProblem(this.database, input.action, workItem, null);
+          candidate = input.candidateSha ? readCandidate(this.database, workItem, input.candidateSha) : null;
+          let problem = transitionProblem(this.database, input.action, workItem, candidate);
+          if (!problem && input.action === "reject") {
+            try {
+              reason = rejectionReason(input.reason);
+            } catch (error) {
+              problem = error instanceof Error ? error.message : String(error);
+            }
+          }
           if (problem) {
             decision = outcome({
               allowed: false,
@@ -592,6 +646,7 @@ export class OwnerActionController {
               workItemId,
               workItemVersion: workItem.version,
               controlState: workItem.control_state,
+              candidateSha: input.candidateSha ?? null,
               reason: problem,
             });
           } else {
@@ -602,7 +657,7 @@ export class OwnerActionController {
               action: input.action,
               work_item_id: workItem.id,
               aggregate_version: workItem.version,
-              candidate_sha: null,
+              candidate_sha: input.candidateSha ?? null,
               owner_generation: policy.ownerGeneration!,
               expires_at: now + MIN_TOKEN_TTL_MS,
               consumed_at: null,
@@ -611,7 +666,7 @@ export class OwnerActionController {
             this.database.prepare(
               "INSERT INTO collaboration_action_tokens " +
                 "(id, token_version, token_hash, action, work_item_id, aggregate_version, candidate_sha, " +
-                "owner_generation, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)",
+                "owner_generation, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             ).run(
               tokenId,
               TOKEN_VERSION,
@@ -619,27 +674,40 @@ export class OwnerActionController {
               input.action,
               workItem.id,
               workItem.version,
+              syntheticToken.candidate_sha,
               policy.ownerGeneration,
               now,
               syntheticToken.expires_at,
             );
             const beforeHash = stateHash(workItem);
-            const applied = this.applyAction(syntheticToken, workItem, null, policy.principalId, null, now);
+            const applied = this.applyAction(syntheticToken, workItem, candidate, policy.principalId, reason, now);
             decision = outcome({
               allowed: true,
               action: input.action,
               workItemId,
               workItemVersion: applied.workItem.version,
               controlState: applied.workItem.control_state,
+              candidateSha: syntheticToken.candidate_sha,
               reason: "owner_action_applied",
+              revisedSnapshotRevision: applied.revisedSnapshotRevision,
               interruptRequestedRunIds: applied.interruptRequestedRunIds,
             });
             this.consumeToken(tokenId, policy.principalId, "allowed", decision, now);
             this.database.prepare(
               "INSERT INTO collaboration_control_events " +
                 "(id, work_item_id, work_item_version, action, principal_id, token_id, candidate_sha, reason, created_at) " +
-                "VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?)",
-            ).run(randomUUID(), workItem.id, applied.workItem.version, input.action, policy.principalId, tokenId, now);
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ).run(
+              randomUUID(),
+              workItem.id,
+              applied.workItem.version,
+              input.action,
+              policy.principalId,
+              tokenId,
+              syntheticToken.candidate_sha,
+              reason,
+              now,
+            );
             appendControlAudit(this.database, {
               actorPrincipalId: policy.principalId,
               workItemId,
@@ -647,7 +715,11 @@ export class OwnerActionController {
               action: `control.${input.action}`,
               outcome: "allow",
               policyRule: policy.ruleId,
-              resource: { tokenId, sourceEventIdHash: stateHash(sourceEventId) },
+              resource: {
+                tokenId,
+                sourceEventIdHash: stateHash(sourceEventId),
+                candidateSha: syntheticToken.candidate_sha,
+              },
               beforeHash,
               afterHash: stateHash(applied.workItem),
               now,

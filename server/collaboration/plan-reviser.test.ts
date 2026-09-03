@@ -86,6 +86,106 @@ const definition = (repository: string) => ({
 });
 
 describe("definition readiness and immutable plan revisions", () => {
+  it("keeps production defaults behind explicit goal confirmation and task-level acceptance", () => {
+    const directory = temporaryDirectory();
+    const repository = join(directory, "fixture-repo");
+    let plannerCalls = 0;
+    const service = startCollaborationService({
+      dataDirectory: directory,
+      planning: {
+        planner: { propose: () => (plannerCalls += 1, validProposal()) },
+        policy: { ...policy, allowedRepositories: [repository] },
+        defaultDefinition: {
+          repository,
+          acceptanceConditions: [{ description: "全局回归通过", observation: "运行全局测试" }],
+        },
+      },
+    });
+    const adapter = new FakeDingTalkAdapter((event) => service.ingestDingTalkMessage(event));
+    const created = adapter.receive(inboundMessage());
+    expect(created).toMatchObject({ accepted: true, association: "created" });
+    expect(plannerCalls).toBe(0);
+
+    const db = database(directory);
+    expect(
+      db
+        .prepare(
+          "SELECT goal, goal_confirmed, repository, acceptance_json, facts_json " +
+            "FROM collaboration_work_item_snapshots ORDER BY revision DESC LIMIT 1",
+        )
+        .get(),
+    ).toEqual({
+      goal: "修复登录反馈",
+      goal_confirmed: 0,
+      repository,
+      acceptance_json: "[]",
+      facts_json: JSON.stringify(["修复登录反馈"]),
+    });
+    expect(db.prepare("SELECT definition_status FROM collaboration_work_items").get()).toEqual({
+      definition_status: "waiting_clarification",
+    });
+    db.close();
+    service.close();
+  });
+
+  it("confirms the current goal and adds acceptance through a structured clarification reply", () => {
+    const directory = temporaryDirectory();
+    const repository = join(directory, "fixture-repo");
+    let plannerCalls = 0;
+    const service = startCollaborationService({
+      dataDirectory: directory,
+      planning: {
+        planner: { propose: () => (plannerCalls += 1, validProposal()) },
+        policy: { ...policy, allowedRepositories: [repository] },
+        defaultDefinition: {
+          repository,
+          acceptanceConditions: [{ description: "全局回归通过", observation: "不应成为任务验收" }],
+        },
+      },
+    });
+    const adapter = new FakeDingTalkAdapter((event) => service.ingestDingTalkMessage(event));
+    const first = adapter.receive(inboundMessage());
+    if (!first.workItemId) throw new Error("Expected a Work Item");
+    const clarification = [
+      first.workItemId,
+      "确认目标：是",
+      "验收：登录失败时显示失败原因 | 目标测试断言失败原因",
+      "验收：提示用户下一步操作 | 目标测试断言下一步操作",
+    ].join("\n");
+    const second = adapter.receive({
+      ...inboundMessage(),
+      sourceEventId: "event-plan-clarification",
+      transportMessageId: "transport-plan-clarification",
+      text: clarification,
+      receivedAt: 2_000,
+    });
+    expect(second).toMatchObject({ accepted: true, association: "associated", workItemId: first.workItemId });
+    expect(plannerCalls).toBe(1);
+
+    const db = database(directory);
+    expect(
+      db
+        .prepare(
+          "SELECT goal, goal_confirmed, acceptance_json, facts_json " +
+            "FROM collaboration_work_item_snapshots WHERE work_item_id = ? ORDER BY revision DESC LIMIT 1",
+        )
+        .get(first.workItemId),
+    ).toEqual({
+      goal: "修复登录反馈",
+      goal_confirmed: 1,
+      acceptance_json: JSON.stringify([
+        { description: "登录失败时显示失败原因", observation: "目标测试断言失败原因" },
+        { description: "提示用户下一步操作", observation: "目标测试断言下一步操作" },
+      ]),
+      facts_json: JSON.stringify(["修复登录反馈", clarification]),
+    });
+    expect(db.prepare("SELECT definition_status FROM collaboration_work_items WHERE id = ?").get(first.workItemId)).toEqual({
+      definition_status: "ready_for_execution",
+    });
+    db.close();
+    service.close();
+  });
+
   it("turns an accepted event into a durable clarification without a manual revision call", () => {
     const directory = temporaryDirectory();
     let plannerCalls = 0;

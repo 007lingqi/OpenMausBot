@@ -31,8 +31,8 @@ describe("headless collaboration service", () => {
       authority: "headless",
       database: {
         file: "collaboration.sqlite",
-        schemaVersion: 9,
-        appliedMigrations: 9,
+        schemaVersion: 10,
+        appliedMigrations: 10,
         journalMode: "wal",
         foreignKeys: true,
       },
@@ -67,7 +67,7 @@ describe("headless collaboration service", () => {
       status: "healthy",
       ready: true,
       authority: "headless",
-      database: { schemaVersion: 9, appliedMigrations: 9 },
+      database: { schemaVersion: 10, appliedMigrations: 10 },
       defaults: { executionMode: "observe", multiAgentConcurrency: false, previewDeployment: false },
     });
   });

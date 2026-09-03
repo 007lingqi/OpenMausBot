@@ -224,13 +224,34 @@ describe("production-isomorphic collaboration runtime", () => {
     service.close();
     const database = new DatabaseSync(join(dataDirectory, "collaboration", "collaboration.sqlite"));
     database.exec("PRAGMA foreign_keys = OFF");
-    database.prepare("UPDATE collaboration_work_items SET current_plan_revision = 1 WHERE id = ?").run(workItemId);
+    database.prepare(
+      "UPDATE collaboration_work_items SET current_plan_revision = 1, definition_status = 'ready_for_execution' WHERE id = ?",
+    ).run(workItemId);
+    database.prepare(
+      "INSERT INTO collaboration_work_item_snapshots " +
+        "(work_item_id,revision,source_work_item_version,goal,goal_confirmed,repository,facts_json,assumptions_json," +
+        "acceptance_json,blocking_ambiguities_json,created_at) " +
+        "VALUES (?,1,1,'existing candidate',1,?,'[]','[]',?,'[]',1)",
+    ).run(workItemId, repository, JSON.stringify([{ description: "pilot passes", observation: "pilot" }]));
+    database.prepare(
+      "INSERT INTO collaboration_plan_revisions " +
+        "(id,work_item_id,revision,snapshot_revision,status,summary,proposal_hash,created_at) " +
+        "VALUES ('plan-existing',?,1,1,'published','fixture','proposal-hash',1)",
+    ).run(workItemId);
     database.prepare(
       "INSERT INTO collaboration_work_nodes " +
         "(work_item_id,plan_revision,node_id,node_type,status,assigned_agent_id,objective,input_evidence_json," +
         "instructions,read_scope_json,write_scope_json,deny_scope_json,commands_json,expected_artifacts_json," +
         "completion_definition,risk,budget_json,created_at,execution_status,control_state) " +
-        "VALUES (?,1,'validate','validate','ready','developer','verify','[]','verify','[]','[]','[]'," +
+        "VALUES (?,1,'modify','modify','ready','codex-patch','modify','[]','modify','[]','[]','[]'," +
+        "'[]','[]','change complete','high','{}',1,'candidate_ready','active')",
+    ).run(workItemId);
+    database.prepare(
+      "INSERT INTO collaboration_work_nodes " +
+        "(work_item_id,plan_revision,node_id,node_type,status,assigned_agent_id,objective,input_evidence_json," +
+        "instructions,read_scope_json,write_scope_json,deny_scope_json,commands_json,expected_artifacts_json," +
+        "completion_definition,risk,budget_json,created_at,execution_status,control_state) " +
+        "VALUES (?,1,'validate','validate','ready','codex-verifier','verify','[]','verify','[]','[]','[]'," +
         "'[\"pilot\"]','[]','target passes','high','{}',1,'candidate_ready','active')",
     ).run(workItemId);
     database.prepare(
@@ -250,6 +271,16 @@ describe("production-isomorphic collaboration runtime", () => {
         "VALUES ('evidence-existing','run-existing','pilot','[\"node\",\"verify.mjs\"]','/worktree',0,10," +
         "'passed','', 'target_passed',2)",
     ).run();
+    database.prepare(
+      "INSERT INTO collaboration_candidate_reviews " +
+        "(id,candidate_run_id,stage,attempt,status,agent_id,snapshot_revision,spec_hash,candidate_sha,verdict_json,created_at) " +
+        "VALUES ('verifier-review-existing','run-existing','verifier',1,'passed','deterministic-verifier-v1',1,'spec-hash',?,?,2)",
+    ).run(resultSha, JSON.stringify({ contractSchemaVersion: 1 }));
+    database.prepare(
+      "INSERT INTO collaboration_candidate_reviews " +
+        "(id,candidate_run_id,stage,attempt,status,agent_id,snapshot_revision,spec_hash,candidate_sha,verdict_json,created_at) " +
+        "VALUES ('meta-review-existing','run-existing','meta',1,'passed','meta-acceptance-gate-v1',1,'spec-hash',?,?,2)",
+    ).run(resultSha, JSON.stringify({ contractSchemaVersion: 1, verifierAttempt: 1 }));
     expect(enqueuePendingOwnerDecisionCards(database, "template-1", 1_000)).toBe(1);
     expect(enqueuePendingOwnerDecisionCards(database, "template-1", 2_000)).toBe(0);
     const row = database.prepare(

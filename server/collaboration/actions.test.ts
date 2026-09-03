@@ -119,6 +119,11 @@ function seedExecution(
   );
   insertNode.run(workItemId, "validate", "validate", "pending", JSON.stringify(["target"]), "candidate_ready");
   insertNode.run(workItemId, "report", "report", "pending", "[]", "candidate_ready");
+  database.prepare(
+    "UPDATE collaboration_work_nodes SET assigned_agent_id = CASE node_type " +
+      "WHEN 'modify' THEN 'codex-patch' WHEN 'validate' THEN 'codex-verifier' ELSE 'meta-coordinator' END " +
+      "WHERE work_item_id = ? AND plan_revision = 1",
+  ).run(workItemId);
   database
     .prepare(
       "UPDATE collaboration_work_items SET definition_status = 'ready_for_execution', current_plan_revision = 1 WHERE id = ?",
@@ -151,6 +156,22 @@ function seedExecution(
             "VALUES (?, ?, 'target', '[\"test\"]', '/tmp/worktree', 0, 5, 'ok', '', 'target_passed', 1100)",
         )
         .run(randomUUID(), runId);
+    }
+    if (input.candidateState === "target_tests_passed") {
+      database
+        .prepare(
+          "INSERT INTO collaboration_candidate_reviews " +
+            "(id,candidate_run_id,stage,attempt,status,agent_id,snapshot_revision,spec_hash,candidate_sha,verdict_json,created_at) " +
+            "VALUES (?,?,'verifier',1,'passed','deterministic-verifier-v1',1,'spec-hash',?,?,1100)",
+        )
+        .run(randomUUID(), runId, CANDIDATE_SHA, JSON.stringify({ contractSchemaVersion: 1 }));
+      database
+        .prepare(
+          "INSERT INTO collaboration_candidate_reviews " +
+            "(id,candidate_run_id,stage,attempt,status,agent_id,snapshot_revision,spec_hash,candidate_sha,verdict_json,created_at) " +
+            "VALUES (?,?,'meta',1,'passed','meta-acceptance-gate-v1',1,'spec-hash',?,?,1100)",
+        )
+        .run(randomUUID(), runId, CANDIDATE_SHA, JSON.stringify({ contractSchemaVersion: 1, verifierAttempt: 1 }));
     }
   }
   database.close();
@@ -524,6 +545,89 @@ describe("Owner action tokens and Work Item controls", () => {
         "WHERE action = 'control.pause' AND outcome = 'deny' ORDER BY created_at DESC LIMIT 1",
     ).get()).toEqual({ outcome: "deny", error: "work_item_not_active" });
     database.close();
+    context.service.close();
+  });
+
+  it("atomically deduplicates direct candidate decisions without turning a denied replay into success", () => {
+    const deniedContext = harness();
+    seedExecution(deniedContext.databaseFile, deniedContext.workItemId, {
+      candidateState: "target_tests_passed",
+      evidence: true,
+    });
+    const denied = deniedContext.service.performDirectOwnerAction({
+      sourceEventId: "candidate-command-denied",
+      action: "accept",
+      workItemId: deniedContext.workItemId,
+      candidateSha: CANDIDATE_SHA,
+      sender: contributorSender(),
+      now: 2_000,
+    });
+    expect(denied).toMatchObject({ allowed: false, duplicate: false, reason: "not_active_owner" });
+    expect(deniedContext.service.performDirectOwnerAction({
+      sourceEventId: "candidate-command-denied",
+      action: "accept",
+      workItemId: deniedContext.workItemId,
+      candidateSha: CANDIDATE_SHA,
+      sender: contributorSender(),
+      now: 2_100,
+    })).toMatchObject({ allowed: false, duplicate: true, reason: "not_active_owner" });
+    expect(item(deniedContext.databaseFile, deniedContext.workItemId)).toMatchObject({ control_state: "active" });
+    deniedContext.service.close();
+
+    const acceptedContext = harness();
+    seedExecution(acceptedContext.databaseFile, acceptedContext.workItemId, {
+      candidateState: "target_tests_passed",
+      evidence: true,
+    });
+    const accepted = acceptedContext.service.performDirectOwnerAction({
+      sourceEventId: "candidate-command-accepted",
+      action: "accept",
+      workItemId: acceptedContext.workItemId,
+      candidateSha: CANDIDATE_SHA,
+      sender: ownerSender(),
+      now: 2_000,
+    });
+    expect(accepted).toMatchObject({
+      allowed: true,
+      duplicate: false,
+      action: "accept",
+      candidateSha: CANDIDATE_SHA,
+      controlState: "accepted",
+    });
+    expect(acceptedContext.service.performDirectOwnerAction({
+      sourceEventId: "candidate-command-accepted",
+      action: "accept",
+      workItemId: acceptedContext.workItemId,
+      candidateSha: CANDIDATE_SHA,
+      sender: ownerSender(),
+      now: 2_100,
+    })).toMatchObject({ allowed: true, duplicate: true, controlState: "accepted" });
+    acceptedContext.service.close();
+  });
+
+  it("does not let a previously unavailable candidate command act on a later candidate", () => {
+    const context = harness();
+    const first = context.service.performDirectOwnerAction({
+      sourceEventId: "candidate-command-before-ready",
+      action: "accept",
+      workItemId: context.workItemId,
+      sender: ownerSender(),
+      now: 2_000,
+    });
+    expect(first).toMatchObject({ allowed: false, duplicate: false, reason: "candidate_not_current" });
+
+    seedExecution(context.databaseFile, context.workItemId, {
+      candidateState: "target_tests_passed",
+      evidence: true,
+    });
+    expect(context.service.performDirectOwnerAction({
+      sourceEventId: "candidate-command-before-ready",
+      action: "accept",
+      workItemId: context.workItemId,
+      sender: ownerSender(),
+      now: 2_100,
+    })).toMatchObject({ allowed: false, duplicate: true, reason: "candidate_not_current" });
+    expect(item(context.databaseFile, context.workItemId)).toMatchObject({ control_state: "active" });
     context.service.close();
   });
 });

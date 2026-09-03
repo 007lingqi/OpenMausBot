@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
 import { appendControlAudit } from "./audit.ts";
+import { candidateHasPassedMetaReview } from "./candidate-verification.ts";
 import { renderPlanStatusCard } from "./message-renderer.ts";
 import { enqueueInboundCard } from "./outbox.ts";
 import { assertLedgerArmed } from "./restore-guard.ts";
@@ -116,14 +117,16 @@ function readTarget(database: DatabaseSync, workItemId: string, runId?: string):
       "FROM collaboration_work_items w " +
       "JOIN collaboration_runs r ON r.work_item_id = w.id AND r.plan_revision = w.current_plan_revision " +
       "JOIN collaboration_candidates c ON c.run_id = r.id " +
-      "WHERE w.id = ? AND w.control_state = 'active' AND w.accepted_candidate_sha IS NULL " +
+      "WHERE w.id = ? AND w.definition_status = 'ready_for_execution' " +
+      "AND w.control_state = 'active' AND w.accepted_candidate_sha IS NULL " +
       "AND r.status = 'succeeded' AND c.state = 'target_tests_passed' AND c.result_sha IS NOT NULL " +
       (runId ? "AND r.id = ? " : "") +
       "AND r.attempt = (SELECT MAX(latest.attempt) FROM collaboration_runs latest " +
       "WHERE latest.work_item_id = w.id AND latest.plan_revision = w.current_plan_revision) " +
       "ORDER BY c.created_at DESC LIMIT 1",
   ).get(...(runId ? [workItemId, runId] : [workItemId])) as CandidateRow | undefined;
-  return row ?? null;
+  if (!row || !candidateHasPassedMetaReview(database, row.run_id, row.result_sha)) return null;
+  return row;
 }
 
 export function readCandidateApprovalTarget(

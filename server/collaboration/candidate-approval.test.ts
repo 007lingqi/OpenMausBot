@@ -54,18 +54,31 @@ function seedCandidate(input: {
     { description: "普通修改完成后直接显示结果", observation: "消息不再要求重复确认" },
   ]));
   database.prepare(
+    "INSERT INTO collaboration_plan_revisions " +
+      "(id,work_item_id,revision,snapshot_revision,status,summary,proposal_hash,created_at) " +
+      "VALUES ('plan-1',?,1,1,'published','fixture','proposal-hash',100)",
+  ).run(workItemId);
+  database.prepare(
     "INSERT INTO collaboration_work_nodes " +
       "(work_item_id,plan_revision,node_id,node_type,status,assigned_agent_id,objective,input_evidence_json," +
       "instructions,read_scope_json,write_scope_json,deny_scope_json,commands_json,expected_artifacts_json," +
       "completion_definition,risk,budget_json,created_at,execution_status,control_state) " +
-      "VALUES (?,1,'validate','validate','ready','developer','verify','[]','verify','[]','[]','[]'," +
+      "VALUES (?,1,'modify','modify','ready','codex-patch','modify','[]','modify','[]','[]','[]'," +
+      "'[]','[]','change complete','low','{}',100,'candidate_ready','active')",
+  ).run(workItemId);
+  database.prepare(
+    "INSERT INTO collaboration_work_nodes " +
+      "(work_item_id,plan_revision,node_id,node_type,status,assigned_agent_id,objective,input_evidence_json," +
+      "instructions,read_scope_json,write_scope_json,deny_scope_json,commands_json,expected_artifacts_json," +
+      "completion_definition,risk,budget_json,created_at,execution_status,control_state) " +
+      "VALUES (?,1,'validate','validate','ready','codex-verifier','verify','[]','verify','[]','[]','[]'," +
       "'[\"target\"]','[]','target passes',?,'{}',100,'candidate_ready','active')",
   ).run(workItemId, input.risk ?? "low");
   database.prepare(
     "INSERT INTO collaboration_runs " +
       "(id,work_item_id,plan_revision,node_id,attempt,agent_id,thread_id,turn_id,status,repository_path," +
       "worktree_path,branch,base_sha,result_sha,started_at,finished_at) " +
-      "VALUES ('run-1',?,1,'validate',1,'developer','thread','turn','succeeded','/repo','/worktree'," +
+      "VALUES ('run-1',?,1,'modify',1,'codex-patch','thread','turn','succeeded','/repo','/worktree'," +
       "'candidate',?,?,100,200)",
   ).run(workItemId, "1".repeat(40), "2".repeat(40));
   database.prepare(
@@ -80,6 +93,16 @@ function seedCandidate(input: {
         "VALUES ('evidence-1','run-1','target','[]','/worktree',0,10,'passed','','target_passed',200)",
     ).run();
   }
+  database.prepare(
+    "INSERT INTO collaboration_candidate_reviews " +
+      "(id,candidate_run_id,stage,attempt,status,agent_id,snapshot_revision,spec_hash,candidate_sha,verdict_json,created_at) " +
+      "VALUES ('verifier-review-1','run-1','verifier',1,'passed','deterministic-verifier-v1',1,'spec-hash',?,?,200)",
+  ).run("2".repeat(40), JSON.stringify({ contractSchemaVersion: 1 }));
+  database.prepare(
+    "INSERT INTO collaboration_candidate_reviews " +
+      "(id,candidate_run_id,stage,attempt,status,agent_id,snapshot_revision,spec_hash,candidate_sha,verdict_json,created_at) " +
+      "VALUES ('meta-review-1','run-1','meta',1,'passed','meta-acceptance-gate-v1',1,'spec-hash',?,? ,200)",
+  ).run("2".repeat(40), JSON.stringify({ contractSchemaVersion: 1, verifierAttempt: 1 }));
   return { database, workItemId };
 }
 

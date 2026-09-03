@@ -30,6 +30,12 @@ describe("configured sequential planner", () => {
     ]);
     expect(proposal.nodes[1].writeScope).toEqual(["pilot-output.txt"]);
     expect(proposal.nodes[2].commands).toEqual(["pilot:target"]);
+    expect(proposal.nodes.map((node) => node.agentId)).toEqual([
+      "meta-coordinator",
+      "codex-patch",
+      "codex-verifier",
+      "meta-coordinator",
+    ]);
     expect(proposal.summary).toBe("output hello pilot");
     expect(proposal.summary).not.toContain(options.repository);
   });

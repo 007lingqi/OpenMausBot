@@ -16,6 +16,12 @@ import {
   readCandidateApprovalTarget,
 } from "../candidate-approval.ts";
 import {
+  CANDIDATE_VERIFICATION_MAX_ATTEMPTS,
+  candidateHasPassedMetaReview,
+  CandidateVerificationCoordinator,
+  type CandidateVerificationOutcome,
+} from "../candidate-verification.ts";
+import {
   type ContainmentBinding,
   type ContainmentPort,
   type ContainmentProof,
@@ -28,6 +34,7 @@ import { InstanceLeaseCoordinator, type InstanceLease } from "../leases.ts";
 import { OutboxDispatcher, type DispatchOutcome, type OutboxDispatcherOptions } from "../outbox-dispatcher.ts";
 import { enqueueInboundCard, type OutboxDeliveryPort } from "../outbox.ts";
 import { renderCommandStatusCard, renderPlanStatusCard } from "../message-renderer.ts";
+import { syncWorkItemMetaBundle } from "../meta-bundle.ts";
 import { evaluateOwnerPolicy } from "../policy.ts";
 import type { PlannerPort } from "../planner.ts";
 import type { AcceptanceCondition } from "../snapshot.ts";
@@ -54,6 +61,7 @@ export interface RuntimeLogEvent {
   code?: string;
   state?: CollaborationRuntimeState;
   recoveryCount?: number;
+  workItemId?: string;
 }
 
 export interface RuntimeLogger {
@@ -193,8 +201,32 @@ function commandSummary(command: DingTalkOwnerTextCommand["command"], allowed: b
     work_item_cancelled: "任务已经取消，不能执行该操作。",
     candidate_not_current: "当前没有可验收候选，请先查询任务状态。",
     reject_reason_required: "退回时请在任务编号后说明需要调整的内容。",
+    verification_attempt_limit_exhausted: "独立复核已连续三次未通过，系统已停止重复尝试。请补充或修正需求后再继续。",
   };
   return guidance[reason] ?? "当前状态不允许执行该操作，请先查询任务状态。";
+}
+
+function verificationFailureMessage(verification: CandidateVerificationOutcome): string {
+  const reasons = new Set(verification.reasons);
+  if (reasons.has("verification_attempt_limit_exhausted")) {
+    return "独立复核已连续三次未通过，系统已停止重复尝试。请补充或修正需求后再继续。";
+  }
+  if (reasons.has("blocking_ambiguity_present")) {
+    return "需求中仍有未确认的问题，本次修改不会标记完成。请先补充确认。";
+  }
+  if (reasons.has("acceptance_evidence_incomplete")) {
+    return "有验收要求还没有对应的自动测试证据，本次修改不会标记完成。";
+  }
+  if (reasons.has("executor_self_test_incomplete")) {
+    return "开发自测还不完整，本次修改不会标记完成。";
+  }
+  if (reasons.has("verifier_modified_candidate") || reasons.has("candidate_worktree_not_clean")) {
+    return "复核时发现候选内容不稳定，本次修改不会标记完成。";
+  }
+  if (verification.status === "needs_configuration") {
+    return "自动复核环境尚未配置完整，本次修改不会标记完成。";
+  }
+  return "独立复核未通过，本次修改不会标记完成。系统已保留结果和验证记录。";
 }
 
 export function enqueueExecutionOutcomeStatus(input: {
@@ -302,7 +334,8 @@ export function enqueuePendingOwnerDecisionCards(
       "FROM collaboration_work_items w " +
       "JOIN collaboration_runs r ON r.work_item_id = w.id AND r.plan_revision = w.current_plan_revision " +
       "JOIN collaboration_candidates c ON c.run_id = r.id " +
-      "WHERE w.control_state = 'active' AND w.accepted_candidate_sha IS NULL " +
+      "WHERE w.definition_status = 'ready_for_execution' " +
+      "AND w.control_state = 'active' AND w.accepted_candidate_sha IS NULL " +
       "AND r.status = 'succeeded' AND c.state = 'target_tests_passed' AND c.result_sha IS NOT NULL " +
       "AND r.attempt = (SELECT MAX(latest.attempt) FROM collaboration_runs latest " +
       "WHERE latest.work_item_id = w.id AND latest.plan_revision = w.current_plan_revision) " +
@@ -319,6 +352,7 @@ export function enqueuePendingOwnerDecisionCards(
   }>;
   let enqueued = 0;
   for (const row of rows) {
+    if (!candidateHasPassedMetaReview(database, row.run_id, row.result_sha)) continue;
     const completion = completeVerifiedLowRiskCandidate(database, {
       workItemId: row.work_item_id,
       runId: row.run_id,
@@ -406,7 +440,8 @@ export function enqueueOwnerDecisionForWorkItem(
       "FROM collaboration_work_items w " +
       "JOIN collaboration_runs r ON r.work_item_id = w.id AND r.plan_revision = w.current_plan_revision " +
       "JOIN collaboration_candidates c ON c.run_id = r.id " +
-      "WHERE w.id = ? AND w.control_state = 'active' AND w.accepted_candidate_sha IS NULL " +
+      "WHERE w.id = ? AND w.definition_status = 'ready_for_execution' " +
+      "AND w.control_state = 'active' AND w.accepted_candidate_sha IS NULL " +
       "AND r.status = 'succeeded' AND c.state = 'target_tests_passed' AND c.result_sha IS NOT NULL " +
       "AND r.attempt = (SELECT MAX(latest.attempt) FROM collaboration_runs latest " +
       "WHERE latest.work_item_id = w.id AND latest.plan_revision = w.current_plan_revision) " +
@@ -421,7 +456,7 @@ export function enqueueOwnerDecisionForWorkItem(
     result_sha: string;
     changed_paths_json: string;
   } | undefined;
-  if (!row) return false;
+  if (!row || !candidateHasPassedMetaReview(database, row.run_id, row.result_sha)) return false;
   if (database.prepare(
     "SELECT 1 FROM collaboration_outbox WHERE source = 'dingtalk' AND source_event_id = ?",
   ).get(sourceEventId)) return true;
@@ -567,6 +602,10 @@ export class CollaborationHeadlessRuntime {
   private stopPromise: Promise<CollaborationRuntimeHealth> | null = null;
   private readonly activeExecutions = new Set<Promise<unknown>>();
   private readonly scheduledWorkItems = new Set<string>();
+  private readonly activeRepositoryExecutions = new Set<string>();
+  private readonly queuedWorkItems = new Set<string>();
+  private readonly dirtyMetaBundles = new Set<string>();
+  private readonly metaBundleFailures = new Map<string, number>();
   private recoveryDecisions: RecoveryDecision[] = [];
 
   constructor(options: CollaborationHeadlessRuntimeOptions) {
@@ -663,8 +702,10 @@ export class CollaborationHeadlessRuntime {
       } else {
         await this.recoverAtStartup();
       }
+      if (!this.reason && this.executionEnabled()) await this.verifyPendingCandidatesAtStartup();
       if (!this.reason) {
         enqueuePendingOwnerDecisionCards(this.database, this.options.dingTalk?.cardTemplateId, this.clock.now());
+        this.syncAllMetaBundles();
       }
       if (!this.reason) await this.startDingTalk();
       if (!this.reason && !this.service.health().ready) {
@@ -763,6 +804,7 @@ export class CollaborationHeadlessRuntime {
   ingestDingTalkMessage(message: DingTalkInboundMessage): InboundMessageOutcome {
     this.assertAcceptingNewWork();
     const outcome = this.service!.ingestDingTalkMessage(message);
+    if (!outcome.duplicate && outcome.workItemId) this.syncMetaBundleBestEffort(outcome.workItemId, true);
     if (this.options.autoExecuteReady && !outcome.duplicate && outcome.workItemId) {
       this.scheduleReadyExecution(outcome.workItemId);
     }
@@ -771,22 +813,39 @@ export class CollaborationHeadlessRuntime {
 
   performDingTalkOwnerAction(action: DingTalkCardAction): OwnerActionOutcome {
     this.assertOperational();
-    const outcome = this.service!.performOwnerAction({
-      actionToken: action.actionToken,
-      sender: action.sender,
-      ...(action.reason ? { reason: action.reason } : {}),
-      now: action.receivedAt,
-    });
-    if (action.origin === "text") this.enqueueTextOwnerActionStatus(action, outcome);
-    return outcome;
+    let workItemId: string | null = null;
+    try {
+      const outcome = this.service!.performOwnerAction({
+        actionToken: action.actionToken,
+        sender: action.sender,
+        ...(action.reason ? { reason: action.reason } : {}),
+        now: action.receivedAt,
+      });
+      workItemId = outcome.workItemId;
+      if (action.origin === "text") this.enqueueTextOwnerActionStatus(action, outcome);
+      return outcome;
+    } finally {
+      if (workItemId) this.syncMetaBundleBestEffort(workItemId, true);
+    }
   }
 
   performDingTalkOwnerTextCommand(command: DingTalkOwnerTextCommand): DingTalkOwnerTextCommandOutcome {
+    try {
+      return this.performDingTalkOwnerTextCommandInternal(command);
+    } finally {
+      this.syncMetaBundleBestEffort(command.workItemId, true);
+    }
+  }
+
+  private performDingTalkOwnerTextCommandInternal(command: DingTalkOwnerTextCommand): DingTalkOwnerTextCommandOutcome {
     this.assertOperational();
     const database = this.database!;
     const existingResponse = database.prepare(
       "SELECT 1 FROM collaboration_outbox WHERE source = 'dingtalk' AND source_event_id = ?",
     ).get(command.transportEventId);
+    const previousTextCommand = database.prepare(
+      "SELECT outcome_json FROM collaboration_owner_text_commands WHERE source_event_id = ?",
+    ).get(command.transportEventId) as { outcome_json: string } | undefined;
 
     if (command.command === "status") {
       const row = database.prepare(
@@ -810,74 +869,32 @@ export class CollaborationHeadlessRuntime {
     }
 
     if (command.command === "approve_candidate" || command.command === "reject_candidate") {
-      if (existingResponse) {
-        return {
-          allowed: true,
-          duplicate: true,
-          command: command.command,
-          workItemId: command.workItemId,
-          reason: "owner_action_applied",
-        };
-      }
-      if (command.command === "reject_candidate" && !command.reason?.trim()) {
-        this.enqueueOwnerTextCommandStatus(command, false, "reject_reason_required");
-        return {
-          allowed: false,
-          duplicate: false,
-          command: command.command,
-          workItemId: command.workItemId,
-          reason: "reject_reason_required",
-        };
-      }
-      const policy = evaluateOwnerPolicy(database, {
-        sender: command.sender,
-        capability: command.command === "approve_candidate" ? "candidate.accept" : "candidate.reject",
-        now: command.receivedAt,
-      });
-      if (policy.decision !== "allow") {
-        this.enqueueOwnerTextCommandStatus(command, false, policy.reason);
-        return {
-          allowed: false,
-          duplicate: false,
-          command: command.command,
-          workItemId: command.workItemId,
-          reason: policy.reason,
-        };
-      }
       const target = readCandidateApprovalTarget(database, command.workItemId);
-      if (!target) {
-        this.enqueueOwnerTextCommandStatus(command, false, "candidate_not_current");
-        return {
-          allowed: false,
-          duplicate: false,
-          command: command.command,
-          workItemId: command.workItemId,
-          reason: "candidate_not_current",
-        };
-      }
+      const previousOutcome = previousTextCommand
+        ? parseJson<OwnerActionOutcome>(previousTextCommand.outcome_json)
+        : null;
+      const candidateSha = previousTextCommand
+        ? previousOutcome?.candidateSha ?? null
+        : target?.resultSha ?? null;
       const action = command.command === "approve_candidate" ? "accept" : "reject";
-      const issued = this.service!.issueOwnerAction({
+      const outcome = this.service!.performDirectOwnerAction({
+        sourceEventId: command.transportEventId,
         action,
-        workItemId: target.workItemId,
-        expectedVersion: target.workItemVersion,
-        candidateSha: target.resultSha,
+        workItemId: command.workItemId,
+        sender: command.sender,
+        ...(candidateSha ? { candidateSha } : {}),
+        ...(command.reason ? { reason: command.reason } : {}),
         now: command.receivedAt,
       });
       const ownerAction: DingTalkCardAction = {
         transportEventId: command.transportEventId,
         transportMessageId: command.transportMessageId,
-        actionToken: issued.token,
+        actionToken: "text-command",
         sender: command.sender,
         ...(command.reason ? { reason: command.reason } : {}),
         receivedAt: command.receivedAt,
         origin: "text",
       };
-      const outcome = this.service!.performOwnerAction({
-        actionToken: issued.token,
-        sender: command.sender,
-        ...(command.reason ? { reason: command.reason } : {}),
-        now: command.receivedAt,
-      });
       this.enqueueTextOwnerActionStatus(ownerAction, outcome);
       return {
         allowed: outcome.allowed,
@@ -940,7 +957,7 @@ export class CollaborationHeadlessRuntime {
       now: command.receivedAt,
     });
     this.enqueueOwnerTextCommandStatus(command, outcome.allowed, outcome.reason);
-    if (outcome.allowed && (action === "resume" || action === "retry")) {
+    if (!outcome.duplicate && outcome.allowed && (action === "resume" || action === "retry")) {
       this.scheduleReadyExecution(command.workItemId);
     }
     return {
@@ -1044,6 +1061,7 @@ export class CollaborationHeadlessRuntime {
       return await execution;
     } finally {
       this.activeExecutions.delete(execution);
+      this.syncMetaBundleBestEffort(workItemId, true);
     }
   }
 
@@ -1104,39 +1122,228 @@ export class CollaborationHeadlessRuntime {
     );
   }
 
+  private pendingCandidateVerification(workItemId: string): {
+    runId: string;
+    worktreePath: string;
+    planRevision: number;
+    candidateSha: string;
+    verifierContractAttempts: number;
+  } | null {
+    if (!this.database) return null;
+    const row = this.database.prepare(
+      "SELECT r.id AS run_id,r.worktree_path,r.plan_revision,c.result_sha," +
+        "COALESCE((SELECT count(*) FROM collaboration_candidate_reviews review " +
+        "WHERE review.candidate_run_id = r.id AND review.stage = 'verifier' " +
+        "AND review.spec_hash = (SELECT latest_review.spec_hash FROM collaboration_candidate_reviews latest_review " +
+        "WHERE latest_review.candidate_run_id = r.id AND latest_review.stage = 'verifier' " +
+        "ORDER BY latest_review.attempt DESC LIMIT 1)),0) AS verifier_contract_attempts " +
+        "FROM collaboration_work_items w " +
+        "JOIN collaboration_runs r ON r.work_item_id = w.id AND r.plan_revision = w.current_plan_revision " +
+        "JOIN collaboration_candidates c ON c.run_id = r.id " +
+        "WHERE w.id = ? AND w.definition_status = 'ready_for_execution' AND w.control_state = 'active' " +
+        "AND r.status = 'succeeded' AND c.state = 'target_tests_passed' AND c.result_sha IS NOT NULL " +
+        "AND r.attempt = (SELECT MAX(latest.attempt) FROM collaboration_runs latest " +
+        "WHERE latest.work_item_id = w.id AND latest.plan_revision = w.current_plan_revision) " +
+        "ORDER BY r.finished_at DESC LIMIT 1",
+    ).get(workItemId) as {
+      run_id: string;
+      worktree_path: string;
+      plan_revision: number;
+      result_sha: string;
+      verifier_contract_attempts: number;
+    } | undefined;
+    if (!row || candidateHasPassedMetaReview(this.database, row.run_id, row.result_sha)) return null;
+    return {
+      runId: row.run_id,
+      worktreePath: row.worktree_path,
+      planRevision: row.plan_revision,
+      candidateSha: row.result_sha,
+      verifierContractAttempts: row.verifier_contract_attempts,
+    };
+  }
+
   private scheduleReadyExecution(workItemId: string): void {
     if (!this.executionEnabled() || this.scheduledWorkItems.has(workItemId) || !this.database) return;
+    const pendingVerification = this.pendingCandidateVerification(workItemId);
+    if (pendingVerification) {
+      if (pendingVerification.verifierContractAttempts >= CANDIDATE_VERIFICATION_MAX_ATTEMPTS) return;
+      this.scheduledWorkItems.add(workItemId);
+      void this.verifyCandidate(pendingVerification.runId, pendingVerification.worktreePath)
+        .then((verification) => {
+          if (verification.passed) {
+            enqueuePendingOwnerDecisionCards(
+              this.database!,
+              this.options.dingTalk?.cardTemplateId,
+              this.clock.now(),
+            );
+          } else {
+            this.enqueueVerificationFailure({
+              runId: pendingVerification.runId,
+              workItemId,
+              planRevision: pendingVerification.planRevision,
+            }, verification);
+          }
+        })
+        .finally(() => {
+          this.syncMetaBundleBestEffort(workItemId, true);
+          this.scheduledWorkItems.delete(workItemId);
+        });
+      return;
+    }
     const ready = this.database
       .prepare(
-        "SELECT w.current_plan_revision AS plan_revision, COALESCE((" +
+        "SELECT w.current_plan_revision AS plan_revision,s.repository,COALESCE((" +
           "SELECT MAX(previous.attempt) FROM collaboration_runs previous WHERE previous.work_item_id = w.id" +
           "), 0) AS previous_attempt FROM collaboration_work_items w " +
+          "JOIN collaboration_plan_revisions p ON p.work_item_id = w.id AND p.revision = w.current_plan_revision " +
+          "JOIN collaboration_work_item_snapshots s ON s.work_item_id = w.id AND s.revision = p.snapshot_revision " +
           "WHERE w.id = ? AND w.definition_status = 'ready_for_execution' AND w.control_state = 'active' " +
           "AND w.current_plan_revision IS NOT NULL AND NOT EXISTS (" +
           "SELECT 1 FROM collaboration_runs r WHERE r.work_item_id = w.id " +
           "AND r.plan_revision = w.current_plan_revision AND r.status IN ('running', 'succeeded'))",
       )
-      .get(workItemId) as { plan_revision: number; previous_attempt: number } | undefined;
-    if (!ready) return;
+      .get(workItemId) as { plan_revision: number; repository: string; previous_attempt: number } | undefined;
+    if (!ready) {
+      this.queuedWorkItems.delete(workItemId);
+      return;
+    }
     const attempt = ready.previous_attempt + 1;
     if (attempt > this.options.execution!.limits.maxAttempts) return;
+    if (this.activeRepositoryExecutions.has(ready.repository)) {
+      this.queuedWorkItems.add(workItemId);
+      return;
+    }
+    this.queuedWorkItems.delete(workItemId);
+    this.activeRepositoryExecutions.add(ready.repository);
     this.scheduledWorkItems.add(workItemId);
     void this.executeCurrentPlan(workItemId, attempt)
-      .then((outcome) => this.enqueueExecutionStatus(outcome))
+      .then(async (outcome) => await this.enqueueExecutionStatus(outcome))
       .catch(() => this.enqueueExecutionFailure(workItemId, ready.plan_revision))
-      .finally(() => this.scheduledWorkItems.delete(workItemId));
+      .finally(() => {
+        this.scheduledWorkItems.delete(workItemId);
+        this.activeRepositoryExecutions.delete(ready.repository);
+        this.scheduleNextQueuedWorkItem(ready.repository);
+      });
   }
 
-  private enqueueExecutionStatus(outcome: CandidateExecutionOutcome): void {
+  private scheduleNextQueuedWorkItem(repository: string): void {
+    for (const workItemId of this.queuedWorkItems) {
+      const row = this.database?.prepare(
+        "SELECT s.repository FROM collaboration_work_items w " +
+          "JOIN collaboration_plan_revisions p ON p.work_item_id = w.id AND p.revision = w.current_plan_revision " +
+          "JOIN collaboration_work_item_snapshots s ON s.work_item_id = w.id AND s.revision = p.snapshot_revision " +
+          "WHERE w.id = ?",
+      ).get(workItemId) as { repository: string } | undefined;
+      if (!row || row.repository !== repository) continue;
+      this.queuedWorkItems.delete(workItemId);
+      this.scheduleReadyExecution(workItemId);
+      break;
+    }
+  }
+
+  private async enqueueExecutionStatus(outcome: CandidateExecutionOutcome): Promise<void> {
     if (!this.database) return;
-    enqueueExecutionOutcomeStatus({
-      database: this.database,
-      ...(this.options.dingTalk?.cardTemplateId
-        ? { cardTemplateId: this.options.dingTalk.cardTemplateId }
-        : {}),
-      outcome,
+    try {
+      if (outcome.report.state === "target_tests_passed" && outcome.resultSha) {
+        const verification = await this.verifyCandidate(outcome.runId, outcome.worktreePath);
+        if (!verification.passed) {
+          this.enqueueVerificationFailure(outcome, verification);
+          return;
+        }
+      }
+      enqueueExecutionOutcomeStatus({
+        database: this.database,
+        ...(this.options.dingTalk?.cardTemplateId
+          ? { cardTemplateId: this.options.dingTalk.cardTemplateId }
+          : {}),
+        outcome,
+        now: this.clock.now(),
+      });
+    } finally {
+      this.syncMetaBundleBestEffort(outcome.workItemId, true);
+    }
+  }
+
+  private verificationCoordinator(candidateRunId: string): CandidateVerificationCoordinator {
+    const row = this.database!.prepare(
+      "SELECT repository_path FROM collaboration_runs WHERE id = ?",
+    ).get(candidateRunId) as { repository_path: string } | undefined;
+    if (!row) throw new Error("candidate_verification_run_missing");
+    const configured = this.options.execution!.repositories[row.repository_path];
+    if (!configured) throw new Error("candidate_verification_repository_not_configured");
+    return new CandidateVerificationCoordinator(this.database!, {
+      commandRunner: this.options.commandRunner!,
+      containment: this.options.containment!,
+      commands: configured.targetCommands,
+      dataDirectory: this.options.dataDirectory,
+      maxAttempts: CANDIDATE_VERIFICATION_MAX_ATTEMPTS,
+    });
+  }
+
+  private async verifyCandidate(candidateRunId: string, worktreePath: string): Promise<CandidateVerificationOutcome> {
+    return await this.verificationCoordinator(candidateRunId).verify({
+      candidateRunId,
+      worktreePath,
+      instance: this.lease!,
       now: this.clock.now(),
     });
+  }
+
+  private async verifyPendingCandidatesAtStartup(): Promise<void> {
+    const rows = this.database!.prepare(
+      "SELECT r.id AS run_id,r.worktree_path,r.work_item_id,r.plan_revision " +
+        "FROM collaboration_runs r " +
+        "JOIN collaboration_work_items w ON w.id = r.work_item_id AND w.current_plan_revision = r.plan_revision " +
+        "JOIN collaboration_candidates c ON c.run_id = r.id " +
+        "WHERE w.definition_status = 'ready_for_execution' AND w.control_state = 'active' " +
+        "AND r.status = 'succeeded' " +
+        "AND c.state = 'target_tests_passed' AND c.result_sha IS NOT NULL " +
+        "AND r.attempt = (SELECT MAX(latest.attempt) FROM collaboration_runs latest " +
+        "WHERE latest.work_item_id = w.id AND latest.plan_revision = w.current_plan_revision) " +
+        "ORDER BY r.finished_at,r.id",
+    ).all() as unknown as Array<{ run_id: string; worktree_path: string; work_item_id: string; plan_revision: number }>;
+    for (const row of rows) {
+      const verification = await this.verifyCandidate(row.run_id, row.worktree_path);
+      if (!verification.passed) {
+        this.enqueueVerificationFailure({
+          runId: row.run_id,
+          workItemId: row.work_item_id,
+          planRevision: row.plan_revision,
+        }, verification);
+      }
+    }
+  }
+
+  private enqueueVerificationFailure(
+    outcome: Pick<CandidateExecutionOutcome, "runId" | "workItemId" | "planRevision">,
+    verification: CandidateVerificationOutcome,
+  ): void {
+    if (!this.database) return;
+    const sourceEventId = `verification:${outcome.runId}:attempt:${verification.verifierAttempt}`;
+    if (this.database.prepare(
+      "SELECT 1 FROM collaboration_outbox WHERE source = 'dingtalk' AND source_event_id = ?",
+    ).get(sourceEventId)) return;
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      enqueueInboundCard(this.database, {
+        sourceEventId,
+        aggregateType: "plan",
+        aggregateId: outcome.workItemId,
+        aggregateVersion: outcome.planRevision,
+        card: renderPlanStatusCard({
+          workItemId: outcome.workItemId,
+          planRevision: outcome.planRevision,
+          status: "execution_failed",
+          failures: [verificationFailureMessage(verification)],
+        }),
+        supersessionKey: `work-item:${outcome.workItemId}:execution-status`,
+        now: this.clock.now(),
+      });
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   private enqueueExecutionFailure(workItemId: string, planRevision: number): void {
@@ -1236,6 +1443,58 @@ export class CollaborationHeadlessRuntime {
     }
   }
 
+  private syncAllMetaBundles(): void {
+    if (!this.database || this.options.probeOnly) return;
+    const rows = this.database.prepare(
+      "SELECT id FROM collaboration_work_items ORDER BY updated_at,id",
+    ).all() as unknown as Array<{ id: string }>;
+    for (const row of rows) this.syncMetaBundleBestEffort(row.id, true);
+  }
+
+  private syncMetaBundleBestEffort(workItemId: string, stateChanged = false): void {
+    if (!this.database || this.options.probeOnly) return;
+    if (stateChanged) this.metaBundleFailures.delete(workItemId);
+    if (this.database.isTransaction) {
+      this.dirtyMetaBundles.add(workItemId);
+      return;
+    }
+    const exists = this.database.prepare(
+      "SELECT 1 FROM collaboration_work_items WHERE id = ?",
+    ).get(workItemId);
+    if (!exists) {
+      this.dirtyMetaBundles.delete(workItemId);
+      this.metaBundleFailures.delete(workItemId);
+      return;
+    }
+    const failures = this.metaBundleFailures.get(workItemId) ?? 0;
+    if (!stateChanged && failures >= 3) return;
+    try {
+      syncWorkItemMetaBundle(this.database, {
+        artifactRoot: join(this.options.dataDirectory, "collaboration", "meta-bundles"),
+        workItemId,
+      });
+      this.dirtyMetaBundles.delete(workItemId);
+      this.metaBundleFailures.delete(workItemId);
+    } catch {
+      const next = failures + 1;
+      this.dirtyMetaBundles.add(workItemId);
+      this.metaBundleFailures.set(workItemId, next);
+      if (next === 1 || next === 3) {
+        this.logger.write({
+          event: "collaboration.meta_bundle.sync_failed",
+          code: next >= 3 ? "retry_limit_reached" : "retry_scheduled",
+          workItemId,
+        });
+      }
+    }
+  }
+
+  private retryDirtyMetaBundles(): void {
+    for (const workItemId of [...this.dirtyMetaBundles].slice(0, 4)) {
+      this.syncMetaBundleBestEffort(workItemId);
+    }
+  }
+
   private async performDrain(): Promise<DrainOutcome> {
     if (this.currentState === "draining" || this.currentState === "stopped") {
       throw new Error("collaboration_runtime_not_accepting_work");
@@ -1265,6 +1524,7 @@ export class CollaborationHeadlessRuntime {
       await this.maintenance.run(this.lease, now);
       maintained = true;
     }
+    if (serviceReady) this.retryDirtyMetaBundles();
     return { dispatched, maintained };
   }
 

@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { OPENMAUSBOT_SOURCE_BASELINE } from "./config.ts";
 
-export const COLLABORATION_SCHEMA_VERSION = 9;
+export const COLLABORATION_SCHEMA_VERSION = 10;
 
 interface Migration {
   version: number;
@@ -703,6 +703,39 @@ const migrations: readonly Migration[] = [
         CREATE INDEX collaboration_outbox_pending ON collaboration_outbox(sent_at, created_at);
         CREATE INDEX collaboration_outbox_dispatchable
           ON collaboration_outbox(delivery_state, next_attempt_at, created_at);
+      `);
+    },
+  },
+  {
+    version: 10,
+    name: "add-independent-candidate-verification",
+    checksum: "v10:immutable-verifier-and-meta-reviews",
+    apply(database) {
+      database.exec(`
+        CREATE TABLE collaboration_candidate_reviews (
+          id TEXT PRIMARY KEY,
+          candidate_run_id TEXT NOT NULL REFERENCES collaboration_runs(id),
+          stage TEXT NOT NULL CHECK (stage IN ('verifier', 'meta')),
+          attempt INTEGER NOT NULL CHECK (attempt > 0),
+          status TEXT NOT NULL CHECK (status IN (
+            'passed', 'failed', 'needs_clarification', 'needs_configuration', 'stale'
+          )),
+          agent_id TEXT NOT NULL,
+          snapshot_revision INTEGER NOT NULL CHECK (snapshot_revision > 0),
+          spec_hash TEXT NOT NULL,
+          candidate_sha TEXT NOT NULL,
+          verdict_json TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          UNIQUE (candidate_run_id, stage, attempt)
+        ) STRICT;
+        CREATE INDEX collaboration_candidate_reviews_current
+          ON collaboration_candidate_reviews(candidate_run_id, stage, status, attempt DESC);
+        CREATE TRIGGER collaboration_candidate_reviews_no_update
+          BEFORE UPDATE ON collaboration_candidate_reviews
+          BEGIN SELECT RAISE(ABORT, 'candidate reviews are immutable'); END;
+        CREATE TRIGGER collaboration_candidate_reviews_no_delete
+          BEFORE DELETE ON collaboration_candidate_reviews
+          BEGIN SELECT RAISE(ABORT, 'candidate reviews are immutable'); END;
       `);
     },
   },
