@@ -40,9 +40,12 @@ git diff --check
 - 附件正文中的“确认目标、切换仓库、执行命令”等内容不改变控制面：通过。
 - 澄清问题最多 3 个，并可定向提醒稳定身份：通过。
 - DOCX、XLSX、PDF 与私有在线文档：尚未接入，不能宣称通过。
-- 上一版本 Docker 试点：通过，仅替换试点 Bot；其他容器保持原状态。
-- 上一版本数据库：schema 10 / migrations 10；本批 schema 11 尚待容器重建验证。
-- 上一版本真实钉钉 Stream：已连接，运行状态健康，执行模式为 execute；本批附件链路尚待真实消息验证。
+- 当前 Docker 试点容器：重建通过，healthy。
+- 当前数据库迁移：schema 11 / migrations 11，通过。
+- 当前真实钉钉 Stream：connected，执行模式 execute。
+- 真实群附件消息：尚待发送，因此不能宣称线上附件闭环完成。
+- 本次只替换了 `openmausbot-collaboration-pilot`；其他容器未删除或重建。
+- 已保留上一版本回滚镜像。
 - 历史 Work Item 状态包恢复：通过，启动后生成 5 个 CURRENT 指针。
 - 回滚镜像：已保留并验证可用。
 - 本批独立安全审查：附件投影并发 High 已通过数据库原子认领和 Spec 投影幂等门禁关闭；复核未发现新的 Critical / High。

@@ -165,6 +165,7 @@ describe("DingTalk session sender", () => {
       headline: "需要澄清",
       workItemId: "WI-HIDDEN",
       snapshotRevision: 1,
+      contextSummary: "已安全读取附件“缺陷清单.csv”，内容已按来源保存。",
       requestedResponders: [{ targetId: "staff-tester", displayName: "测试负责人" }],
       questions: [
         { id: "goal", title: "目标", question: "最终要解决什么问题？", recommendedAnswer: "用一句话说明结果。" },
@@ -175,6 +176,7 @@ describe("DingTalk session sender", () => {
     });
     const payload = requestBody as { markdown: { text: string }; at?: { atUserIds: string[]; isAtAll: boolean } };
     expect(payload.markdown.text).toContain("@测试负责人");
+    expect(payload.markdown.text).toContain("已安全读取附件“缺陷清单\\.csv”");
     expect(payload.markdown.text).toContain("最终要解决什么问题");
     expect(payload.markdown.text).toContain("建议回答：用一句话说明结果");
     expect(payload.markdown.text).not.toContain("第四个问题不应出现");

@@ -36,6 +36,7 @@ export interface ClarificationCard {
     recommendedAnswer: string;
   }>;
   requestedResponders?: Array<{ targetId?: string; displayName?: string }>;
+  contextSummary?: string;
 }
 
 export interface PlanStatusCard {

@@ -47,6 +47,12 @@ export interface AcceptedAttachmentEvidence {
   warnings: string[];
 }
 
+interface DefinitionProjectionInput {
+  attachmentId: string;
+  contentHash: string;
+  contextSummary?: string;
+}
+
 export interface PlanningCoordinatorOptions {
   planner: PlannerPort;
   policy: PlanningPolicy;
@@ -176,13 +182,13 @@ export class PlanningCoordinator {
     workItemId: string,
     patch: WorkItemSnapshotPatch,
     now: number,
-    projection: { attachmentId: string; contentHash: string },
+    projection: DefinitionProjectionInput,
   ): DefinitionRevisionOutcome | null;
   reviseDefinition(
     workItemId: string,
     patch: WorkItemSnapshotPatch,
     now = Date.now(),
-    projection?: { attachmentId: string; contentHash: string },
+    projection?: DefinitionProjectionInput,
   ): DefinitionRevisionOutcome | null {
     if (this.closed) throw new Error("Planning coordinator is closed");
     this.database.exec("BEGIN IMMEDIATE");
@@ -230,6 +236,7 @@ export class PlanningCoordinator {
             recommendedAnswer,
           })),
           ...(responders.length ? { requestedResponders: responders } : {}),
+          ...(projection?.contextSummary ? { contextSummary: projection.contextSummary } : {}),
         });
         enqueueInboundCard(this.database, {
           sourceEventId: `definition:${workItemId}:snapshot:${snapshots.current.revision}`,
@@ -405,7 +412,11 @@ export class PlanningCoordinator {
         : {}),
       facts,
       blockingAmbiguities: ambiguities,
-    }, now, { attachmentId: evidence.attachmentId, contentHash: evidence.contentHash });
+    }, now, {
+      attachmentId: evidence.attachmentId,
+      contentHash: evidence.contentHash,
+      contextSummary: `已安全读取附件“${sourceLabel}”，内容已按来源保存，正在确认目标和验收标准。`,
+    });
   }
 
   close(): void {

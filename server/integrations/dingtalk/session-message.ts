@@ -139,6 +139,9 @@ export function renderDingTalkSessionMessage(payload: unknown): Record<string, u
         ? `为了避免返工，建议由 ${responders.map((name) => `@${name}`).join("、")} 补充以下信息：`
         : "为了避免返工，请补充以下关键信息：",
     );
+    if (typeof card?.contextSummary === "string" && card.contextSummary.trim()) {
+      lines.splice(1, 0, text(card.contextSummary, "附件内容已读取。", 500), "");
+    }
     if (Array.isArray(card?.questions)) {
       for (const question of card.questions.slice(0, 3)) {
         const item = record(question);
