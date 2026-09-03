@@ -25,8 +25,8 @@ describe("collaboration ledger", () => {
     const ledger = openCollaborationLedger(directory);
     expect(ledger.databaseHealth()).toEqual({
       file: COLLABORATION_DATABASE_NAME,
-      schemaVersion: 10,
-      appliedMigrations: 10,
+      schemaVersion: 11,
+      appliedMigrations: 11,
       journalMode: "wal",
       foreignKeys: true,
     });
@@ -55,16 +55,43 @@ describe("collaboration ledger", () => {
     before.close();
 
     const second = openCollaborationLedger(directory);
-    expect(second.migrationState).toEqual({ schemaVersion: 10, appliedMigrations: 10 });
+    expect(second.migrationState).toEqual({ schemaVersion: 11, appliedMigrations: 11 });
     second.close();
 
     const after = new DatabaseSync(join(directory, COLLABORATION_DATABASE_NAME));
-    expect(after.prepare("SELECT count(*) AS count FROM collaboration_schema_migrations").get()).toEqual({ count: 10 });
+    expect(after.prepare("SELECT count(*) AS count FROM collaboration_schema_migrations").get()).toEqual({ count: 11 });
     expect(after.prepare("SELECT version, name, checksum, applied_at FROM collaboration_schema_migrations").all()).toEqual(
       initialMigration,
     );
     expect(after.prepare("SELECT * FROM collaboration_ledger_metadata").get()).toEqual(initialMetadata);
     after.close();
+  });
+
+  it("creates attachment provenance without replayable download capabilities", () => {
+    const directory = temporaryDirectory();
+    const ledger = openCollaborationLedger(directory);
+    ledger.close();
+    const database = new DatabaseSync(join(directory, COLLABORATION_DATABASE_NAME), { readOnly: true });
+    const columns = database.prepare("PRAGMA table_info(collaboration_attachments)").all() as Array<{ name: string }>;
+    expect(columns.map((column) => column.name)).toEqual(
+      expect.arrayContaining([
+        "external_event_id",
+        "ordinal",
+        "capability_ref",
+        "ingest_state",
+        "content_hash",
+        "managed_storage_key",
+        "error_code",
+        "evidence_projected_at",
+        "evidence_projection_owner",
+        "evidence_projection_expires_at",
+        "attempt_count",
+      ]),
+    );
+    expect(columns.map((column) => column.name)).not.toEqual(
+      expect.arrayContaining(["download_code", "robot_code", "download_url"]),
+    );
+    database.close();
   });
 
   it("refuses a migration record that does not match the running build", () => {

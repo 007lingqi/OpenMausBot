@@ -160,6 +160,70 @@ describe("DingTalk Stream adapter", () => {
     expect(sdk.acknowledgements).toEqual([recorded.transportMessageId]);
   });
 
+  it("persists and processes private attachment capabilities before acknowledging", async () => {
+    const sdk = new FakeSdk();
+    const order: string[] = [];
+    const captured: unknown[] = [];
+    const adapter = new DingTalkStreamAdapter(
+      sdk,
+      {
+        ingest(message) {
+          order.push("ledger");
+          expect(message.resources).toEqual([
+            expect.objectContaining({ kind: "file", name: "bugs.csv" }),
+          ]);
+          expect(JSON.stringify(message)).not.toContain("download-private");
+          return inboundOutcome(message);
+        },
+        ingestAttachments(capabilities) {
+          order.push("attachment");
+          captured.push(...capabilities);
+        },
+      },
+      { perform: () => ownerOutcome() },
+      new DingTalkSessionReplyRegistry(),
+    );
+    await adapter.start();
+    const payload = JSON.parse(envelope("bot-message-text.json", "attachment-transport").data) as Record<string, unknown>;
+    payload.msgtype = "file";
+    payload.robotCode = "robot-code";
+    payload.content = { fileName: "bugs.csv", downloadCode: "download-private", fileType: "text/csv" };
+    delete payload.text;
+    await sdk.emit("robot", {
+      ...envelope("bot-message-text.json", "attachment-transport"),
+      data: JSON.stringify(payload),
+    });
+
+    expect(order).toEqual(["ledger", "attachment"]);
+    expect(captured).toEqual([
+      expect.objectContaining({ downloadCode: "download-private", robotCode: "robot-code" }),
+    ]);
+    expect(sdk.acknowledgements).toEqual(["attachment-transport"]);
+  });
+
+  it("does not acknowledge an attachment when durable resource processing fails", async () => {
+    const sdk = new FakeSdk();
+    const adapter = new DingTalkStreamAdapter(
+      sdk,
+      {
+        ingest: (message) => inboundOutcome(message),
+        ingestAttachments() {
+          throw new Error("attachment_store_unavailable");
+        },
+      },
+      { perform: () => ownerOutcome() },
+      new DingTalkSessionReplyRegistry(),
+    );
+    await adapter.start();
+    const base = envelope("bot-message-text.json", "attachment-failed");
+    const payload = JSON.parse(base.data) as Record<string, unknown>;
+    payload.msgtype = "file";
+    payload.content = { fileName: "bugs.csv", downloadCode: "download-private" };
+    delete payload.text;
+    await sdk.emit("robot", { ...base, data: JSON.stringify(payload) });
+    expect(sdk.acknowledgements).toEqual([]);
+  });
+
   it("treats a durable duplicate as success but leaves failed persistence unacknowledged", async () => {
     const recorded = scenario<{ businessEventId: string; transportMessageIds: string[] }>("duplicate-delivery.json");
     const sdk = new FakeSdk();

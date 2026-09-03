@@ -6,6 +6,7 @@ export interface PrimaryStatusCard {
   workItemStatus: string;
   workItemVersion: number;
   association: "created" | "associated";
+  resourceCount?: number;
 }
 
 export interface AssociationChoiceCard {
@@ -13,6 +14,7 @@ export interface AssociationChoiceCard {
   headline: "请选择问题归属";
   acknowledgement: string;
   candidateWorkItemIds: string[];
+  candidateWorkItems: Array<{ id: string; title: string }>;
 }
 
 export interface InvalidReferenceCard {
@@ -33,6 +35,7 @@ export interface ClarificationCard {
     question: string;
     recommendedAnswer: string;
   }>;
+  requestedResponders?: Array<{ targetId?: string; displayName?: string }>;
 }
 
 export interface PlanStatusCard {
@@ -111,6 +114,7 @@ export function renderPrimaryStatusCard(input: {
   status: string;
   version: number;
   association: "created" | "associated";
+  resourceCount?: number;
 }): PrimaryStatusCard {
   return {
     type: "primary_status_card",
@@ -120,15 +124,24 @@ export function renderPrimaryStatusCard(input: {
     workItemStatus: input.status,
     workItemVersion: input.version,
     association: input.association,
+    ...(input.resourceCount ? { resourceCount: input.resourceCount } : {}),
   };
 }
 
-export function renderAssociationChoiceCard(candidateWorkItemIds: string[]): AssociationChoiceCard {
+export function renderAssociationChoiceCard(
+  candidateWorkItemIds: string[],
+  candidateWorkItems: Array<{ id: string; title: string }> = candidateWorkItemIds.map((id) => ({ id, title: id })),
+): AssociationChoiceCard {
+  const allowedIds = new Set(candidateWorkItemIds.slice(0, 3));
+  const titledCandidates = candidateWorkItems
+    .filter((candidate) => allowedIds.has(candidate.id))
+    .slice(0, 3);
   return {
     type: "association_choice_card",
     headline: "请选择问题归属",
-    acknowledgement: `${RECEIVED_ONLY} 当前引用可能属于多个问题，选择前不会修改任何 Work Item。`,
-    candidateWorkItemIds: [...candidateWorkItemIds],
+    acknowledgement: `${RECEIVED_ONLY} 我还不能确定这条消息属于哪个问题，请按标题选择；选择前不会修改现有问题。`,
+    candidateWorkItemIds: candidateWorkItemIds.slice(0, 3),
+    candidateWorkItems: titledCandidates,
   };
 }
 

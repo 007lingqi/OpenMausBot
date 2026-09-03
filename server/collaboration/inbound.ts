@@ -3,6 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 
 import type { DingTalkInboundMessage } from "../integrations/dingtalk/types.ts";
 import { decideMessageAssociation, resolveConversationAlias, type AssociationDecision } from "./association.ts";
+import { AttachmentStore } from "./attachment-store.ts";
 import { resolveDingTalkPrincipal, type PrincipalResolution } from "./identity.ts";
 import {
   renderAssociationChoiceCard,
@@ -64,6 +65,8 @@ function eventHash(message: DingTalkInboundMessage, text: string): string {
         senderStaffId: message.sender.senderStaffId ?? null,
         senderId: message.sender.senderId,
         text,
+        resources: message.resources ?? [],
+        mentions: message.mentions ?? [],
       }),
     )
     .digest("hex");
@@ -197,6 +200,7 @@ export class InboundMessageProcessor {
         status: "collecting",
         version: 1,
         association: "created",
+        resourceCount: input.message.resources?.length ?? 0,
       });
     } else if (input.association.kind === "associate") {
       state = "associated";
@@ -213,10 +217,14 @@ export class InboundMessageProcessor {
         status: item.status,
         version: item.version,
         association: "associated",
+        resourceCount: input.message.resources?.length ?? 0,
       });
     } else if (input.association.kind === "ambiguous") {
       state = "ambiguous";
-      card = renderAssociationChoiceCard(input.association.workItemIds);
+      card = renderAssociationChoiceCard(
+        input.association.workItemIds,
+        input.association.candidateWorkItems,
+      );
     } else {
       state = "invalid_reference";
       card = renderInvalidReferenceCard(input.association.reference);
@@ -234,12 +242,25 @@ export class InboundMessageProcessor {
         input.transportMessageId,
         input.conversationId,
         input.principal.id,
-        JSON.stringify({ text: input.text, replyToSourceEventId: input.message.replyToSourceEventId ?? null }),
+        JSON.stringify({
+          text: input.text,
+          replyToSourceEventId: input.message.replyToSourceEventId ?? null,
+          resources: input.message.resources ?? [],
+          mentions: input.message.mentions ?? [],
+        }),
         eventHash(input.message, input.text),
         state,
         selectedWorkItemId,
         input.now,
       );
+
+    if (input.message.resources?.length) {
+      new AttachmentStore(this.database).registerPublicResources({
+        externalEventId,
+        resources: input.message.resources,
+        now: input.now,
+      });
+    }
 
     if (selectedWorkItemId) {
       this.database

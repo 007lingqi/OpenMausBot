@@ -6,6 +6,7 @@ import type { DingTalkCredentialProvider, DingTalkCredentials } from "../../inte
 import type {
   DingTalkCardAction,
   DingTalkInboundMessage,
+  DingTalkPrivateResourceCapability,
   DingTalkOwnerTextCommand,
   DingTalkOwnerTextCommandOutcome,
 } from "../../integrations/dingtalk/types.ts";
@@ -37,6 +38,7 @@ import { renderCommandStatusCard, renderPlanStatusCard } from "../message-render
 import { syncWorkItemMetaBundle } from "../meta-bundle.ts";
 import { evaluateOwnerPolicy } from "../policy.ts";
 import type { PlannerPort } from "../planner.ts";
+import type { AcceptedAttachmentEvidence } from "../plan-reviser.ts";
 import type { AcceptanceCondition } from "../snapshot.ts";
 import { renderCandidateDiffPreview } from "../candidate-preview.ts";
 import type { AgentRunPort } from "../provider-runner.ts";
@@ -77,8 +79,19 @@ export interface RuntimeStream {
 
 export interface RuntimeDingTalkSinks {
   ingest(message: DingTalkInboundMessage): InboundMessageOutcome;
+  ingestAttachments?(capabilities: readonly DingTalkPrivateResourceCapability[]): Promise<void>;
   perform(action: DingTalkCardAction): OwnerActionOutcome;
   performCommand(command: DingTalkOwnerTextCommand): DingTalkOwnerTextCommandOutcome;
+}
+
+export interface RuntimeAttachmentIngestionPort {
+  process(capabilities: readonly DingTalkPrivateResourceCapability[], now: number): Promise<unknown>;
+}
+
+export interface RuntimeAttachmentIngestionContext {
+  databaseFile: string;
+  dataDirectory: string;
+  onEvidence(workItemId: string, evidence: AcceptedAttachmentEvidence): void;
 }
 
 export type RuntimeStreamFactory = (
@@ -126,6 +139,9 @@ export interface CollaborationHeadlessRuntimeOptions {
   outbox?: Partial<OutboxDispatcherOptions>;
   maintenance?: RuntimeMaintenancePort;
   maintenanceFactory?: (context: RuntimeMaintenanceContext) => RuntimeMaintenancePort;
+  attachmentIngestionFactory?: (
+    context: RuntimeAttachmentIngestionContext,
+  ) => RuntimeAttachmentIngestionPort;
   dingTalk?: {
     enabled: boolean;
     cardTemplateId?: string;
@@ -596,6 +612,7 @@ export class CollaborationHeadlessRuntime {
   private lease: InstanceLease | null = null;
   private dispatcher: OutboxDispatcher | null = null;
   private maintenance: RuntimeMaintenancePort | null = null;
+  private attachmentIngestion: RuntimeAttachmentIngestionPort | null = null;
   private stream: RuntimeStream | null = null;
   private dingTalkState: CollaborationRuntimeHealth["dingtalk"]["state"];
   private drainPromise: Promise<DrainOutcome> | null = null;
@@ -685,6 +702,17 @@ export class CollaborationHeadlessRuntime {
       this.maintenance = this.options.maintenanceFactory
         ? this.options.maintenanceFactory({ database: this.database, dataDirectory: this.options.dataDirectory })
         : (this.options.maintenance ?? null);
+      if (this.options.attachmentIngestionFactory) {
+        this.attachmentIngestion = this.options.attachmentIngestionFactory({
+          databaseFile: join(this.options.dataDirectory, "collaboration", "collaboration.sqlite"),
+          dataDirectory: this.options.dataDirectory,
+          onEvidence: (workItemId, evidence) => {
+            this.service!.observeAttachmentEvidence(workItemId, evidence, this.clock.now());
+            this.syncMetaBundleBestEffort(workItemId, true);
+            if (this.options.autoExecuteReady) this.scheduleReadyExecution(workItemId);
+          },
+        });
+      }
 
       if (this.options.outboxDelivery) {
         this.dispatcher = new OutboxDispatcher(this.database, this.options.outboxDelivery, {
@@ -1409,6 +1437,9 @@ export class CollaborationHeadlessRuntime {
         credentials,
         {
           ingest: (message) => this.ingestDingTalkMessage(message),
+          ...(this.attachmentIngestion
+            ? { ingestAttachments: (capabilities) => this.ingestDingTalkAttachments(capabilities) }
+            : {}),
           perform: (action) => this.performDingTalkOwnerAction(action),
           performCommand: (command) => this.performDingTalkOwnerTextCommand(command),
         },
@@ -1422,6 +1453,14 @@ export class CollaborationHeadlessRuntime {
       this.reason = "dingtalk_connection_failed";
       this.dingTalkState = "needs_configuration";
     }
+  }
+
+  private async ingestDingTalkAttachments(
+    capabilities: readonly DingTalkPrivateResourceCapability[],
+  ): Promise<void> {
+    this.assertOperational();
+    if (!this.attachmentIngestion) throw new Error("dingtalk_attachment_ingestion_not_configured");
+    await this.attachmentIngestion.process(capabilities, this.clock.now());
   }
 
   private async probeDingTalk(): Promise<void> {
@@ -1522,6 +1561,10 @@ export class CollaborationHeadlessRuntime {
     let maintained = false;
     if (serviceReady && this.maintenance) {
       await this.maintenance.run(this.lease, now);
+      maintained = true;
+    }
+    if (serviceReady && this.attachmentIngestion) {
+      await this.attachmentIngestion.process([], now);
       maintained = true;
     }
     if (serviceReady) this.retryDirtyMetaBundles();
@@ -1646,6 +1689,7 @@ export class CollaborationHeadlessRuntime {
     this.leaseCoordinator = null;
     this.dispatcher = null;
     this.maintenance = null;
+    this.attachmentIngestion = null;
     try {
       this.database?.close();
     } catch {}

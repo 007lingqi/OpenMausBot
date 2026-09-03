@@ -20,6 +20,7 @@ import {
 import type { CollaborationOutboxEntry } from "./outbox.ts";
 import {
   PlanningCoordinator,
+  type AcceptedAttachmentEvidence,
   type DefinitionRevisionOutcome,
   type PlanningCoordinatorOptions,
 } from "./plan-reviser.ts";
@@ -41,6 +42,11 @@ export interface CollaborationHealth {
 export interface CollaborationService {
   health(): CollaborationHealth;
   ingestDingTalkMessage(message: DingTalkInboundMessage): InboundMessageOutcome;
+  observeAttachmentEvidence(
+    workItemId: string,
+    evidence: AcceptedAttachmentEvidence,
+    now?: number,
+  ): DefinitionRevisionOutcome | null;
   reviseWorkItemDefinition(
     workItemId: string,
     patch: WorkItemSnapshotPatch,
@@ -157,6 +163,12 @@ export function startCollaborationService(options: CollaborationServiceOptions):
         if (isSqliteFailure(error)) serviceDegradedReason = "ledger_unwritable";
         throw error;
       }
+    },
+    observeAttachmentEvidence(workItemId, evidence, now) {
+      if (closed) throw new Error("Collaboration service is closed");
+      assertServiceArmed();
+      if (!planning) throw new Error("Collaboration planning is not configured");
+      return planning.observeAcceptedEvidence(workItemId, evidence, now);
     },
     reviseWorkItemDefinition(workItemId, patch, now) {
       if (closed) throw new Error("Collaboration service is closed");

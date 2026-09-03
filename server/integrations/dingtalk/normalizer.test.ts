@@ -31,20 +31,133 @@ describe("DingTalk strict normalizer", () => {
     expect(JSON.stringify(normalized.message)).not.toContain("test-only");
   });
 
-  it("extracts bounded rich text and reference metadata but not media codes", () => {
+  it("extracts bounded rich text, mentions, public resource refs, and private media capabilities", () => {
     const normalized = normalizeBotMessage(fixture("bot-message-rich-text-reference.json"));
     expect(normalized).toMatchObject({
-      contentKind: "rich_text",
-      message: { text: "复现于空 Token\n@机器人", replyToSourceEventId: "biz-message-1" },
+      contentKind: "mixed",
+      message: {
+        text: "复现于空 Token\n@机器人",
+        replyToSourceEventId: "biz-message-1",
+        mentions: [{ targetId: "ignored", displayName: "机器人" }],
+        resources: [{ capabilityRef: expect.stringMatching(/^[a-f0-9]{64}$/u), kind: "picture" }],
+      },
+      privateCapabilities: [{
+        capabilityRef: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        downloadCode: "ignored-media-code",
+      }],
     });
-    expect(normalized.message.text).not.toContain("ignored-media-code");
+    expect(normalized.message.resources?.[0]?.capabilityRef).toBe(normalized.privateCapabilities?.[0]?.capabilityRef);
+    expect(JSON.stringify(normalized.message)).not.toContain("ignored-media-code");
   });
 
-  it("replaces unsupported media with a fixed safe sentence", () => {
+  it("recognizes attachment messages without trusting supplied URLs or captions", () => {
     const normalized = normalizeBotMessage(fixture("bot-message-unsupported-media.json"));
-    expect(normalized).toMatchObject({ contentKind: "unsupported", message: { text: UNSUPPORTED_MESSAGE_TEXT } });
+    expect(normalized).toMatchObject({
+      contentKind: "attachment",
+      message: {
+        text: "收到 1 个附件，内容待安全读取。",
+        resources: [{ capabilityRef: expect.stringMatching(/^[a-f0-9]{64}$/u), kind: "file" }],
+      },
+      privateCapabilities: [{
+        capabilityRef: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        downloadCode: "do-not-forward",
+      }],
+    });
     expect(JSON.stringify(normalized.message)).not.toContain("attacker.invalid");
     expect(JSON.stringify(normalized.message)).not.toContain("ignore previous instructions");
+    expect(JSON.stringify(normalized)).not.toContain("attacker.invalid");
+  });
+
+  it.each(["file", "picture", "audio", "video"])("recognizes %s downloadCode", (msgtype) => {
+    const envelope = fixture("bot-message-unsupported-media.json", `transport-${msgtype}`);
+    const payload = JSON.parse(envelope.data) as Record<string, unknown>;
+    payload.msgId = `biz-${msgtype}`;
+    payload.msgtype = msgtype;
+    payload.robotCode = "robot-private";
+    payload.content = {
+      downloadCode: `code-${msgtype}`,
+      fileName: `${msgtype}.bin`,
+      mimeType: "application/octet-stream",
+      fileSize: "42",
+      downloadUrl: "https://attacker.invalid/never-use",
+    };
+    const normalized = normalizeBotMessage({ ...envelope, data: JSON.stringify(payload) });
+    expect(normalized).toMatchObject({
+      contentKind: "attachment",
+      message: {
+        resources: [{ kind: msgtype, name: `${msgtype}.bin`, mimeType: "application/octet-stream", sizeBytes: 42 }],
+      },
+      privateCapabilities: [{ downloadCode: `code-${msgtype}`, robotCode: "robot-private" }],
+    });
+    expect(JSON.stringify(normalized.message)).not.toMatch(/code-|robot-private|attacker\.invalid/u);
+  });
+
+  it("supports rich-text downloadCode aliases, keeps at most five resources, and keeps text mentions", () => {
+    const envelope = fixture("bot-message-rich-text-reference.json", "transport-rich-media");
+    const payload = JSON.parse(envelope.data) as Record<string, unknown>;
+    payload.robotCode = "robot-private";
+    payload.content = {
+      richText: [
+        { text: "请检查附件" },
+        { atName: "张三", atUserId: "staff-zhang" },
+        { downloadCode: "file-code", fileName: "bug.docx", fileType: "application/vnd.test", fileSize: 12 },
+        { pictureDownloadCode: "picture-1" },
+        { pictureDownloadCode: "picture-2" },
+        { pictureDownloadCode: "picture-3" },
+        { pictureDownloadCode: "picture-4" },
+        { pictureDownloadCode: "ignored-sixth" },
+      ],
+    };
+    const normalized = normalizeBotMessage({ ...envelope, data: JSON.stringify(payload) });
+    expect(normalized.contentKind).toBe("mixed");
+    expect(normalized.message.text).toBe("请检查附件\n@张三");
+    expect(normalized.message.mentions).toEqual([{ targetId: "staff-zhang", displayName: "张三" }]);
+    expect(normalized.message.resources).toHaveLength(5);
+    expect(normalized.message.resources?.map((resource) => resource.kind)).toEqual([
+      "file", "picture", "picture", "picture", "picture",
+    ]);
+    expect(normalized.privateCapabilities).toHaveLength(5);
+    expect(JSON.stringify(normalized)).not.toContain("ignored-sixth");
+  });
+
+  it("rejects invalid opaque download and robot codes", () => {
+    const envelope = fixture("bot-message-unsupported-media.json", "transport-invalid-code");
+    const payload = JSON.parse(envelope.data) as Record<string, unknown>;
+    payload.robotCode = "robot\ncode";
+    expect(() => normalizeBotMessage({ ...envelope, data: JSON.stringify(payload) }))
+      .toThrowError("dingtalk_robotCode_invalid");
+
+    delete payload.robotCode;
+    payload.content = { downloadCode: "x".repeat(2_049) };
+    expect(() => normalizeBotMessage({ ...envelope, data: JSON.stringify(payload) }))
+      .toThrowError("dingtalk_downloadCode_invalid");
+
+    payload.content = { downloadCode: " code-with-padding" };
+    expect(() => normalizeBotMessage({ ...envelope, data: JSON.stringify(payload) }))
+      .toThrowError("dingtalk_downloadCode_invalid");
+  });
+
+  it("keeps root text mentions without granting them authority", () => {
+    const envelope = fixture("bot-message-text.json", "transport-text-mentions");
+    const payload = JSON.parse(envelope.data) as Record<string, unknown>;
+    payload.atUsers = [
+      { atUserId: "staff-3", atName: "产品经理", isAdmin: true },
+      { staffId: "staff-4", name: "测试" },
+    ];
+    const normalized = normalizeBotMessage({ ...envelope, data: JSON.stringify(payload) });
+    expect(normalized.message.mentions).toEqual([
+      { targetId: "staff-3", displayName: "产品经理" },
+      { targetId: "staff-4", displayName: "测试" },
+    ]);
+    expect(JSON.stringify(normalized.message.mentions)).not.toContain("isAdmin");
+  });
+
+  it("still replaces unsupported messages without a safe resource capability", () => {
+    const envelope = fixture("bot-message-unsupported-media.json", "transport-no-code");
+    const payload = JSON.parse(envelope.data) as Record<string, unknown>;
+    payload.content = { downloadUrl: "https://attacker.invalid/no-code" };
+    const normalized = normalizeBotMessage({ ...envelope, data: JSON.stringify(payload) });
+    expect(normalized).toMatchObject({ contentKind: "unsupported", message: { text: UNSUPPORTED_MESSAGE_TEXT } });
   });
 
   it("uses Stream event identity for card dedupe and ignores embedded privilege claims", () => {

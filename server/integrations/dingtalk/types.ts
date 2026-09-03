@@ -5,6 +5,23 @@ export interface DingTalkSender {
   displayName: string;
 }
 
+export type DingTalkResourceKind = "file" | "picture" | "audio" | "video";
+
+/** Public, durable description of an inbound resource. No download authority belongs here. */
+export interface DingTalkResourceRef {
+  capabilityRef: string;
+  kind: DingTalkResourceKind;
+  name?: string;
+  mimeType?: string;
+  sizeBytes?: number;
+}
+
+/** A public mention extracted from message text. It never grants permissions. */
+export interface DingTalkMention {
+  targetId?: string;
+  displayName?: string;
+}
+
 /** Transport delivery and DingTalk business event identifiers are distinct. */
 export interface DingTalkInboundMessage {
   sourceEventId: string;
@@ -12,9 +29,18 @@ export interface DingTalkInboundMessage {
   conversationId: string;
   addressedToBot: boolean;
   text: string;
+  resources?: DingTalkResourceRef[];
+  mentions?: DingTalkMention[];
   replyToSourceEventId?: string;
   sender: DingTalkSender;
   receivedAt?: number;
+}
+
+/** Ephemeral authority needed by the downloader; callers must not persist or log it. */
+export interface DingTalkPrivateResourceCapability {
+  capabilityRef: string;
+  downloadCode: string;
+  robotCode?: string;
 }
 
 export interface DingTalkSessionReplyChannel {
@@ -76,6 +102,7 @@ export interface DingTalkStreamEnvelope {
 export interface NormalizedDingTalkMessage {
   message: DingTalkInboundMessage;
   replyChannel?: DingTalkSessionReplyChannel;
-  contentKind: "text" | "rich_text" | "unsupported";
+  privateCapabilities?: DingTalkPrivateResourceCapability[];
+  contentKind: "text" | "rich_text" | "attachment" | "mixed" | "unsupported";
   payloadHash: string;
 }

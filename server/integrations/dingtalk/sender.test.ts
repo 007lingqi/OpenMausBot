@@ -130,6 +130,58 @@ describe("DingTalk session sender", () => {
     expect(failureText).not.toContain("provider_sandbox_unavailable");
   });
 
+  it("asks users to choose by business title instead of exposing only Work Item IDs", async () => {
+    let requestBody: unknown;
+    const sender = new FetchDingTalkSessionSender(async (_url, init) => {
+      requestBody = JSON.parse(String(init?.body)) as unknown;
+      return new Response(JSON.stringify({ errcode: 0, errmsg: "ok" }), { status: 200 });
+    });
+    await sender.send("https://api.dingtalk.com/session-webhook", {
+      type: "association_choice_card",
+      headline: "请选择问题归属",
+      acknowledgement: "internal acknowledgement",
+      candidateWorkItemIds: ["WI-SECRET-1", "WI-SECRET-2"],
+      candidateWorkItems: [
+        { id: "WI-SECRET-1", title: "登录失败时给出清晰提示" },
+        { id: "WI-SECRET-2", title: "支付页按钮样式调整" },
+      ],
+    });
+    const markdown = (requestBody as { markdown: { text: string } }).markdown.text;
+    expect(markdown).toContain("登录失败时给出清晰提示");
+    expect(markdown).toContain("支付页按钮样式调整");
+    expect(markdown).toContain("这是新问题");
+    expect(markdown).not.toContain("WI\\-SECRET");
+    expect(markdown).not.toContain("internal acknowledgement");
+  });
+
+  it("renders at most three clarification questions and targets stable mentioned people", async () => {
+    let requestBody: unknown;
+    const sender = new FetchDingTalkSessionSender(async (_url, init) => {
+      requestBody = JSON.parse(String(init?.body)) as unknown;
+      return new Response(JSON.stringify({ errcode: 0, errmsg: "ok" }), { status: 200 });
+    });
+    await sender.send("https://api.dingtalk.com/session-webhook", {
+      type: "clarification_card",
+      headline: "需要澄清",
+      workItemId: "WI-HIDDEN",
+      snapshotRevision: 1,
+      requestedResponders: [{ targetId: "staff-tester", displayName: "测试负责人" }],
+      questions: [
+        { id: "goal", title: "目标", question: "最终要解决什么问题？", recommendedAnswer: "用一句话说明结果。" },
+        { id: "scope", title: "范围", question: "哪些页面受影响？", recommendedAnswer: "列出页面名称。" },
+        { id: "acceptance", title: "验收", question: "如何确认完成？", recommendedAnswer: "说明可观察结果。" },
+        { id: "ignored", title: "忽略", question: "第四个问题不应出现", recommendedAnswer: "忽略" },
+      ],
+    });
+    const payload = requestBody as { markdown: { text: string }; at?: { atUserIds: string[]; isAtAll: boolean } };
+    expect(payload.markdown.text).toContain("@测试负责人");
+    expect(payload.markdown.text).toContain("最终要解决什么问题");
+    expect(payload.markdown.text).toContain("建议回答：用一句话说明结果");
+    expect(payload.markdown.text).not.toContain("第四个问题不应出现");
+    expect(payload.markdown.text).not.toContain("WI\\-HIDDEN");
+    expect(payload.at).toEqual({ atUserIds: ["staff-tester"], isAtAll: false });
+  });
+
   it("renders a documented Markdown webhook payload and requires business success", async () => {
     let requestBody: unknown;
     const sender = new FetchDingTalkSessionSender(async (_url, init) => {
@@ -146,6 +198,24 @@ describe("DingTalk session sender", () => {
     expect(markdown.text).not.toContain("collecting");
     expect(markdown.text).not.toContain("Work Item");
     expect(markdown.text).not.toContain("协作账本");
+  });
+
+  it("reports attachment intake without claiming that the content was already read", async () => {
+    let requestBody: unknown;
+    const sender = new FetchDingTalkSessionSender(async (_url, init) => {
+      requestBody = JSON.parse(String(init?.body)) as unknown;
+      return new Response(JSON.stringify({ errcode: 0, errmsg: "ok" }), { status: 200 });
+    });
+    await sender.send("https://api.dingtalk.com/session-webhook", {
+      ...primaryStatus,
+      resourceCount: 2,
+    });
+    const markdown = (requestBody as { markdown: { text: string } }).markdown.text;
+    expect(markdown).toContain("已收到你的需求和 2 个附件");
+    expect(markdown).toContain("当前进度：读取附件");
+    expect(markdown).toContain("读取完成前不会开始修改");
+    expect(markdown).not.toContain("已读取");
+    expect(markdown).not.toContain("修改完成");
   });
 
   it("does not treat an HTTP 200 DingTalk business error as sent", async () => {

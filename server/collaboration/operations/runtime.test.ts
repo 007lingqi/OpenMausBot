@@ -21,6 +21,7 @@ import {
   enqueueOwnerDecisionForWorkItem,
   enqueuePendingOwnerDecisionCards,
   type RuntimeStream,
+  type RuntimeDingTalkSinks,
 } from "./runtime.ts";
 
 const scratch: string[] = [];
@@ -502,6 +503,37 @@ describe("production-isomorphic collaboration runtime", () => {
       ready: true,
       dingtalk: { state: "connected" },
     });
+    await runtime.stop();
+  });
+
+  it("routes attachment capabilities to durable ingestion and resumes pending work during maintenance", async () => {
+    let sinks: RuntimeDingTalkSinks | undefined;
+    const process = vi.fn(async () => undefined);
+    const runtime = new CollaborationHeadlessRuntime({
+      dataDirectory: temporaryDirectory(),
+      platform: "linux",
+      attachmentIngestionFactory: () => ({ process }),
+      dingTalk: {
+        enabled: true,
+        credentials: { load: () => ({ clientId: "id", clientSecret: "secret" }) },
+        createStream: (_credentials, captured) => {
+          sinks = captured;
+          return {
+            start: async () => "connected",
+            stop() {},
+            state: () => "connected",
+          };
+        },
+      },
+    });
+    await runtime.start();
+    if (!sinks?.ingestAttachments) throw new Error("Expected attachment sink");
+    await sinks.ingestAttachments([{ capabilityRef: "a".repeat(64), downloadCode: "private-code" }]);
+    expect(process).toHaveBeenNthCalledWith(1, [
+      { capabilityRef: "a".repeat(64), downloadCode: "private-code" },
+    ], expect.any(Number));
+    await runtime.drainOnce();
+    expect(process).toHaveBeenNthCalledWith(2, [], expect.any(Number));
     await runtime.stop();
   });
 

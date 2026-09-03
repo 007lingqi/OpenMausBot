@@ -55,6 +55,9 @@ import {
 import { FetchDingTalkInteractiveCardSender } from "./integrations/dingtalk/interactive-card-sender.ts";
 import { FetchDingTalkSessionSender } from "./integrations/dingtalk/sender.ts";
 import { DingTalkStreamAdapter } from "./integrations/dingtalk/stream-adapter.ts";
+import { DingTalkAttachmentCapabilityVault } from "./integrations/dingtalk/attachment-capability-vault.ts";
+import { FetchDingTalkAttachmentDownloader } from "./integrations/dingtalk/attachment-downloader.ts";
+import { AttachmentIngestionCoordinator } from "./collaboration/attachment-ingestion.ts";
 import { RealDingTalkStreamSdk } from "./integrations/dingtalk/stream-sdk.ts";
 import { validateTargetCommandSpec, type TargetCommandSpec } from "./collaboration/quality-gate.ts";
 import type { AcceptanceCondition } from "./collaboration/snapshot.ts";
@@ -496,6 +499,7 @@ function productionRuntimeOptions(
   const allowedConversationIds = dingTalkEnabled
     ? readDingTalkAllowedConversationIds(environment)
     : undefined;
+  const credentialProvider = new SecureDingTalkCredentialFileProvider(environment);
   return {
     dataDirectory: options.dataDirectory,
     shutdownTimeoutMs,
@@ -527,19 +531,59 @@ function productionRuntimeOptions(
         },
       );
     },
+    ...(dingTalkEnabled
+      ? {
+          attachmentIngestionFactory: ({ databaseFile, dataDirectory, onEvidence }) => {
+            const credentials = credentialProvider.load();
+            if (!credentials) throw new Error("dingtalk_credentials_missing");
+            const vault = new DingTalkAttachmentCapabilityVault(
+              join(dataDirectory, "collaboration", "attachment-capabilities"),
+              credentials.clientSecret,
+            );
+            return new AttachmentIngestionCoordinator({
+              databaseFile,
+              dataDirectory,
+              vault,
+              downloader: new FetchDingTalkAttachmentDownloader(credentialProvider),
+              onEvidence: (notification) => onEvidence(notification.workItemId, {
+                attachmentId: notification.source.attachmentId,
+                sourceEventId: notification.source.sourceEventId,
+                contentHash: notification.source.contentHash,
+                displayName: notification.source.displayName ?? "附件",
+                format: notification.format,
+                chunks: notification.chunks.map((chunk) => ({
+                  ordinal: chunk.ordinal,
+                  lineStart: chunk.lineStart,
+                  lineEnd: chunk.lineEnd,
+                  text: chunk.text,
+                  textHash: chunk.textHash,
+                  untrusted: true,
+                })),
+                truncated: notification.chunks.some((chunk) => chunk.truncated),
+                warnings: [...new Set(notification.chunks.flatMap((chunk) => chunk.warnings))],
+              }),
+            });
+          },
+        }
+      : {}),
     dingTalk: {
       enabled: dingTalkEnabled,
       ...(environment.OMB_DINGTALK_CARD_TEMPLATE_ID?.trim()
         ? { cardTemplateId: environment.OMB_DINGTALK_CARD_TEMPLATE_ID.trim() }
         : {}),
-      credentials: new SecureDingTalkCredentialFileProvider(environment),
+      credentials: credentialProvider,
       createStream(credentials, sinks, logger): RuntimeStream {
         const sdk = new RealDingTalkStreamSdk(credentials, () => {
           logger.write({ event: "collaboration.dingtalk.handler_failed", code: "dingtalk_handler_failed" });
         });
         const adapter = new DingTalkStreamAdapter(
           sdk,
-          { ingest: (message) => sinks.ingest(message) },
+          {
+            ingest: (message) => sinks.ingest(message),
+            ...(sinks.ingestAttachments
+              ? { ingestAttachments: (capabilities) => sinks.ingestAttachments!(capabilities) }
+              : {}),
+          },
           {
             perform: (action) => sinks.perform(action),
             performCommand: (command) => sinks.performCommand(command),

@@ -2,6 +2,10 @@ import { createHash } from "node:crypto";
 
 import type {
   DingTalkCardAction,
+  DingTalkMention,
+  DingTalkPrivateResourceCapability,
+  DingTalkResourceKind,
+  DingTalkResourceRef,
   DingTalkStreamEnvelope,
   NormalizedDingTalkMessage,
 } from "./types.ts";
@@ -9,6 +13,9 @@ import type {
 const MAX_PAYLOAD_BYTES = 256_000;
 const MAX_TEXT_CHARACTERS = 8_000;
 const MAX_REASON_CHARACTERS = 2_000;
+const MAX_RESOURCES = 5;
+const MAX_MENTIONS = 50;
+const MAX_DOWNLOAD_CODE_CHARACTERS = 2_048;
 export const UNSUPPORTED_MESSAGE_TEXT = "收到不支持的消息类型，内容未读取。";
 
 type JsonObject = Record<string, unknown>;
@@ -60,6 +67,16 @@ function optionalOpaque(record: JsonObject, key: string, maximum = 512): string 
   return value;
 }
 
+function optionalPrivateOpaque(record: JsonObject, key: string, maximum: number): string | undefined {
+  const raw = record[key];
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "string" || !raw || raw !== raw.trim()) throw new Error(`dingtalk_${key}_invalid`);
+  if (raw.length > maximum || /\s|[\u0000-\u001f\u007f]/u.test(raw)) {
+    throw new Error(`dingtalk_${key}_invalid`);
+  }
+  return raw;
+}
+
 function envelopeIdentifier(value: string | undefined, key: string): string {
   const normalized = value?.trim() ?? "";
   if (!normalized) throw new Error(`dingtalk_${key}_missing`);
@@ -89,12 +106,108 @@ function payloadHash(data: string): string {
   return createHash("sha256").update(data).digest("hex");
 }
 
-function richText(record: JsonObject): string | undefined {
+interface ExtractedContent {
+  text?: string;
+  mentions: DingTalkMention[];
+  resources: DingTalkResourceRef[];
+  privateCapabilities: DingTalkPrivateResourceCapability[];
+}
+
+function publicMention(record: JsonObject): DingTalkMention | undefined {
+  const targetId =
+    optionalOpaque(record, "atUserId", 256) ??
+    optionalOpaque(record, "staffId", 256) ??
+    optionalOpaque(record, "dingtalkId", 256) ??
+    optionalOpaque(record, "userId", 256);
+  const displayName =
+    optionalString(record, "atName", 128) ??
+    optionalString(record, "name", 128) ??
+    optionalString(record, "displayName", 128);
+  if (!targetId && !displayName) return undefined;
+  return {
+    ...(targetId ? { targetId } : {}),
+    ...(displayName ? { displayName } : {}),
+  };
+}
+
+function rootMentions(record: JsonObject): DingTalkMention[] {
+  const raw = Array.isArray(record.atUsers) ? record.atUsers : [];
+  const mentions: DingTalkMention[] = [];
+  for (const item of raw.slice(0, MAX_MENTIONS)) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const mention = publicMention(item as JsonObject);
+    if (mention) mentions.push(mention);
+  }
+  return mentions;
+}
+
+function sizeBytes(record: JsonObject): number | undefined {
+  const size = numeric(record.sizeBytes ?? record.fileSize ?? record.size);
+  if (size === undefined || !Number.isSafeInteger(size) || size < 0) return undefined;
+  return size;
+}
+
+function mimeType(record: JsonObject): string | undefined {
+  for (const key of ["mimeType", "contentType", "fileType"]) {
+    const value = optionalString(record, key, 255);
+    if (value && /^[\w!#$&^.+-]+\/[\w!#$&^.+-]+$/u.test(value)) return value.toLowerCase();
+  }
+  return undefined;
+}
+
+function resourceName(record: JsonObject): string | undefined {
+  return optionalString(record, "fileName", 512) ?? optionalString(record, "name", 512);
+}
+
+function capabilityRef(
+  sourceEventId: string,
+  ordinal: number,
+  kind: DingTalkResourceKind,
+): string {
+  return createHash("sha256")
+    .update(`${sourceEventId}\0${ordinal}\0${kind}`)
+    .digest("hex");
+}
+
+function addResource(
+  extracted: ExtractedContent,
+  sourceEventId: string,
+  kind: DingTalkResourceKind,
+  downloadCode: string,
+  robotCode: string | undefined,
+  metadata: JsonObject,
+): void {
+  if (extracted.resources.length >= MAX_RESOURCES) return;
+  const ref = capabilityRef(sourceEventId, extracted.resources.length, kind);
+  const name = resourceName(metadata);
+  const mime = mimeType(metadata);
+  const size = sizeBytes(metadata);
+  extracted.resources.push({
+    capabilityRef: ref,
+    kind,
+    ...(name ? { name } : {}),
+    ...(mime ? { mimeType: mime } : {}),
+    ...(size !== undefined ? { sizeBytes: size } : {}),
+  });
+  extracted.privateCapabilities.push({
+    capabilityRef: ref,
+    downloadCode,
+    ...(robotCode ? { robotCode } : {}),
+  });
+}
+
+function emptyExtractedContent(): ExtractedContent {
+  return { mentions: [], resources: [], privateCapabilities: [] };
+}
+
+function richText(record: JsonObject, sourceEventId: string, robotCode: string | undefined): ExtractedContent {
   const content = record.content;
   const rich = content && typeof content === "object" && !Array.isArray(content)
     ? (content as JsonObject).richText
     : record.richText;
-  if (!Array.isArray(rich)) return undefined;
+  const extracted = emptyExtractedContent();
+  extracted.mentions = rootMentions(record);
+  if (!Array.isArray(rich)) return extracted;
   const fragments: string[] = [];
   for (const item of rich.slice(0, 200)) {
     if (!item || typeof item !== "object" || Array.isArray(item)) continue;
@@ -103,10 +216,30 @@ function richText(record: JsonObject): string | undefined {
     const mention = optionalString(safe, "atName", 128);
     if (text) fragments.push(text);
     else if (mention) fragments.push(`@${mention}`);
+    const publicAt = publicMention(safe);
+    if (publicAt && extracted.mentions.length < MAX_MENTIONS) extracted.mentions.push(publicAt);
+    const pictureCode = optionalPrivateOpaque(safe, "pictureDownloadCode", MAX_DOWNLOAD_CODE_CHARACTERS);
+    const downloadCode = optionalPrivateOpaque(safe, "downloadCode", MAX_DOWNLOAD_CODE_CHARACTERS);
+    if (pictureCode) addResource(extracted, sourceEventId, "picture", pictureCode, robotCode, safe);
+    else if (downloadCode) addResource(extracted, sourceEventId, "file", downloadCode, robotCode, safe);
     if (fragments.join("\n").length >= MAX_TEXT_CHARACTERS) break;
   }
   const combined = fragments.join("\n").trim().slice(0, MAX_TEXT_CHARACTERS);
-  return combined || undefined;
+  if (combined) extracted.text = combined;
+  return extracted;
+}
+
+function attachment(
+  record: JsonObject,
+  sourceEventId: string,
+  kind: DingTalkResourceKind,
+  robotCode: string | undefined,
+): ExtractedContent {
+  const extracted = emptyExtractedContent();
+  const content = object(record.content, "dingtalk_content");
+  const downloadCode = optionalPrivateOpaque(content, "downloadCode", MAX_DOWNLOAD_CODE_CHARACTERS);
+  if (downloadCode) addResource(extracted, sourceEventId, kind, downloadCode, robotCode, content);
+  return extracted;
 }
 
 function actionData(record: JsonObject): JsonObject {
@@ -123,22 +256,37 @@ function actionData(record: JsonObject): JsonObject {
 
 export function normalizeBotMessage(envelope: DingTalkStreamEnvelope, receivedAt = Date.now()): NormalizedDingTalkMessage {
   const record = parsePayload(envelope.data);
+  const sourceEventId = requiredOpaque(record, "msgId", 256);
   const msgType = optionalString(record, "msgtype", 64)?.toLowerCase();
+  const robotCode = optionalPrivateOpaque(record, "robotCode", 256);
+  let extracted = emptyExtractedContent();
   let text: string;
   let contentKind: NormalizedDingTalkMessage["contentKind"];
   if (msgType === "text") {
     const textRecord = object(record.text, "dingtalk_text");
     text = requiredString(textRecord, "content", MAX_TEXT_CHARACTERS);
+    extracted.mentions = rootMentions(record);
     contentKind = "text";
   } else if (msgType === "richtext" || msgType === "rich_text") {
-    text = richText(record) ?? UNSUPPORTED_MESSAGE_TEXT;
-    contentKind = text === UNSUPPORTED_MESSAGE_TEXT ? "unsupported" : "rich_text";
+    extracted = richText(record, sourceEventId, robotCode);
+    if (extracted.resources.length > 0) {
+      text = extracted.text ?? `收到 ${extracted.resources.length} 个附件，内容待安全读取。`;
+      contentKind = extracted.text ? "mixed" : "attachment";
+    } else {
+      text = extracted.text ?? UNSUPPORTED_MESSAGE_TEXT;
+      contentKind = extracted.text ? "rich_text" : "unsupported";
+    }
+  } else if (msgType === "file" || msgType === "picture" || msgType === "audio" || msgType === "video") {
+    extracted = attachment(record, sourceEventId, msgType, robotCode);
+    text = extracted.resources.length > 0
+      ? `收到 ${extracted.resources.length} 个附件，内容待安全读取。`
+      : UNSUPPORTED_MESSAGE_TEXT;
+    contentKind = extracted.resources.length > 0 ? "attachment" : "unsupported";
   } else {
     text = UNSUPPORTED_MESSAGE_TEXT;
     contentKind = "unsupported";
   }
 
-  const sourceEventId = requiredOpaque(record, "msgId", 256);
   const transportMessageId = envelopeIdentifier(envelope.headers.messageId, "transport_message_id");
   const conversationId = requiredOpaque(record, "conversationId", 256);
   const senderCorpId = optionalOpaque(record, "senderCorpId", 256);
@@ -156,6 +304,8 @@ export function normalizeBotMessage(envelope: DingTalkStreamEnvelope, receivedAt
       conversationId,
       addressedToBot: true,
       text,
+      ...(extracted.resources.length > 0 ? { resources: extracted.resources } : {}),
+      ...(extracted.mentions.length > 0 ? { mentions: extracted.mentions } : {}),
       ...(optionalOpaque(record, "originalMsgId", 256)
         ? { replyToSourceEventId: optionalOpaque(record, "originalMsgId", 256) }
         : {}),
@@ -170,6 +320,7 @@ export function normalizeBotMessage(envelope: DingTalkStreamEnvelope, receivedAt
     ...(sessionWebhook && sessionWebhookExpiredTime
       ? { replyChannel: { sourceEventId, webhookUrl: sessionWebhook, expiresAt: sessionWebhookExpiredTime } }
       : {}),
+    ...(extracted.privateCapabilities.length > 0 ? { privateCapabilities: extracted.privateCapabilities } : {}),
     contentKind,
     payloadHash: payloadHash(envelope.data),
   };

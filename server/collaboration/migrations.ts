@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { OPENMAUSBOT_SOURCE_BASELINE } from "./config.ts";
 
-export const COLLABORATION_SCHEMA_VERSION = 10;
+export const COLLABORATION_SCHEMA_VERSION = 11;
 
 interface Migration {
   version: number;
@@ -736,6 +736,211 @@ const migrations: readonly Migration[] = [
         CREATE TRIGGER collaboration_candidate_reviews_no_delete
           BEFORE DELETE ON collaboration_candidate_reviews
           BEGIN SELECT RAISE(ABORT, 'candidate reviews are immutable'); END;
+      `);
+    },
+  },
+  {
+    version: 11,
+    name: "add-attachment-ingestion-and-evidence",
+    checksum: "v11:public-attachment-provenance-immutable-evidence-projection-claim",
+    apply(database) {
+      database.exec(`
+        CREATE TABLE collaboration_attachments (
+          id TEXT PRIMARY KEY,
+          external_event_id TEXT NOT NULL REFERENCES collaboration_external_events(id),
+          ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+          provider TEXT NOT NULL CHECK (provider = 'dingtalk'),
+          capability_ref TEXT NOT NULL CHECK (
+            length(capability_ref) = 64 AND
+            capability_ref = lower(capability_ref) AND
+            lower(capability_ref) NOT GLOB '*[^0-9a-f]*'
+          ),
+          resource_kind TEXT NOT NULL CHECK (resource_kind IN ('file', 'picture', 'audio', 'video')),
+          display_name TEXT,
+          media_type TEXT,
+          size_bytes INTEGER CHECK (size_bytes IS NULL OR size_bytes >= 0),
+          ingest_state TEXT NOT NULL CHECK (ingest_state IN (
+            'pending', 'downloading', 'stored', 'extracting', 'ready', 'unsupported', 'failed'
+          )),
+          content_hash TEXT CHECK (
+            content_hash IS NULL OR (
+              length(content_hash) = 64 AND
+              content_hash = lower(content_hash) AND
+              lower(content_hash) NOT GLOB '*[^0-9a-f]*'
+            )
+          ),
+          managed_storage_key TEXT CHECK (
+            managed_storage_key IS NULL OR (
+              managed_storage_key GLOB 'attachments/*' AND
+              managed_storage_key NOT GLOB '*://*' AND
+              managed_storage_key NOT GLOB '/*' AND
+              managed_storage_key NOT GLOB '*..*'
+            )
+          ),
+          error_code TEXT,
+          evidence_projected_at INTEGER CHECK (evidence_projected_at IS NULL OR evidence_projected_at >= 0),
+          evidence_projection_owner TEXT,
+          evidence_projection_expires_at INTEGER CHECK (
+            evidence_projection_expires_at IS NULL OR evidence_projection_expires_at >= 0
+          ),
+          attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+          next_attempt_at INTEGER NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          UNIQUE (external_event_id, ordinal),
+          UNIQUE (external_event_id, capability_ref),
+          CHECK ((content_hash IS NULL) = (managed_storage_key IS NULL)),
+          CHECK (
+            ingest_state NOT IN ('stored', 'extracting', 'ready') OR
+            (content_hash IS NOT NULL AND managed_storage_key IS NOT NULL)
+          ),
+          CHECK (evidence_projected_at IS NULL OR ingest_state = 'ready'),
+          CHECK (
+            (evidence_projection_owner IS NULL) = (evidence_projection_expires_at IS NULL)
+          ),
+          CHECK (
+            evidence_projected_at IS NULL OR
+            (evidence_projection_owner IS NULL AND evidence_projection_expires_at IS NULL)
+          )
+        ) STRICT;
+        CREATE INDEX collaboration_attachments_pending
+          ON collaboration_attachments(ingest_state, next_attempt_at, created_at, ordinal);
+        CREATE INDEX collaboration_attachments_external_event
+          ON collaboration_attachments(external_event_id, ordinal);
+
+        CREATE TABLE collaboration_attachment_extractions (
+          id TEXT PRIMARY KEY,
+          attachment_id TEXT NOT NULL REFERENCES collaboration_attachments(id),
+          attempt INTEGER NOT NULL CHECK (attempt > 0),
+          extractor TEXT NOT NULL,
+          extractor_version TEXT NOT NULL,
+          source_hash TEXT NOT NULL CHECK (
+            length(source_hash) = 64 AND
+            source_hash = lower(source_hash) AND
+            lower(source_hash) NOT GLOB '*[^0-9a-f]*'
+          ),
+          status TEXT NOT NULL CHECK (status IN ('succeeded', 'failed', 'unsupported')),
+          extracted_characters INTEGER NOT NULL DEFAULT 0 CHECK (extracted_characters >= 0),
+          metadata_json TEXT NOT NULL,
+          error_code TEXT,
+          created_at INTEGER NOT NULL,
+          UNIQUE (attachment_id, attempt),
+          UNIQUE (id, attachment_id),
+          CHECK ((status = 'succeeded' AND error_code IS NULL) OR status <> 'succeeded')
+        ) STRICT;
+        CREATE INDEX collaboration_attachment_extractions_attachment
+          ON collaboration_attachment_extractions(attachment_id, attempt DESC);
+
+        CREATE TABLE collaboration_attachment_chunks (
+          id TEXT PRIMARY KEY,
+          extraction_id TEXT NOT NULL REFERENCES collaboration_attachment_extractions(id),
+          ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+          content TEXT NOT NULL,
+          content_hash TEXT NOT NULL CHECK (
+            length(content_hash) = 64 AND
+            content_hash = lower(content_hash) AND
+            lower(content_hash) NOT GLOB '*[^0-9a-f]*'
+          ),
+          character_start INTEGER NOT NULL CHECK (character_start >= 0),
+          character_end INTEGER NOT NULL CHECK (character_end >= character_start),
+          created_at INTEGER NOT NULL,
+          UNIQUE (extraction_id, ordinal)
+        ) STRICT;
+        CREATE INDEX collaboration_attachment_chunks_extraction
+          ON collaboration_attachment_chunks(extraction_id, ordinal);
+
+        CREATE TABLE collaboration_work_item_evidence (
+          id TEXT PRIMARY KEY,
+          work_item_id TEXT NOT NULL REFERENCES collaboration_work_items(id),
+          attachment_id TEXT NOT NULL REFERENCES collaboration_attachments(id),
+          extraction_id TEXT,
+          evidence_kind TEXT NOT NULL CHECK (evidence_kind IN ('attachment', 'extraction', 'chunk')),
+          chunk_ordinal INTEGER CHECK (chunk_ordinal IS NULL OR chunk_ordinal >= 0),
+          evidence_hash TEXT NOT NULL CHECK (
+            length(evidence_hash) = 64 AND
+            evidence_hash = lower(evidence_hash) AND
+            lower(evidence_hash) NOT GLOB '*[^0-9a-f]*'
+          ),
+          label TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          UNIQUE (work_item_id, attachment_id, evidence_kind, evidence_hash),
+          FOREIGN KEY (extraction_id, attachment_id)
+            REFERENCES collaboration_attachment_extractions(id, attachment_id),
+          FOREIGN KEY (extraction_id, chunk_ordinal)
+            REFERENCES collaboration_attachment_chunks(extraction_id, ordinal),
+          CHECK (
+            (evidence_kind = 'attachment' AND extraction_id IS NULL AND chunk_ordinal IS NULL) OR
+            (evidence_kind = 'extraction' AND extraction_id IS NOT NULL AND chunk_ordinal IS NULL) OR
+            (evidence_kind = 'chunk' AND extraction_id IS NOT NULL AND chunk_ordinal IS NOT NULL)
+          )
+        ) STRICT;
+        CREATE INDEX collaboration_work_item_evidence_work_item
+          ON collaboration_work_item_evidence(work_item_id, created_at, id);
+        CREATE INDEX collaboration_work_item_evidence_attachment
+          ON collaboration_work_item_evidence(attachment_id, extraction_id);
+
+        CREATE TABLE collaboration_attachment_spec_projections (
+          attachment_id TEXT NOT NULL REFERENCES collaboration_attachments(id),
+          content_hash TEXT NOT NULL CHECK (
+            length(content_hash) = 64 AND
+            content_hash = lower(content_hash) AND
+            lower(content_hash) NOT GLOB '*[^0-9a-f]*'
+          ),
+          work_item_id TEXT NOT NULL,
+          snapshot_revision INTEGER NOT NULL CHECK (snapshot_revision > 0),
+          created_at INTEGER NOT NULL,
+          PRIMARY KEY (attachment_id, content_hash),
+          FOREIGN KEY (work_item_id, snapshot_revision)
+            REFERENCES collaboration_work_item_snapshots(work_item_id, revision)
+        ) STRICT;
+        CREATE INDEX collaboration_attachment_spec_projections_work_item
+          ON collaboration_attachment_spec_projections(work_item_id, snapshot_revision);
+
+        CREATE TRIGGER collaboration_attachment_provenance_no_update
+          BEFORE UPDATE ON collaboration_attachments
+          WHEN NEW.id <> OLD.id OR
+               NEW.external_event_id <> OLD.external_event_id OR
+               NEW.ordinal <> OLD.ordinal OR
+               NEW.provider <> OLD.provider OR
+               NEW.capability_ref <> OLD.capability_ref OR
+               NEW.resource_kind <> OLD.resource_kind OR
+               NEW.display_name IS NOT OLD.display_name OR
+               NEW.media_type IS NOT OLD.media_type OR
+               NEW.size_bytes IS NOT OLD.size_bytes
+          BEGIN SELECT RAISE(ABORT, 'attachment provenance is immutable'); END;
+        CREATE TRIGGER collaboration_work_item_evidence_matches_event
+          BEFORE INSERT ON collaboration_work_item_evidence
+          WHEN NOT EXISTS (
+            SELECT 1
+            FROM collaboration_attachments attachment
+            JOIN collaboration_external_events event ON event.id = attachment.external_event_id
+            WHERE attachment.id = NEW.attachment_id AND event.work_item_id = NEW.work_item_id
+          )
+          BEGIN SELECT RAISE(ABORT, 'attachment evidence work item mismatch'); END;
+        CREATE TRIGGER collaboration_attachment_extractions_no_update
+          BEFORE UPDATE ON collaboration_attachment_extractions
+          BEGIN SELECT RAISE(ABORT, 'attachment extractions are immutable'); END;
+        CREATE TRIGGER collaboration_attachment_extractions_no_delete
+          BEFORE DELETE ON collaboration_attachment_extractions
+          BEGIN SELECT RAISE(ABORT, 'attachment extractions are immutable'); END;
+        CREATE TRIGGER collaboration_attachment_chunks_no_update
+          BEFORE UPDATE ON collaboration_attachment_chunks
+          BEGIN SELECT RAISE(ABORT, 'attachment chunks are immutable'); END;
+        CREATE TRIGGER collaboration_attachment_chunks_no_delete
+          BEFORE DELETE ON collaboration_attachment_chunks
+          BEGIN SELECT RAISE(ABORT, 'attachment chunks are immutable'); END;
+        CREATE TRIGGER collaboration_work_item_evidence_no_update
+          BEFORE UPDATE ON collaboration_work_item_evidence
+          BEGIN SELECT RAISE(ABORT, 'work item evidence is immutable'); END;
+        CREATE TRIGGER collaboration_work_item_evidence_no_delete
+          BEFORE DELETE ON collaboration_work_item_evidence
+          BEGIN SELECT RAISE(ABORT, 'work item evidence is immutable'); END;
+        CREATE TRIGGER collaboration_attachment_spec_projections_no_update
+          BEFORE UPDATE ON collaboration_attachment_spec_projections
+          BEGIN SELECT RAISE(ABORT, 'attachment spec projections are immutable'); END;
+        CREATE TRIGGER collaboration_attachment_spec_projections_no_delete
+          BEFORE DELETE ON collaboration_attachment_spec_projections
+          BEGIN SELECT RAISE(ABORT, 'attachment spec projections are immutable'); END;
       `);
     },
   },

@@ -3,6 +3,7 @@ import type { OwnerActionOutcome } from "../../collaboration/actions.ts";
 import type {
   DingTalkCardAction,
   DingTalkInboundMessage,
+  DingTalkPrivateResourceCapability,
   DingTalkOwnerTextCommand,
   DingTalkOwnerTextCommandOutcome,
   DingTalkStreamEnvelope,
@@ -12,6 +13,7 @@ export type MaybePromise<T> = T | Promise<T>;
 
 export interface DingTalkInboundSink {
   ingest(message: DingTalkInboundMessage): MaybePromise<InboundMessageOutcome>;
+  ingestAttachments?(capabilities: readonly DingTalkPrivateResourceCapability[]): MaybePromise<void>;
 }
 
 export interface DingTalkOwnerActionSink {

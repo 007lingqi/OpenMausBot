@@ -8,6 +8,7 @@ import { parsePlannerProposal, PlanValidationError, type PlannerPort, type WorkN
 import { evaluateDefinitionReadiness, type ClarificationQuestion } from "./readiness.ts";
 import { assertLedgerArmed } from "./restore-guard.ts";
 import { buildDefinitionPatchFromText } from "./spec-builder.ts";
+import { redactSensitiveText } from "./sensitive-text.ts";
 import {
   appendWorkItemSnapshot,
   readLatestWorkItemSnapshot,
@@ -26,6 +27,24 @@ export interface DefinitionRevisionOutcome {
   planRevision: number | null;
   card: InboundCard;
   failures?: string[];
+}
+
+export interface AcceptedAttachmentEvidence {
+  attachmentId: string;
+  sourceEventId: string;
+  contentHash: string;
+  displayName: string;
+  format: string;
+  chunks: Array<{
+    ordinal: number;
+    lineStart: number;
+    lineEnd: number;
+    text: string;
+    textHash: string;
+    untrusted: true;
+  }>;
+  truncated: boolean;
+  warnings: string[];
 }
 
 export interface PlanningCoordinatorOptions {
@@ -93,6 +112,47 @@ function plannerFailures(error: unknown): string[] {
   return [`planner failed: ${message.slice(0, 500)}`];
 }
 
+function requestedResponders(
+  database: DatabaseSync,
+  workItemId: string,
+): Array<{ targetId?: string; displayName?: string }> {
+  const rows = database.prepare(
+    "SELECT e.normalized_json FROM collaboration_external_events e " +
+      "WHERE e.work_item_id = ? ORDER BY e.received_at DESC LIMIT 10",
+  ).all(workItemId) as unknown as Array<{ normalized_json: string }>;
+  const responders: Array<{ targetId?: string; displayName?: string }> = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    let normalized: unknown;
+    try {
+      normalized = JSON.parse(row.normalized_json) as unknown;
+    } catch {
+      continue;
+    }
+    if (!normalized || typeof normalized !== "object" || Array.isArray(normalized)) continue;
+    const mentions = (normalized as { mentions?: unknown }).mentions;
+    if (!Array.isArray(mentions)) continue;
+    for (const mention of mentions) {
+      if (!mention || typeof mention !== "object" || Array.isArray(mention)) continue;
+      const value = mention as { targetId?: unknown; displayName?: unknown };
+      const targetId = typeof value.targetId === "string" ? value.targetId.trim().slice(0, 256) : "";
+      const displayName = typeof value.displayName === "string"
+        ? redactSensitiveText(value.displayName.trim()).slice(0, 128)
+        : "";
+      if (!targetId && !displayName) continue;
+      const key = targetId || `name:${displayName}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      responders.push({
+        ...(targetId ? { targetId } : {}),
+        ...(displayName ? { displayName } : {}),
+      });
+      if (responders.length >= 3) return responders;
+    }
+  }
+  return responders;
+}
+
 export class PlanningCoordinator {
   private readonly database: DatabaseSync;
   private readonly options: PlanningCoordinatorOptions;
@@ -110,14 +170,44 @@ export class PlanningCoordinator {
   reviseDefinition(
     workItemId: string,
     patch: WorkItemSnapshotPatch,
+    now?: number,
+  ): DefinitionRevisionOutcome;
+  reviseDefinition(
+    workItemId: string,
+    patch: WorkItemSnapshotPatch,
+    now: number,
+    projection: { attachmentId: string; contentHash: string },
+  ): DefinitionRevisionOutcome | null;
+  reviseDefinition(
+    workItemId: string,
+    patch: WorkItemSnapshotPatch,
     now = Date.now(),
-  ): DefinitionRevisionOutcome {
+    projection?: { attachmentId: string; contentHash: string },
+  ): DefinitionRevisionOutcome | null {
     if (this.closed) throw new Error("Planning coordinator is closed");
     this.database.exec("BEGIN IMMEDIATE");
     let snapshots: { previous: WorkItemSnapshot | null; current: WorkItemSnapshot };
     try {
       assertLedgerArmed(this.database);
+      if (projection && this.database.prepare(
+        "SELECT 1 FROM collaboration_attachment_spec_projections WHERE attachment_id = ? AND content_hash = ?",
+      ).get(projection.attachmentId, projection.contentHash)) {
+        this.database.exec("COMMIT");
+        return null;
+      }
       snapshots = appendWorkItemSnapshot(this.database, workItemId, patch, now);
+      if (projection) {
+        this.database.prepare(
+          "INSERT INTO collaboration_attachment_spec_projections " +
+            "(attachment_id, content_hash, work_item_id, snapshot_revision, created_at) VALUES (?, ?, ?, ?, ?)",
+        ).run(
+          projection.attachmentId,
+          projection.contentHash,
+          workItemId,
+          snapshots.current.revision,
+          now,
+        );
+      }
       const readiness = evaluateDefinitionReadiness(snapshots.current, this.options.policy.allowedRepositories);
       if (!readiness.ready) {
         this.database
@@ -129,6 +219,7 @@ export class PlanningCoordinator {
               "(id, work_item_id, snapshot_revision, questions_json, created_at) VALUES (?, ?, ?, ?, ?)",
           )
           .run(randomUUID(), workItemId, snapshots.current.revision, JSON.stringify(readiness.frontier), now);
+        const responders = requestedResponders(this.database, workItemId);
         const card = renderClarificationCard({
           workItemId,
           snapshotRevision: snapshots.current.revision,
@@ -138,6 +229,7 @@ export class PlanningCoordinator {
             question,
             recommendedAnswer,
           })),
+          ...(responders.length ? { requestedResponders: responders } : {}),
         });
         enqueueInboundCard(this.database, {
           sourceEventId: `definition:${workItemId}:snapshot:${snapshots.current.revision}`,
@@ -203,11 +295,117 @@ export class PlanningCoordinator {
     const latest = readLatestWorkItemSnapshot(this.database, workItemId);
     const normalized = text.trim();
     if (latest?.facts.includes(normalized)) return null;
+    const patch = buildDefinitionPatchFromText(normalized, latest, this.options.defaultDefinition);
+    const pendingAttachments = this.database.prepare(
+      "SELECT count(*) AS count FROM collaboration_attachments a " +
+        "JOIN collaboration_external_events e ON e.id = a.external_event_id " +
+        "WHERE e.work_item_id = ? AND a.ingest_state <> 'ready'",
+    ).get(workItemId) as { count: number };
+    const attachmentAmbiguityId = "attachment-content-pending";
+    const ambiguities = (patch.blockingAmbiguities ?? latest?.blockingAmbiguities ?? [])
+      .filter((ambiguity) => typeof ambiguity === "string" || ambiguity.id !== attachmentAmbiguityId);
+    if (pendingAttachments.count > 0) {
+      ambiguities.push({
+        id: attachmentAmbiguityId,
+        question: "附件内容还在安全读取中；如果附件不是本任务输入，请直接说明。",
+        dependsOn: [],
+        recommendedAnswer: "等待读取完成即可；读取失败时请重新上传支持的文件，或用文字补充关键内容。",
+      });
+      patch.blockingAmbiguities = ambiguities;
+      if (!latest && /^收到 \d+ 个附件，内容待安全读取。$/u.test(normalized)) {
+        patch.goal = null;
+        patch.goalConfirmed = false;
+      }
+    } else if (latest?.blockingAmbiguities.some((ambiguity) => ambiguity.id === attachmentAmbiguityId)) {
+      patch.blockingAmbiguities = ambiguities;
+    }
     return this.reviseDefinition(
       workItemId,
-      buildDefinitionPatchFromText(normalized, latest, this.options.defaultDefinition),
+      patch,
       now,
     );
+  }
+
+  observeAcceptedEvidence(
+    workItemId: string,
+    evidence: AcceptedAttachmentEvidence,
+    now = Date.now(),
+  ): DefinitionRevisionOutcome | null {
+    assertLedgerArmed(this.database);
+    if (!/^[0-9a-f]{64}$/u.test(evidence.contentHash)) throw new Error("attachment_evidence_hash_invalid");
+    if (!evidence.chunks.length || evidence.chunks.some((chunk) => chunk.untrusted !== true)) {
+      throw new Error("attachment_evidence_chunks_invalid");
+    }
+    const source = this.database.prepare(
+      "SELECT a.display_name, e.source_event_id FROM collaboration_attachments a " +
+        "JOIN collaboration_external_events e ON e.id = a.external_event_id " +
+        "JOIN collaboration_work_item_evidence w ON w.attachment_id = a.id " +
+        "WHERE a.id = ? AND e.work_item_id = ? AND e.source_event_id = ? " +
+        "AND a.ingest_state = 'ready' AND a.content_hash = ? AND w.work_item_id = ? " +
+        "AND w.evidence_kind = 'attachment' AND w.evidence_hash = ? LIMIT 1",
+    ).get(
+      evidence.attachmentId,
+      workItemId,
+      evidence.sourceEventId,
+      evidence.contentHash,
+      workItemId,
+      evidence.contentHash,
+    ) as { display_name: string | null; source_event_id: string } | undefined;
+    if (!source) throw new Error("attachment_evidence_source_invalid");
+    const chunkExists = this.database.prepare(
+      "SELECT 1 FROM collaboration_attachment_chunks c " +
+        "JOIN collaboration_attachment_extractions x ON x.id = c.extraction_id " +
+        "WHERE x.attachment_id = ? AND x.status = 'succeeded' AND c.ordinal = ? " +
+        "AND c.content_hash = ? AND c.content = ? LIMIT 1",
+    );
+    for (const chunk of evidence.chunks) {
+      if (
+        !/^[0-9a-f]{64}$/u.test(chunk.textHash) ||
+        createHash("sha256").update(chunk.text).digest("hex") !== chunk.textHash ||
+        !chunkExists.get(evidence.attachmentId, chunk.ordinal, chunk.textHash, chunk.text)
+      ) throw new Error("attachment_evidence_chunk_invalid");
+    }
+    const latest = readLatestWorkItemSnapshot(this.database, workItemId);
+    const sourceLabel = redactSensitiveText((source.display_name ?? evidence.displayName).trim()).slice(0, 120) || "附件";
+    const excerpts = evidence.chunks.slice(0, 12).flatMap((chunk) => {
+      const safe = redactSensitiveText(chunk.text).trim();
+      if (!safe) return [];
+      const prefix = `[附件“${sourceLabel}” 第 ${chunk.lineStart}-${chunk.lineEnd} 行] `;
+      const maximum = 2_000 - prefix.length;
+      return [`${prefix}${safe.slice(0, Math.max(0, maximum))}`];
+    });
+    const facts = [...(latest?.facts ?? [])];
+    for (const excerpt of excerpts) {
+      if (!facts.includes(excerpt) && facts.length < 100) facts.push(excerpt);
+    }
+    const pending = this.database.prepare(
+      "SELECT count(*) AS count FROM collaboration_attachments a " +
+        "JOIN collaboration_external_events e ON e.id = a.external_event_id " +
+        "WHERE e.work_item_id = ? AND a.ingest_state NOT IN ('ready', 'unsupported')",
+    ).get(workItemId) as { count: number };
+    const attachmentAmbiguityId = "attachment-content-pending";
+    const ambiguities = (latest?.blockingAmbiguities ?? [])
+      .filter((ambiguity) => ambiguity.id !== attachmentAmbiguityId);
+    if (pending.count > 0) {
+      ambiguities.push({
+        id: attachmentAmbiguityId,
+        question: "仍有附件尚未读取完成；如果附件不是本任务输入，请直接说明。",
+        dependsOn: [],
+        recommendedAnswer: "等待读取完成，或用文字补充未读取附件的关键内容。",
+      });
+    }
+    return this.reviseDefinition(workItemId, {
+      ...(!latest
+        ? {
+            goal: null,
+            goalConfirmed: false,
+            ...(this.options.defaultDefinition ? { repository: this.options.defaultDefinition.repository } : {}),
+            acceptanceConditions: [],
+          }
+        : {}),
+      facts,
+      blockingAmbiguities: ambiguities,
+    }, now, { attachmentId: evidence.attachmentId, contentHash: evidence.contentHash });
   }
 
   close(): void {

@@ -20,6 +20,15 @@ function stringList(value: unknown, maximum = 8): string[] {
   return value.slice(0, maximum).map((entry) => text(entry, "unknown", 256));
 }
 
+function associationCandidates(value: unknown): Array<{ title: string }> {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 3).flatMap((entry) => {
+    const candidate = record(entry);
+    const title = typeof candidate?.title === "string" ? candidate.title.trim() : "";
+    return title ? [{ title: text(title, "待确认问题", 120) }] : [];
+  });
+}
+
 function diffPreview(value: unknown, maximum = 3_500): string | null {
   if (typeof value !== "string") return null;
   const normalized = value
@@ -87,24 +96,56 @@ export function renderDingTalkSessionMessage(payload: unknown): Record<string, u
   const lines = [`### ${headline}`];
 
   if (type === "primary_status_card") {
+    const resourceCount = typeof card?.resourceCount === "number" && card.resourceCount > 0
+      ? Math.min(Math.floor(card.resourceCount), 5)
+      : 0;
     lines.push(
       "",
-      "已收到你的需求，正在整理。当前尚未开始执行。",
+      resourceCount
+        ? `已收到你的需求和 ${resourceCount} 个附件，正在安全读取附件内容。`
+        : "已收到你的需求，正在整理。当前尚未开始执行。",
       "",
-      "- 当前进度：正在整理需求",
+      resourceCount ? "- 当前进度：读取附件" : "- 当前进度：正在整理需求",
+      ...(resourceCount ? ["- 读取完成前不会开始修改"] : []),
       `- 任务编号：\`${text(card?.workItemId, "unavailable", 128)}\``,
     );
   } else if (type === "association_choice_card") {
-    lines.push("", text(card?.acknowledgement, "请选择问题归属。"));
-    for (const workItemId of stringList(card?.candidateWorkItemIds)) lines.push(`- \`${workItemId}\``);
+    lines.push(
+      "",
+      "我还不能确定这条消息是继续已有问题，还是一个新问题。",
+      "",
+      "**可能相关的问题**",
+    );
+    const candidates = associationCandidates(card?.candidateWorkItems);
+    if (candidates.length) {
+      candidates.forEach((candidate, index) => lines.push(`${index + 1}. ${candidate.title}`));
+    } else {
+      lines.push("- 当前问题标题暂不可用");
+    }
+    lines.push("", "请回复“继续【问题标题】，补充：具体内容”，或者回复“这是新问题：具体内容”。");
   } else if (type === "invalid_reference_card") {
     lines.push("", "引用的问题不可用。", "", `- 引用: \`${text(card?.reference, "unknown", 128)}\``);
   } else if (type === "clarification_card") {
-    lines.push("", `- Work Item: \`${text(card?.workItemId, "unavailable", 128)}\``);
+    const responders = Array.isArray(card?.requestedResponders)
+      ? card.requestedResponders.slice(0, 3).flatMap((entry) => {
+          const responder = record(entry);
+          const displayName = typeof responder?.displayName === "string" ? responder.displayName.trim() : "";
+          return displayName ? [text(displayName, "相关人员", 128)] : [];
+        })
+      : [];
+    lines.push(
+      "",
+      responders.length
+        ? `为了避免返工，建议由 ${responders.map((name) => `@${name}`).join("、")} 补充以下信息：`
+        : "为了避免返工，请补充以下关键信息：",
+    );
     if (Array.isArray(card?.questions)) {
-      for (const question of card.questions.slice(0, 8)) {
+      for (const question of card.questions.slice(0, 3)) {
         const item = record(question);
         lines.push(`- ${text(item?.question, "需要补充信息")}`);
+        if (typeof item?.recommendedAnswer === "string" && item.recommendedAnswer.trim()) {
+          lines.push(`  - 建议回答：${text(item.recommendedAnswer, "请给出明确答案", 500)}`);
+        }
       }
     }
   } else if (type === "command_status_card") {
@@ -201,8 +242,16 @@ export function renderDingTalkSessionMessage(payload: unknown): Record<string, u
     lines.push("", "协作状态已更新，请查看受控审计记录。");
   }
 
+  const atUserIds = type === "clarification_card" && Array.isArray(card?.requestedResponders)
+    ? card.requestedResponders.slice(0, 3).flatMap((entry) => {
+        const responder = record(entry);
+        const targetId = typeof responder?.targetId === "string" ? responder.targetId.trim() : "";
+        return targetId ? [targetId.slice(0, 256)] : [];
+      })
+    : [];
   return {
     msgtype: "markdown",
     markdown: { title: headline, text: lines.join("\n") },
+    ...(atUserIds.length ? { at: { atUserIds, isAtAll: false } } : {}),
   };
 }

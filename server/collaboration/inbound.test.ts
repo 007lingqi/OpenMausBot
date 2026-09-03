@@ -50,6 +50,7 @@ function scalar(db: DatabaseSync, table: string): number {
     "collaboration_work_items",
     "collaboration_work_item_events",
     "collaboration_association_options",
+    "collaboration_attachments",
     "collaboration_outbox",
   ]);
   if (!allowed.has(table)) throw new Error("Unexpected test table");
@@ -167,6 +168,99 @@ describe("fake DingTalk Work Item ingress", () => {
       }),
     );
     expect(reply).toMatchObject({ accepted: true, association: "associated", workItemId: first.workItemId });
+    service.close();
+  });
+
+  it("naturally associates a clear supplement when the conversation has one active Work Item", () => {
+    const directory = temporaryDirectory();
+    const service = startCollaborationService({ dataDirectory: directory });
+    const adapter = new FakeDingTalkAdapter((event) => service.ingestDingTalkMessage(event));
+    const first = adapter.receive(message({ text: "登录失败时提示原因并给出处理建议" }));
+    if (!first.accepted) throw new Error("Expected accepted message");
+
+    const supplement = adapter.receive(
+      message({
+        sourceEventId: "event-supplement",
+        transportMessageId: "transport-supplement",
+        text: "补充验收条件：产品和测试都能看懂最终结果",
+        receivedAt: 2_000,
+      }),
+    );
+
+    expect(supplement).toMatchObject({
+      accepted: true,
+      association: "associated",
+      workItemId: first.workItemId,
+      card: { type: "primary_status_card", association: "associated", workItemVersion: 2 },
+    });
+    service.close();
+  });
+
+  it("persists only public attachment provenance in the same transaction", () => {
+    const directory = temporaryDirectory();
+    const service = startCollaborationService({ dataDirectory: directory });
+    const adapter = new FakeDingTalkAdapter((event) => service.ingestDingTalkMessage(event));
+    const capabilityRef = "a".repeat(64);
+
+    const result = adapter.receive(message({
+      text: "收到 1 个附件，内容待安全读取。",
+      resources: [{
+        capabilityRef,
+        kind: "file",
+        name: "登录缺陷.xlsx",
+        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        sizeBytes: 512,
+      }],
+    }));
+    expect(result).toMatchObject({
+      accepted: true,
+      association: "created",
+      card: { type: "primary_status_card", resourceCount: 1 },
+    });
+    service.close();
+
+    const db = database(directory);
+    expect(scalar(db, "collaboration_attachments")).toBe(1);
+    expect(db.prepare(
+      "SELECT capability_ref, resource_kind, display_name, ingest_state FROM collaboration_attachments",
+    ).get()).toEqual({
+      capability_ref: capabilityRef,
+      resource_kind: "file",
+      display_name: "登录缺陷.xlsx",
+      ingest_state: "pending",
+    });
+    const normalized = (db.prepare("SELECT normalized_json FROM collaboration_external_events").get() as {
+      normalized_json: string;
+    }).normalized_json;
+    expect(normalized).toContain(capabilityRef);
+    expect(normalized).not.toContain("downloadCode");
+    expect(normalized).not.toContain("robotCode");
+    expect(normalized).not.toContain("downloadUrl");
+    db.close();
+  });
+
+  it("asks for attribution instead of guessing when a message does not clearly supplement the only active item", () => {
+    const directory = temporaryDirectory();
+    const service = startCollaborationService({ dataDirectory: directory });
+    const adapter = new FakeDingTalkAdapter((event) => service.ingestDingTalkMessage(event));
+    const first = adapter.receive(message({ text: "登录失败时提示原因并给出处理建议" }));
+    if (!first.accepted) throw new Error("Expected accepted message");
+
+    const uncertain = adapter.receive(
+      message({
+        sourceEventId: "event-uncertain",
+        transportMessageId: "transport-uncertain",
+        text: "支付页按钮颜色需要调整",
+        receivedAt: 2_000,
+      }),
+    );
+
+    expect(uncertain).toMatchObject({
+      accepted: true,
+      association: "ambiguous",
+      workItemId: null,
+      card: { type: "association_choice_card", candidateWorkItemIds: [first.workItemId] },
+    });
     service.close();
   });
 

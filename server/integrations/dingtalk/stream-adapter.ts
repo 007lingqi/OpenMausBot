@@ -167,6 +167,10 @@ export class DingTalkStreamAdapter {
         return;
       }
       const outcome = await this.inbound.ingest(normalized.message);
+      if (normalized.privateCapabilities?.length) {
+        if (!this.inbound.ingestAttachments) throw new Error("dingtalk_attachment_ingestion_not_configured");
+        await this.inbound.ingestAttachments(normalized.privateCapabilities);
+      }
       // Success/duplicate both mean the authoritative transaction is durable.
       this.acknowledge(envelope.headers.messageId);
       this.logger.write({
