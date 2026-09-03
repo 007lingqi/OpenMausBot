@@ -50,9 +50,7 @@ import { DingTalkReplyRouter, DingTalkSessionReplyRegistry } from "./integration
 import {
   isDingTalkCandidateOwnerCard,
   isDingTalkCandidateOwnerCardRequest,
-  isDingTalkCandidateTextDecisionRequest,
   materializeDingTalkCandidateOwnerCard,
-  materializeDingTalkCandidateTextDecision,
 } from "./integrations/dingtalk/cards.ts";
 import { FetchDingTalkInteractiveCardSender } from "./integrations/dingtalk/interactive-card-sender.ts";
 import { FetchDingTalkSessionSender } from "./integrations/dingtalk/sender.ts";
@@ -254,17 +252,6 @@ function createDingTalkDelivery(
         const actions = new OwnerActionController(databaseFile);
         try {
           payload = materializeDingTalkCandidateOwnerCard(
-            payload,
-            { issueOwnerAction: (input) => actions.issue(input) },
-            Date.now(),
-          );
-        } finally {
-          actions.close();
-        }
-      } else if (isDingTalkCandidateTextDecisionRequest(payload)) {
-        const actions = new OwnerActionController(databaseFile);
-        try {
-          payload = materializeDingTalkCandidateTextDecision(
             payload,
             { issueOwnerAction: (input) => actions.issue(input) },
             Date.now(),

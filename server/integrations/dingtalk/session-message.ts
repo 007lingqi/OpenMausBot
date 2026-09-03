@@ -31,42 +31,6 @@ function diffPreview(value: unknown, maximum = 3_500): string | null {
   return normalized || null;
 }
 
-function beforeAfter(preview: string): { before: string; after: string } | null {
-  const removed: string[] = [];
-  const added: string[] = [];
-  for (const line of preview.split("\n")) {
-    if (line.startsWith("-") && !line.startsWith("---")) removed.push(line.slice(1));
-    if (line.startsWith("+") && !line.startsWith("+++")) added.push(line.slice(1));
-  }
-  if (removed.length !== 1 || added.length !== 1) return null;
-  return { before: removed[0]!, after: added[0]! };
-}
-
-function testState(value: string): string {
-  const separator = value.lastIndexOf(":");
-  const name = separator >= 0 ? value.slice(0, separator).trim() : value.trim();
-  const state = separator >= 0 ? value.slice(separator + 1).trim() : "";
-  const label = state === "target_passed"
-    ? "已通过"
-    : state === "target_failed"
-      ? "未通过"
-      : state === "not_run"
-        ? "未执行"
-        : "已完成";
-  return `${text(name, "验证", 120)} ${label}`;
-}
-
-function decisionToken(value: unknown, label: string): string | null {
-  if (!Array.isArray(value)) return null;
-  for (const entry of value) {
-    const item = record(entry);
-    if (item?.label !== label || typeof item.actionToken !== "string") continue;
-    const token = item.actionToken.trim();
-    if (/^[A-Za-z0-9_-]{32,128}$/u.test(token)) return token;
-  }
-  return null;
-}
-
 function readableStatus(value: unknown): string {
   const status = typeof value === "string" ? value : "unknown";
   return ({
@@ -108,9 +72,11 @@ export function renderDingTalkSessionMessage(payload: unknown): Record<string, u
     : status === "ready_for_execution"
     ? "方案已确认，准备执行"
     : status === "candidate_ready"
-      ? "执行完成，请验收"
+      ? "修改完成，需要负责人确认"
+    : status === "completed"
+      ? "修改已完成"
     : status === "owner_accepted"
-      ? "验收已确认"
+      ? "修改已确认完成"
     : status === "owner_rejected"
       ? "已退回修改"
     : status === "owner_action_denied"
@@ -160,70 +126,49 @@ export function renderDingTalkSessionMessage(payload: unknown): Record<string, u
         text(userFacingSummary(card?.summary, "已确认任务范围，系统将按受控计划执行。"), "按已确认的需求执行。", 1_000),
         "",
         "- 当前进度：准备开始",
-        "- 下一步：系统将自动执行，完成后通知你验收",
+        "- 下一步：系统将自动执行，完成后直接通知结果",
         `- 任务编号：\`${text(card?.workItemId, "unavailable", 128)}\``,
       );
     } else if (status === "candidate_ready") {
       lines.push(
         "",
-        text(card?.summary, "修改已完成并通过验证，请确认结果是否符合需求。", 1_000),
+        text(card?.summary, "本次改动已完成并通过基础验证，但存在需要负责人确认的风险。", 1_000),
+        "",
+        "**需要确认的原因**",
       );
-      for (const path of stringList(card?.changedPaths)) lines.push(`- 涉及内容：\`${path}\``);
-      if (Array.isArray(card?.testStates)) {
-        for (const state of card.testStates.slice(0, 8)) {
-          if (typeof state === "string") lines.push(`- 验证结果：${testState(state)}`);
-        }
+      const approvalReasons = stringList(card?.approvalReasons, 3);
+      for (const reason of approvalReasons.length ? approvalReasons : ["本次改动需要负责人确认后才能完成。"]) {
+        lines.push(`- ${reason}`);
       }
-      const preview = diffPreview(card?.candidatePreview);
-      if (preview) {
-        const simple = beforeAfter(preview);
-        if (simple) {
-          lines.push(
-            "",
-            "**修改前**",
-            "",
-            "```text",
-            simple.before,
-            "```",
-            "",
-            "**修改后**",
-            "",
-            "```text",
-            simple.after,
-            "```",
-          );
-        } else lines.push("", "**详细变更（供研发核对）**", "", "```diff", preview, "```");
+      const workItemId = text(card?.workItemId, "WI-...", 128);
+      lines.push(
+        "",
+        `- 任务编号：${workItemId}`,
+        `- 确认继续：@研发助手 批准 ${workItemId}`,
+        `- 需要调整：@研发助手 退回 ${workItemId} 请说明原因`,
+      );
+    } else if (status === "completed") {
+      lines.push(
+        "",
+        `**已完成：${text(card?.summary, "已按确认的需求完成修改。", 1_000)}**`,
+        "",
+        "**本次变化**",
+      );
+      const highlights = stringList(card?.resultHighlights, 3);
+      for (const highlight of highlights.length ? highlights : ["相关功能已按确认要求更新"]) {
+        lines.push(`- ${highlight}`);
       }
-      const acceptToken = decisionToken(card?.actions, "接受候选");
-      const rejectToken = decisionToken(card?.actions, "拒绝候选");
-      lines.push("", `- 任务编号：\`${text(card?.workItemId, "unavailable", 128)}\``);
-      if (acceptToken && rejectToken) {
-        lines.push(
-          "",
-          "**请由任务负责人在 30 分钟内回复以下一条**",
-          "",
-          "接受结果：",
-          "```text",
-          `@研发助手 接受 ${acceptToken}`,
-          "```",
-          "拒绝并说明原因：",
-          "```text",
-          `@研发助手 拒绝 ${rejectToken} 请填写需要调整的内容`,
-          "```",
-          "验收码仅对当前负责人和当前候选有效，使用一次后自动失效。",
-          "验收码过期时可回复：",
-          "```text",
-          `@研发助手 刷新验收码 ${typeof card?.workItemId === "string" ? card.workItemId : "WI-..."}`,
-          "```",
-        );
-      } else {
-        lines.push("- 下一步：验收入口暂不可用，请联系维护人员检查消息发送配置");
-      }
+      lines.push(
+        "",
+        "- 验证情况：相关检查已通过",
+        "- 当前状态：已完成，无需再次确认",
+        `- 任务编号：${text(card?.workItemId, "unavailable", 128)}`,
+      );
     } else if (status === "owner_accepted") {
       lines.push(
         "",
-        "负责人已确认本次结果，任务已完成。",
-        `- 任务编号：\`${text(card?.workItemId, "unavailable", 128)}\``,
+        "负责人已批准本次风险改动，任务已完成。",
+        `- 任务编号：${text(card?.workItemId, "unavailable", 128)}`,
       );
     } else if (status === "owner_rejected") {
       lines.push(
@@ -241,7 +186,7 @@ export function renderDingTalkSessionMessage(payload: unknown): Record<string, u
       `- Work Item: \`${text(card?.workItemId, "unavailable", 128)}\``,
       `- 状态: ${text(card?.status, "planning", 80)}`,
     );
-    if (status !== "ready_for_execution" && status !== "candidate_ready") {
+    if (!["ready_for_execution", "candidate_ready", "completed", "owner_accepted", "owner_rejected"].includes(status)) {
       if (typeof card?.summary === "string" && card.summary.trim()) lines.push(`- 摘要: ${text(card.summary, "", 1_000)}`);
       if (typeof card?.candidateSha === "string" && card.candidateSha.trim()) {
         lines.push(`- Candidate: \`${text(card.candidateSha, "unavailable", 128)}\``);

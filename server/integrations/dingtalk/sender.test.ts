@@ -28,13 +28,13 @@ describe("DingTalk session sender", () => {
     expect(markdown.title).toBe("方案已确认，准备执行");
     expect(markdown.text).toContain("任务内容");
     expect(markdown.text).toContain("当前进度：准备开始");
-    expect(markdown.text).toContain("下一步：系统将自动执行，完成后通知你验收");
+    expect(markdown.text).toContain("下一步：系统将自动执行，完成后直接通知结果");
     expect(markdown.text).toContain("任务编号");
     expect(markdown.text).not.toContain("ready_for_execution");
     expect(markdown.text).not.toContain("Work Item");
   });
 
-  it("shows the concrete candidate diff instead of only its SHA and path", async () => {
+  it("explains a risky change in plain language without exposing implementation evidence or tokens", async () => {
     let requestBody: unknown;
     const sender = new FetchDingTalkSessionSender(async (_url, init) => {
       requestBody = JSON.parse(String(init?.body)) as unknown;
@@ -50,25 +50,51 @@ describe("DingTalk session sender", () => {
       changedPaths: ["pilot-output.txt"],
       testStates: ["pilot: target_passed"],
       candidatePreview: "@@ -1 +1 @@\n-pending\n+hello pilot",
+      approvalReasons: ["涉及部署或运行环境，可能影响服务可用性。"],
       actions: [
         { label: "接受候选", actionToken: "accept_code_12345678901234567890123456789012" },
         { label: "拒绝候选", actionToken: "reject_code_12345678901234567890123456789012" },
       ],
     });
     const markdown = (requestBody as { markdown: { title: string; text: string } }).markdown;
-    expect(markdown.title).toBe("执行完成，请验收");
-    expect(markdown.text).toContain("修改前");
-    expect(markdown.text).toContain("pending");
-    expect(markdown.text).toContain("修改后");
-    expect(markdown.text).toContain("hello pilot");
-    expect(markdown.text).toContain("验证结果：pilot 已通过");
-    expect(markdown.text).toContain("请由任务负责人在 30 分钟内回复以下一条");
-    expect(markdown.text).toContain("@研发助手 接受 accept_code_");
-    expect(markdown.text).toContain("@研发助手 拒绝 reject_code_");
-    expect(markdown.text).toContain("@研发助手 刷新验收码 WI-D183F9E734FE");
+    expect(markdown.title).toBe("修改完成，需要负责人确认");
+    expect(markdown.text).toContain("涉及部署或运行环境");
+    expect(markdown.text).toContain("@研发助手 批准 WI\\-D183F9E734FE");
+    expect(markdown.text).toContain("@研发助手 退回 WI\\-D183F9E734FE 请说明原因");
+    expect(markdown.text).not.toContain("pending");
+    expect(markdown.text).not.toContain("hello pilot");
+    expect(markdown.text).not.toContain("pilot-output.txt");
+    expect(markdown.text).not.toContain("accept_code_");
+    expect(markdown.text).not.toContain("reject_code_");
+    expect(markdown.text).not.toContain("刷新验收码");
     expect(markdown.text).not.toContain("candidate_ready");
     expect(markdown.text).not.toContain("target_passed");
     expect(markdown.text).not.toContain("2570cfb4692ad7775e261f403964d5585a95de7e");
+  });
+
+  it("reports a verified low-risk change as completed without asking for acceptance", async () => {
+    let requestBody: unknown;
+    const sender = new FetchDingTalkSessionSender(async (_url, init) => {
+      requestBody = JSON.parse(String(init?.body)) as unknown;
+      return new Response(JSON.stringify({ errcode: 0, errmsg: "ok" }), { status: 200 });
+    });
+    await sender.send("https://api.dingtalk.com/session-webhook", {
+      type: "plan_status_card",
+      headline: "修改已完成",
+      workItemId: "WI-D183F9E734FE",
+      status: "completed",
+      summary: "发布看板现在会显示清晰的完成结果。",
+      resultHighlights: ["产品和测试人员可以直接看到本次变化", "普通修改不再需要重复确认"],
+    });
+    const markdown = (requestBody as { markdown: { title: string; text: string } }).markdown;
+    expect(markdown.title).toBe("修改已完成");
+    expect(markdown.text).toContain("发布看板现在会显示清晰的完成结果");
+    expect(markdown.text).toContain("产品和测试人员可以直接看到本次变化");
+    expect(markdown.text).toContain("验证情况：相关检查已通过");
+    expect(markdown.text).toContain("当前状态：已完成，无需再次确认");
+    expect(markdown.text).not.toContain("接受");
+    expect(markdown.text).not.toContain("candidate");
+    expect(markdown.text).not.toContain("SHA");
   });
 
   it("renders command outcomes and hides internal failure codes from group users", async () => {

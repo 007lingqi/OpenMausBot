@@ -11,6 +11,11 @@ import type {
 } from "../../integrations/dingtalk/types.ts";
 import type { DirectOwnerControlAction, OwnerActionOutcome } from "../actions.ts";
 import {
+  assessCandidateApproval,
+  completeVerifiedLowRiskCandidate,
+  readCandidateApprovalTarget,
+} from "../candidate-approval.ts";
+import {
   type ContainmentBinding,
   type ContainmentPort,
   type ContainmentProof,
@@ -157,7 +162,7 @@ interface UnresolvedRun {
 
 const SYSTEM_CLOCK: RuntimeClock = { now: Date.now };
 const NULL_LOGGER: RuntimeLogger = { write() {} };
-const CANDIDATE_READY_SUMMARY = "修改已完成并通过验证，请确认结果是否符合需求。";
+const CANDIDATE_READY_SUMMARY = "本次改动已完成并通过基础验证，但存在需要负责人确认的风险。";
 const DIRECT_TEXT_ACTIONS: Readonly<Partial<Record<DingTalkOwnerTextCommand["command"], DirectOwnerControlAction>>> = {
   pause: "pause",
   resume: "resume",
@@ -173,6 +178,8 @@ function commandSummary(command: DingTalkOwnerTextCommand["command"], allowed: b
     retry: "任务已重新进入受控执行队列。",
     cancel: "任务已取消，不会再产生新的执行结果。",
     refresh_approval: "已重新生成当前候选的验收指令。",
+    approve_candidate: "负责人已批准本次风险改动，任务已完成。",
+    reject_candidate: "负责人已退回本次风险改动，系统将按反馈继续调整。",
   } as const)[command];
   const guidance: Readonly<Record<string, string>> = {
     not_active_owner: "只有当前唯一负责人可以执行该操作。",
@@ -185,6 +192,7 @@ function commandSummary(command: DingTalkOwnerTextCommand["command"], allowed: b
     work_item_already_accepted: "任务已经验收完成，无需重复操作。",
     work_item_cancelled: "任务已经取消，不能执行该操作。",
     candidate_not_current: "当前没有可验收候选，请先查询任务状态。",
+    reject_reason_required: "退回时请在任务编号后说明需要调整的内容。",
   };
   return guidance[reason] ?? "当前状态不允许执行该操作，请先查询任务状态。";
 }
@@ -196,6 +204,21 @@ export function enqueueExecutionOutcomeStatus(input: {
   now: number;
 }): void {
   const passed = input.outcome.report.state === "target_tests_passed" && !!input.outcome.resultSha;
+  if (passed) {
+    const completion = completeVerifiedLowRiskCandidate(input.database, {
+      workItemId: input.outcome.workItemId,
+      runId: input.outcome.runId,
+      sourceEventId: `candidate:${input.outcome.runId}`,
+      now: input.now,
+    });
+    if (completion.completed) return;
+  }
+  const assessment = passed
+    ? assessCandidateApproval(input.database, {
+        workItemId: input.outcome.workItemId,
+        runId: input.outcome.runId,
+      })
+    : null;
   const candidatePreview = passed
     ? renderCandidateDiffPreview({
         repository: input.outcome.worktreePath,
@@ -214,13 +237,15 @@ export function enqueueExecutionOutcomeStatus(input: {
   if (passed && input.cardTemplateId) {
     card = {
       type: "plan_status_card" as const,
-      headline: "候选已就绪" as const,
+      headline: "修改完成，需要负责人确认" as const,
       cardTemplateId: input.cardTemplateId,
       outTrackId: `candidate-${input.outcome.runId}`,
       workItemId: input.outcome.workItemId,
       workItemVersion: workItem!.version,
       status: "candidate_ready" as const,
       summary: CANDIDATE_READY_SUMMARY,
+      approvalReasons: assessment?.approvalReasons,
+      approvalRequired: true,
       candidateSha: input.outcome.resultSha!,
       ...(candidatePreview ? { candidatePreview } : {}),
       changedPaths: input.outcome.changedPaths,
@@ -234,6 +259,7 @@ export function enqueueExecutionOutcomeStatus(input: {
       ...(passed
         ? {
             summary: CANDIDATE_READY_SUMMARY,
+            approvalReasons: assessment?.approvalReasons,
             candidateSha: input.outcome.resultSha!,
             ...(candidatePreview ? { candidatePreview } : {}),
             changedPaths: input.outcome.changedPaths,
@@ -293,6 +319,16 @@ export function enqueuePendingOwnerDecisionCards(
   }>;
   let enqueued = 0;
   for (const row of rows) {
+    const completion = completeVerifiedLowRiskCandidate(database, {
+      workItemId: row.work_item_id,
+      runId: row.run_id,
+      sourceEventId: `candidate-completed:${row.run_id}:v${row.work_item_version}`,
+      now,
+    });
+    if (completion.completed) {
+      enqueued += 1;
+      continue;
+    }
     const sourceEventId = `owner-decision:${row.run_id}:v${row.work_item_version}`;
     if (database.prepare(
       "SELECT 1 FROM collaboration_outbox WHERE source = 'dingtalk' AND source_event_id = ?",
@@ -317,7 +353,7 @@ export function enqueuePendingOwnerDecisionCards(
         card: cardTemplateId
           ? {
               type: "plan_status_card",
-              headline: "候选已就绪",
+              headline: "修改完成，需要负责人确认",
               cardTemplateId,
               outTrackId: `candidate-${row.run_id}`,
               workItemId: row.work_item_id,
@@ -325,6 +361,8 @@ export function enqueuePendingOwnerDecisionCards(
               planRevision: row.plan_revision,
               status: "candidate_ready",
               summary: CANDIDATE_READY_SUMMARY,
+              approvalReasons: completion.approvalReasons,
+              approvalRequired: true,
               candidateSha: row.result_sha,
               ...(candidatePreview ? { candidatePreview } : {}),
               changedPaths,
@@ -336,6 +374,7 @@ export function enqueuePendingOwnerDecisionCards(
               planRevision: row.plan_revision,
               status: "candidate_ready",
               summary: CANDIDATE_READY_SUMMARY,
+              approvalReasons: completion.approvalReasons,
               candidateSha: row.result_sha,
               ...(candidatePreview ? { candidatePreview } : {}),
               changedPaths,
@@ -390,6 +429,7 @@ export function enqueueOwnerDecisionForWorkItem(
     .prepare("SELECT command_id, state FROM collaboration_test_evidence WHERE run_id = ? ORDER BY command_id")
     .all(row.run_id) as unknown as Array<{ command_id: string; state: string }>;
   const changedPaths = parseJson<string[]>(row.changed_paths_json) ?? [];
+  const assessment = assessCandidateApproval(database, { workItemId: row.work_item_id, runId: row.run_id });
   const candidatePreview = renderCandidateDiffPreview({
     repository: row.repository_path,
     baseSha: row.base_sha,
@@ -399,7 +439,7 @@ export function enqueueOwnerDecisionForWorkItem(
   const card = cardTemplateId
     ? {
         type: "plan_status_card" as const,
-        headline: "候选已就绪" as const,
+        headline: "修改完成，需要负责人确认" as const,
         cardTemplateId,
         outTrackId: `candidate-${row.run_id}-refresh-${sourceEventId}`,
         workItemId: row.work_item_id,
@@ -407,6 +447,8 @@ export function enqueueOwnerDecisionForWorkItem(
         planRevision: row.plan_revision,
         status: "candidate_ready" as const,
         summary: CANDIDATE_READY_SUMMARY,
+        approvalReasons: assessment.approvalReasons,
+        approvalRequired: true,
         candidateSha: row.result_sha,
         ...(candidatePreview ? { candidatePreview } : {}),
         changedPaths,
@@ -418,6 +460,7 @@ export function enqueueOwnerDecisionForWorkItem(
         planRevision: row.plan_revision,
         status: "candidate_ready",
         summary: CANDIDATE_READY_SUMMARY,
+        approvalReasons: assessment.approvalReasons,
         candidateSha: row.result_sha,
         ...(candidatePreview ? { candidatePreview } : {}),
         changedPaths,
@@ -763,6 +806,85 @@ export class CollaborationHeadlessRuntime {
         command: command.command,
         workItemId: command.workItemId,
         reason: row ? "status_returned" : "unknown_work_item",
+      };
+    }
+
+    if (command.command === "approve_candidate" || command.command === "reject_candidate") {
+      if (existingResponse) {
+        return {
+          allowed: true,
+          duplicate: true,
+          command: command.command,
+          workItemId: command.workItemId,
+          reason: "owner_action_applied",
+        };
+      }
+      if (command.command === "reject_candidate" && !command.reason?.trim()) {
+        this.enqueueOwnerTextCommandStatus(command, false, "reject_reason_required");
+        return {
+          allowed: false,
+          duplicate: false,
+          command: command.command,
+          workItemId: command.workItemId,
+          reason: "reject_reason_required",
+        };
+      }
+      const policy = evaluateOwnerPolicy(database, {
+        sender: command.sender,
+        capability: command.command === "approve_candidate" ? "candidate.accept" : "candidate.reject",
+        now: command.receivedAt,
+      });
+      if (policy.decision !== "allow") {
+        this.enqueueOwnerTextCommandStatus(command, false, policy.reason);
+        return {
+          allowed: false,
+          duplicate: false,
+          command: command.command,
+          workItemId: command.workItemId,
+          reason: policy.reason,
+        };
+      }
+      const target = readCandidateApprovalTarget(database, command.workItemId);
+      if (!target) {
+        this.enqueueOwnerTextCommandStatus(command, false, "candidate_not_current");
+        return {
+          allowed: false,
+          duplicate: false,
+          command: command.command,
+          workItemId: command.workItemId,
+          reason: "candidate_not_current",
+        };
+      }
+      const action = command.command === "approve_candidate" ? "accept" : "reject";
+      const issued = this.service!.issueOwnerAction({
+        action,
+        workItemId: target.workItemId,
+        expectedVersion: target.workItemVersion,
+        candidateSha: target.resultSha,
+        now: command.receivedAt,
+      });
+      const ownerAction: DingTalkCardAction = {
+        transportEventId: command.transportEventId,
+        transportMessageId: command.transportMessageId,
+        actionToken: issued.token,
+        sender: command.sender,
+        ...(command.reason ? { reason: command.reason } : {}),
+        receivedAt: command.receivedAt,
+        origin: "text",
+      };
+      const outcome = this.service!.performOwnerAction({
+        actionToken: issued.token,
+        sender: command.sender,
+        ...(command.reason ? { reason: command.reason } : {}),
+        now: command.receivedAt,
+      });
+      this.enqueueTextOwnerActionStatus(ownerAction, outcome);
+      return {
+        allowed: outcome.allowed,
+        duplicate: outcome.duplicate,
+        command: command.command,
+        workItemId: command.workItemId,
+        reason: outcome.reason,
       };
     }
 

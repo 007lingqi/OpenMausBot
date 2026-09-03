@@ -41,18 +41,18 @@ describe("DingTalk Owner status card", () => {
       summary: "目标测试已通过",
       candidateSha,
       actions: [
-        { label: "接受候选", actionToken: "accept-opaque-token" },
-        { label: "拒绝候选", actionToken: "reject-opaque-token" },
+        { label: "批准", actionToken: "accept-opaque-token" },
+        { label: "退回", actionToken: "reject-opaque-token" },
       ],
     });
     expect(card).toMatchObject({
       cardData: {
         cardParamMap: {
-          title: "执行完成，请验收",
-          status: "等待验收",
+          title: "修改完成，需要负责人确认",
+          status: "等待负责人确认",
           actions: JSON.stringify([
-            { id: "action-1", label: "接受候选" },
-            { id: "action-2", label: "拒绝候选" },
+            { id: "action-1", label: "批准" },
+            { id: "action-2", label: "退回" },
           ]),
         },
       },
@@ -117,8 +117,8 @@ describe("DingTalk Owner status card", () => {
       workItemVersion: 4,
       candidateSha: "2570cfb4692ad7775e261f403964d5585a95de7e",
       actions: [
-        { label: "接受候选", actionToken: "accept-opaque-token" },
-        { label: "拒绝候选", actionToken: "reject-opaque-token" },
+        { label: "批准", actionToken: "accept-opaque-token" },
+        { label: "退回", actionToken: "reject-opaque-token" },
       ],
     });
   });
@@ -126,7 +126,7 @@ describe("DingTalk Owner status card", () => {
   it("materializes tokens only when a durable candidate request is delivered", () => {
     const request = {
       type: "plan_status_card" as const,
-      headline: "候选已就绪" as const,
+      headline: "修改完成，需要负责人确认" as const,
       cardTemplateId: "template-1",
       outTrackId: "candidate-run-1",
       workItemId: "WI-1",
@@ -159,15 +159,14 @@ describe("DingTalk Owner status card", () => {
     expect(renderDingTalkOwnerStatusCard(card)).toMatchObject({
       cardData: {
         cardParamMap: {
-          title: "执行完成，请验收",
-          status: "等待验收",
-          candidatePreview: expect.stringContaining("修改前"),
+          title: "修改完成，需要负责人确认",
+          status: "等待负责人确认",
         },
       },
     });
     const visible = JSON.stringify(renderDingTalkOwnerStatusCard(card));
-    expect(visible).toContain("修改后");
-    expect(visible).toContain("hello pilot");
+    expect(visible).not.toContain("修改后");
+    expect(visible).not.toContain("hello pilot");
     expect(visible).not.toContain("candidate_ready");
     expect(visible).not.toContain("target_passed");
     expect(JSON.stringify(request)).not.toContain("ephemeral-token");
@@ -176,7 +175,7 @@ describe("DingTalk Owner status card", () => {
   it("materializes the same SHA-bound decisions for ordinary messages", () => {
     const request = {
       type: "plan_status_card" as const,
-      headline: "候选已就绪" as const,
+      headline: "修改完成，需要负责人确认" as const,
       workItemId: "WI-1",
       workItemVersion: 7,
       status: "candidate_ready" as const,

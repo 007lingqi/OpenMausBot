@@ -41,7 +41,8 @@ export interface PlanStatusCard {
     | "计划生成中"
     | "计划已发布"
     | "计划生成失败"
-    | "候选已就绪"
+    | "修改完成，需要负责人确认"
+    | "修改已完成"
     | "执行未完成"
     | "候选已接受"
     | "候选已拒绝"
@@ -54,6 +55,7 @@ export interface PlanStatusCard {
     | "ready_for_execution"
     | "planning_failed"
     | "candidate_ready"
+    | "completed"
     | "execution_failed"
     | "owner_accepted"
     | "owner_rejected"
@@ -65,6 +67,9 @@ export interface PlanStatusCard {
   candidatePreview?: string;
   changedPaths?: string[];
   testStates?: string[];
+  resultHighlights?: string[];
+  approvalReasons?: string[];
+  approvalRequired?: boolean;
   workItemVersion?: number;
   cardTemplateId?: string;
   outTrackId?: string;
@@ -74,7 +79,15 @@ export interface PlanStatusCard {
 export interface CommandStatusCard {
   type: "command_status_card";
   headline: "任务状态" | "控制操作已执行" | "控制操作未执行";
-  command: "status" | "pause" | "resume" | "retry" | "cancel" | "refresh_approval";
+  command:
+    | "status"
+    | "pause"
+    | "resume"
+    | "retry"
+    | "cancel"
+    | "refresh_approval"
+    | "approve_candidate"
+    | "reject_candidate";
   workItemId: string;
   outcome: "allowed" | "denied";
   summary: string;
@@ -155,6 +168,7 @@ export function renderPlanStatusCard(input: {
     | "ready_for_execution"
     | "planning_failed"
     | "candidate_ready"
+    | "completed"
     | "execution_failed"
     | "owner_accepted"
     | "owner_rejected"
@@ -165,6 +179,8 @@ export function renderPlanStatusCard(input: {
   candidatePreview?: string;
   changedPaths?: string[];
   testStates?: string[];
+  resultHighlights?: string[];
+  approvalReasons?: string[];
   workItemVersion?: number;
 }): PlanStatusCard {
   if (["owner_accepted", "owner_rejected", "owner_action_denied"].includes(input.status)) {
@@ -203,7 +219,7 @@ export function renderPlanStatusCard(input: {
   if (input.status === "candidate_ready") {
     return {
       type: "plan_status_card",
-      headline: "候选已就绪",
+      headline: "修改完成，需要负责人确认",
       workItemId: input.workItemId,
       planRevision: input.planRevision,
       status: input.status,
@@ -212,7 +228,20 @@ export function renderPlanStatusCard(input: {
       candidatePreview: input.candidatePreview,
       changedPaths: input.changedPaths ?? [],
       testStates: input.testStates ?? [],
+      approvalReasons: input.approvalReasons ?? ["本次改动需要负责人确认后才能完成。"],
+      approvalRequired: true,
       workItemVersion: input.workItemVersion,
+    };
+  }
+  if (input.status === "completed") {
+    return {
+      type: "plan_status_card",
+      headline: "修改已完成",
+      workItemId: input.workItemId,
+      status: input.status,
+      summary: input.summary ?? "已按确认的需求完成修改。",
+      resultHighlights: input.resultHighlights ?? ["相关功能已按确认要求更新"],
+      approvalRequired: false,
     };
   }
   if (input.status === "execution_failed") {

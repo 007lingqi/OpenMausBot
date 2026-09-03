@@ -20,7 +20,7 @@ describe("DingTalk interactive card sender", () => {
       idempotencyKey: "outbox-1",
       payload: {
         type: "plan_status_card",
-        headline: "候选已就绪",
+        headline: "修改完成，需要负责人确认",
         cardTemplateId: "template-1",
         outTrackId: "candidate-run-1",
         workItemId: "WI-1",
@@ -29,8 +29,8 @@ describe("DingTalk interactive card sender", () => {
         summary: "目标测试已通过",
         candidateSha: "2".repeat(40),
         actions: [
-          { label: "接受候选", actionToken: "accept-token" },
-          { label: "拒绝候选", actionToken: "reject-token" },
+          { label: "批准", actionToken: "accept-token" },
+          { label: "退回", actionToken: "reject-token" },
         ],
       },
     })).resolves.toEqual({ ok: true, status: 200 });
@@ -53,8 +53,8 @@ describe("DingTalk interactive card sender", () => {
       callbackType: "STREAM",
       cardData: {
         cardParamMap: {
-          title: "执行完成，请验收",
-          status: "等待验收",
+          title: "修改完成，需要负责人确认",
+          status: "等待负责人确认",
         },
       },
       privateData: {
@@ -83,7 +83,7 @@ describe("DingTalk interactive card sender", () => {
       idempotencyKey: "ordinary-1",
       payload: {
         type: "plan_status_card",
-        headline: "候选已就绪",
+        headline: "修改完成，需要负责人确认",
         workItemId: "WI-1",
         status: "candidate_ready",
         summary: "请验收",
@@ -101,7 +101,8 @@ describe("DingTalk interactive card sender", () => {
       robotCode: "app-key",
     });
     const message = JSON.parse(String(body.msgParam)) as { title: string; text: string };
-    expect(message.title).toBe("执行完成，请验收");
-    expect(message.text).toContain("@研发助手 接受 accept_code_");
+    expect(message.title).toBe("修改完成，需要负责人确认");
+    expect(message.text).toContain("@研发助手 批准 WI\\-1");
+    expect(message.text).not.toContain("accept_code_");
   });
 });

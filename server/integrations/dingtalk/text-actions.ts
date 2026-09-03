@@ -7,6 +7,7 @@ import type {
 
 const TEXT_ACTION = /(?:^|\s)(接受|拒绝)\s+([A-Za-z0-9_-]{32,128})(?:\s+([\s\S]{1,2000}))?\s*$/u;
 const TEXT_COMMAND = /(?:^|\s)(状态|暂停|恢复|重试|取消|刷新验收码)\s+(WI-[A-F0-9]{12})\s*$/iu;
+const CANDIDATE_COMMAND = /(?:^|\s)(批准|退回)\s+(WI-[A-F0-9]{12})(?:\s+([\s\S]{1,2000}))?\s*$/iu;
 const COMMANDS: Readonly<Record<string, DingTalkOwnerTextCommandName>> = {
   状态: "status",
   暂停: "pause",
@@ -41,6 +42,18 @@ export function parseDingTalkOwnerTextAction(message: DingTalkInboundMessage): D
 
 /** Parses WI-addressed control commands without delegating their meaning to the Planner. */
 export function parseDingTalkOwnerTextCommand(message: DingTalkInboundMessage): DingTalkOwnerTextCommand | null {
+  const candidate = CANDIDATE_COMMAND.exec(message.text.trim());
+  if (candidate) {
+    return {
+      transportEventId: message.sourceEventId,
+      transportMessageId: message.transportMessageId,
+      command: candidate[1] === "批准" ? "approve_candidate" : "reject_candidate",
+      workItemId: candidate[2]!.toUpperCase(),
+      ...(candidate[3]?.trim() ? { reason: candidate[3].trim() } : {}),
+      sender: message.sender,
+      receivedAt: message.receivedAt ?? Date.now(),
+    };
+  }
   const matched = TEXT_COMMAND.exec(message.text.trim());
   if (!matched) return null;
   const command = COMMANDS[matched[1]!];

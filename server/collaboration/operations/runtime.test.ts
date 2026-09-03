@@ -195,14 +195,15 @@ describe("production-isomorphic collaboration runtime", () => {
       workItemId,
       workItemVersion: 1,
       candidateSha: "2".repeat(40),
-      summary: "修改已完成并通过验证，请确认结果是否符合需求。",
+      summary: "本次改动已完成并通过基础验证，但存在需要负责人确认的风险。",
+      approvalRequired: true,
     });
     expect(row.payload_json).not.toContain("隔离执行");
     expect(row.payload_json).not.toContain("opaque-token");
     database.close();
   });
 
-  it("idempotently recovers an Owner decision card for an existing unaccepted candidate", () => {
+  it("idempotently recovers an Owner decision card and accepts a high-risk candidate by plain command", async () => {
     const repository = temporaryDirectory();
     execFileSync("git", ["init", "-q", repository]);
     execFileSync("git", ["-C", repository, "config", "user.name", "Pilot Test"]);
@@ -218,11 +219,20 @@ describe("production-isomorphic collaboration runtime", () => {
 
     const dataDirectory = temporaryDirectory();
     const service = startCollaborationService({ dataDirectory });
+    service.bootstrapOwnerLocally({ senderCorpId: "corp", senderStaffId: "staff", now: 100 });
     const workItemId = service.ingestDingTalkMessage(message("existing-candidate")).workItemId!;
     service.close();
     const database = new DatabaseSync(join(dataDirectory, "collaboration", "collaboration.sqlite"));
     database.exec("PRAGMA foreign_keys = OFF");
     database.prepare("UPDATE collaboration_work_items SET current_plan_revision = 1 WHERE id = ?").run(workItemId);
+    database.prepare(
+      "INSERT INTO collaboration_work_nodes " +
+        "(work_item_id,plan_revision,node_id,node_type,status,assigned_agent_id,objective,input_evidence_json," +
+        "instructions,read_scope_json,write_scope_json,deny_scope_json,commands_json,expected_artifacts_json," +
+        "completion_definition,risk,budget_json,created_at,execution_status,control_state) " +
+        "VALUES (?,1,'validate','validate','ready','developer','verify','[]','verify','[]','[]','[]'," +
+        "'[\"pilot\"]','[]','target passes','high','{}',1,'candidate_ready','active')",
+    ).run(workItemId);
     database.prepare(
       "INSERT INTO collaboration_runs " +
         "(id,work_item_id,plan_revision,node_id,attempt,agent_id,thread_id,turn_id,status,repository_path," +
@@ -271,6 +281,34 @@ describe("production-isomorphic collaboration runtime", () => {
       "SELECT count(*) AS count FROM collaboration_outbox WHERE source_event_id = 'refresh-command-1'",
     ).get()).toEqual({ count: 1 });
     database.close();
+
+    const runtime = new CollaborationHeadlessRuntime({ dataDirectory, platform: "linux" });
+    await runtime.start();
+    const approved = runtime.performDingTalkOwnerTextCommand({
+      transportEventId: "approve-command-1",
+      transportMessageId: "approve-transport-1",
+      command: "approve_candidate",
+      workItemId,
+      sender: message("owner-approval").sender,
+      receivedAt: 5_000,
+    });
+    expect(approved).toMatchObject({ allowed: true, duplicate: false, reason: "owner_action_applied" });
+    const approvedDb = new DatabaseSync(join(dataDirectory, "collaboration", "collaboration.sqlite"));
+    expect(approvedDb.prepare(
+      "SELECT status,control_state,accepted_candidate_sha,accepted_by FROM collaboration_work_items WHERE id = ?",
+    ).get(workItemId)).toMatchObject({
+      status: "accepted",
+      control_state: "accepted",
+      accepted_candidate_sha: resultSha,
+      accepted_by: expect.any(String),
+    });
+    const response = approvedDb.prepare(
+      "SELECT payload_json FROM collaboration_outbox WHERE source_event_id = 'approve-command-1'",
+    ).get() as { payload_json: string };
+    expect(JSON.parse(response.payload_json)).toMatchObject({ status: "owner_accepted" });
+    expect(response.payload_json).not.toContain("actionToken");
+    approvedDb.close();
+    await runtime.stop();
   });
 
   it("returns status to contributors and applies direct controls only for the sole Owner", async () => {

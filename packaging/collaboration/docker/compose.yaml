@@ -26,8 +26,8 @@ services:
       OMB_DINGTALK_ENABLED: "1"
       OMB_DINGTALK_CREDENTIAL_FILE: /run/openmausbot-secrets/dingtalk.json
       OMB_DINGTALK_ALLOWED_CONVERSATION_IDS: ${OMB_DINGTALK_ALLOWED_CONVERSATION_IDS:?required}
-      # Optional enhancement only. The default Owner decision flow uses ordinary
-      # DingTalk replies with one-time SHA/version-bound verification codes.
+      # Optional enhancement only. The default high-risk approval flow uses
+      # ordinary DingTalk replies addressed by Work Item ID; opaque tokens stay server-side.
       OMB_DINGTALK_PROACTIVE_OPEN_CONVERSATION_ID: ${OMB_DINGTALK_PROACTIVE_OPEN_CONVERSATION_ID:-}
       OMB_DINGTALK_CARD_TEMPLATE_ID: ${OMB_DINGTALK_CARD_TEMPLATE_ID:-}
       OMB_EXECUTION_ENABLED: "1"

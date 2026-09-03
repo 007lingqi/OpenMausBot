@@ -40,13 +40,16 @@ export type DingTalkOwnerTextCommandName =
   | "resume"
   | "retry"
   | "cancel"
-  | "refresh_approval";
+  | "refresh_approval"
+  | "approve_candidate"
+  | "reject_candidate";
 
 export interface DingTalkOwnerTextCommand {
   transportEventId: string;
   transportMessageId: string;
   command: DingTalkOwnerTextCommandName;
   workItemId: string;
+  reason?: string;
   sender: DingTalkSender;
   receivedAt: number;
 }

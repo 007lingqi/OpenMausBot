@@ -50,24 +50,6 @@ export interface OwnerActionIssuePort {
   issueOwnerAction(input: IssueOwnerActionInput): IssuedOwnerAction;
 }
 
-function candidatePreview(value: string): string {
-  const sanitized = value
-    .slice(0, 3_500)
-    .replaceAll("\r", "")
-    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu, "�")
-    .replaceAll("`", "ˋ");
-  const removed: string[] = [];
-  const added: string[] = [];
-  for (const line of sanitized.split("\n")) {
-    if (line.startsWith("-") && !line.startsWith("---")) removed.push(line.slice(1));
-    if (line.startsWith("+") && !line.startsWith("+++")) added.push(line.slice(1));
-  }
-  if (removed.length === 1 && added.length === 1) {
-    return `**修改前**\n\n\`\`\`text\n${removed[0]}\n\`\`\`\n\n**修改后**\n\n\`\`\`text\n${added[0]}\n\`\`\``;
-  }
-  return `**详细变更（供研发核对）**\n\n\`\`\`diff\n${sanitized}\n\`\`\``;
-}
-
 export function isDingTalkCandidateOwnerCardRequest(value: unknown): value is DingTalkCandidateOwnerCardRequest {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const card = value as Record<string, unknown>;
@@ -124,8 +106,8 @@ function issueCandidateActions(
   const accept = issue("accept");
   const reject = issue("reject");
   return [
-    { label: "接受候选", actionToken: accept.token },
-    { label: "拒绝候选", actionToken: reject.token },
+    { label: "批准", actionToken: accept.token },
+    { label: "退回", actionToken: reject.token },
   ];
 }
 
@@ -144,7 +126,7 @@ export function issueDingTalkCandidateOwnerCard(
 ): DingTalkCandidateOwnerCard {
   return {
     type: "plan_status_card",
-    headline: "候选已就绪",
+    headline: "修改完成，需要负责人确认",
     cardTemplateId: input.cardTemplateId,
     outTrackId: input.outTrackId,
     workItemId: input.workItemId,
@@ -204,7 +186,7 @@ export function renderDingTalkOwnerStatusCard(
   input: DingTalkOwnerStatusCardInput | DingTalkCandidateOwnerCard,
 ): Record<string, unknown> {
   const candidateReady = input.status === "candidate_ready";
-  const title = candidateReady ? "执行完成，请验收" : "title" in input ? input.title : input.headline;
+  const title = candidateReady ? "修改完成，需要负责人确认" : "title" in input ? input.title : input.headline;
   return {
     cardTemplateId: input.cardTemplateId,
     outTrackId: input.outTrackId,
@@ -214,10 +196,7 @@ export function renderDingTalkOwnerStatusCard(
         title: title.slice(0, 120),
         summary: input.summary.slice(0, 4_000),
         workItemId: input.workItemId,
-        status: candidateReady ? "等待验收" : input.status,
-        ...(input.candidatePreview
-          ? { candidatePreview: candidatePreview(input.candidatePreview) }
-          : {}),
+        status: candidateReady ? "等待负责人确认" : input.status,
         actions: JSON.stringify(input.actions.slice(0, 8).map((action, index) => ({ id: `action-${index + 1}`, label: action.label.slice(0, 40) }))),
       },
     },

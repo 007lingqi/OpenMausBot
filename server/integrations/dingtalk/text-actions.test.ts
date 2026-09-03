@@ -62,4 +62,17 @@ describe("DingTalk Owner text actions", () => {
     expect(parseDingTalkOwnerTextCommand(message("我们是否应该暂停这个需求？"))).toBeNull();
     expect(parseDingTalkOwnerTextCommand(message("状态 WI-INVALID-001"))).toBeNull();
   });
+
+  it("parses plain-language approval and rejection by Work Item ID", () => {
+    expect(parseDingTalkOwnerTextCommand(message("@研发助手 批准 WI-a1b2c3d4e5f6"))).toMatchObject({
+      command: "approve_candidate",
+      workItemId: "WI-A1B2C3D4E5F6",
+    });
+    expect(parseDingTalkOwnerTextCommand(message("@研发助手 退回 WI-a1b2c3d4e5f6 首页文案仍不清楚"))).toMatchObject({
+      command: "reject_candidate",
+      workItemId: "WI-A1B2C3D4E5F6",
+      reason: "首页文案仍不清楚",
+    });
+    expect(parseDingTalkOwnerTextCommand(message("这个任务可以批准吗？"))).toBeNull();
+  });
 });
