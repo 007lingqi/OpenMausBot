@@ -82,6 +82,15 @@ export class OutboxDispatcher {
     try {
       assertCurrentInstanceLease(this.database, instance, now);
       assertLedgerArmed(this.database);
+      if (this.transport.retryPolicy === "only-confirmed-unsent") {
+        // The old process may have sent before dying. A missing local receipt is
+        // not proof of non-delivery, so do not replay an expired transmission.
+        this.database.prepare("UPDATE collaboration_outbox SET delivery_state='dead_letter',dead_lettered_at=?,last_error='delivery_unconfirmed_after_restart', " +
+          "claim_owner=NULL,claim_fence=NULL,claim_expires_at=NULL WHERE sent_at IS NULL AND superseded_at IS NULL AND " +
+          "((delivery_state='claimed' AND claim_expires_at<=?) OR (delivery_state='pending' AND attempt>0 AND " +
+          "(last_error IS NULL OR substr(last_error,1,length('delivery_confirmed_unsent:'))<>'delivery_confirmed_unsent:')))")
+          .run(now, now);
+      }
       this.database.prepare(
         "UPDATE collaboration_outbox SET delivery_state = 'superseded', superseded_at = ?, " +
           "claim_owner = NULL, claim_fence = NULL, claim_expires_at = NULL " +
@@ -173,7 +182,8 @@ export class OutboxDispatcher {
             "WHERE id = ? AND delivery_state = 'claimed' AND claim_owner = ? AND claim_fence = ? " +
             "AND claim_expires_at > ? AND superseded_at IS NULL",
         ).run(now, row.id, instance.ownerId, instance.fence, now);
-      } else if (result.outcome === "permanent_failure" || row.attempt >= this.options.maxAttempts) {
+      } else if (result.outcome === "permanent_failure" || row.attempt >= this.options.maxAttempts ||
+        (result.outcome === "unknown" && this.transport.retryPolicy === "only-confirmed-unsent")) {
         state = "dead_letter";
         update = this.database.prepare(
           "UPDATE collaboration_outbox SET delivery_state = 'dead_letter', dead_lettered_at = ?, last_error = ?, " +
@@ -190,7 +200,9 @@ export class OutboxDispatcher {
             "claim_owner = NULL, claim_fence = NULL, claim_expires_at = NULL " +
             "WHERE id = ? AND delivery_state = 'claimed' AND claim_owner = ? AND claim_fence = ? " +
             "AND claim_expires_at > ? AND superseded_at IS NULL",
-        ).run(now + exponent + jitter, result.error, row.id, instance.ownerId, instance.fence, now);
+        ).run(now + exponent + jitter,
+          this.transport.retryPolicy === "only-confirmed-unsent" ? `delivery_confirmed_unsent:${result.error}` : result.error,
+          row.id, instance.ownerId, instance.fence, now);
       }
       if (update.changes !== 1) {
         const superseded = this.database

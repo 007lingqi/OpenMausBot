@@ -3,6 +3,20 @@ import { describe, expect, it } from "vitest";
 import { FetchDingTalkInteractiveCardSender } from "./interactive-card-sender.ts";
 
 describe("DingTalk interactive card sender", () => {
+  it.each(["lost", "invalid", "missing_receipt", "rejected", "token_failure"])("distinguishes message submission uncertainty from proven non-delivery: %s", async mode => {
+    let submitted = 0;
+    const sender = new FetchDingTalkInteractiveCardSender({ load: () => ({ clientId: "synthetic-app", clientSecret: "synthetic-secret" }) }, async url => {
+      if (String(url).endsWith("/accessToken")) return mode === "token_failure" ? new Response("unavailable", { status: 503 })
+        : new Response(JSON.stringify({ accessToken: "synthetic-access", expireIn: 7200 }));
+      submitted++;
+      if (mode === "lost") throw new Error("lost response");
+      return new Response(mode === "invalid" ? "not-json" : JSON.stringify(mode === "rejected" ? { success: false, code: "blocked" } : {}));
+    });
+    const result = await sender.send({ proactiveOpenConversationId: "synthetic-group", idempotencyKey: "synthetic-outbox",
+      payload: { type: "primary_status_card", headline: "已接收", workItemId: "WI-TEST" } });
+    expect(result).toMatchObject({ ok: false, deliveryState: mode === "rejected" || mode === "token_failure" ? "not_sent" : "unknown" });
+    expect(submitted).toBe(mode === "token_failure" ? 0 : 1);
+  });
   it("exchanges app credentials and creates a STREAM callback card in the target group", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const sender = new FetchDingTalkInteractiveCardSender(

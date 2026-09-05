@@ -1,5 +1,13 @@
 # Meta 协作决策记录
 
+## D-058 — 非幂等投递丢回执时不能换通道重发
+
+- 只读查看 dingtalk-chat 的 chat-bot/contracts 说明及实际 `dws chat message send-by-bot --help`，未执行发送/群查询或认证。契约明确 processQueryKey 用于撤回，不是 openMessageId；Bot/Webhook 幂等键能力为 false，因此本地 dedupeKey 不能当作远端去重承诺。机器人引用映射仍缺正式对应证据。
+- 现有路由在 session 抛错、5xx 或无法验证响应时会改主动通道重发；Outbox 会重试 unknown，重启后还会重发过期 claimed。五项 TDD 失败复现重复风险后修复。
+- 增加 unknown 投递结果与发送前 not_sent 分类；生产 Outbox 显式 only-confirmed-unsent 策略。unknown 进入内部 dead_letter、保留未确认原因和空 sent_at；过期 claimed 同样不重放。旧 pending/attempt>0 无主控安全分类的记录也停止自动重发，不猜它从未送达。
+- 安全 retryable 由主控在 last_error 前加固定 delivery_confirmed_unsent 分类标记，与状态/退避同事务保存；只有生产适配器证明未提交或收到明确拒绝才返回该类别，原始提供方错误不得直接自报此标记。重启仍可恢复安全重试，不改原最大次数。默认测试/其他幂等 transport 行为不变。
+- 代价是进程在认领后、发送前崩溃时也可能需要核查；无法区分未发送与已发送丢回执时，不能通过自动补发掩盖不确定。此批不自动人工重发、不冒充最终送达，也不等于完成远端引用/真正线上闭环。
+
 ## D-057 — 显式引用不能被自然措辞覆盖，乱序通过持久来源续办
 
 - 核对发现未知引用会跌入新建/单候选关键词关联，且归并模型的输入没有引用来源；“第二个”还可能套用另一条已发送选择题。先用 4 个失败测试复现，不用推测的机器人远端消息编号补洞。

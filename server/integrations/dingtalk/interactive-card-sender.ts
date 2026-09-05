@@ -46,9 +46,9 @@ export class FetchDingTalkInteractiveCardSender implements DingTalkActiveSendPor
       return { ok: false, status: 400, code: "dingtalk_active_message_invalid" };
     }
     const credentials = this.credentials.load();
-    if (!credentials) return { ok: false, status: 503, code: "dingtalk_credentials_missing" };
+    if (!credentials) return { ok: false, status: 503, code: "dingtalk_credentials_missing", deliveryState: "not_sent" };
     const accessToken = await this.accessToken(credentials);
-    if (!accessToken) return { ok: false, status: 502, code: "dingtalk_access_token_failed" };
+    if (!accessToken) return { ok: false, status: 502, code: "dingtalk_access_token_failed", deliveryState: "not_sent" };
     let endpoint: string;
     let payload: Record<string, unknown>;
     if (card) {
@@ -93,20 +93,22 @@ export class FetchDingTalkInteractiveCardSender implements DingTalkActiveSendPor
         ok: false,
         status: 503,
         code: card ? "dingtalk_interactive_card_transport" : "dingtalk_group_message_transport",
+        deliveryState: "unknown",
       };
     }
     if (!response.ok) return { ok: false, status: response.status, code: `http_${response.status}` };
     const result = await responseRecord(response);
-    if (!result) return { ok: false, status: response.status, code: "dingtalk_response_invalid" };
+    if (!result) return { ok: false, status: response.status, code: "dingtalk_response_invalid", deliveryState: "unknown" };
     if (result.success === false || (typeof result.code === "string" && result.code !== "0")) {
       return {
         ok: false,
         status: response.status,
         code: card ? "dingtalk_interactive_card_rejected" : "dingtalk_group_message_rejected",
+        deliveryState: "not_sent",
       };
     }
     if (!card && (typeof result.processQueryKey !== "string" || !result.processQueryKey.trim())) {
-      return { ok: false, status: response.status, code: "dingtalk_group_message_rejected" };
+      return { ok: false, status: response.status, code: "dingtalk_group_message_unconfirmed", deliveryState: "unknown" };
     }
     return { ok: true, status: response.status };
   }

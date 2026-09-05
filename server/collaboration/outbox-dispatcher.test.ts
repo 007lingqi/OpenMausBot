@@ -41,6 +41,62 @@ function enqueue(db: DatabaseSync, version: number, now: number): string {
 }
 
 describe("fenced outbox dispatcher", () => {
+  it("does not replay legacy pending attempts without proof of non-delivery", async () => {
+    const db = database();
+    const id = enqueue(db, 1, 1000);
+    db.prepare("UPDATE collaboration_outbox SET attempt=1,last_error='session_transport_error' WHERE id=?").run(id);
+    const lease = new InstanceLeaseCoordinator(db, "replacement").acquire(2000, 10000)!;
+    let calls = 0;
+    const transport = { retryPolicy: "only-confirmed-unsent" as const, async deliver() { calls++; return { outcome: "sent" as const }; } };
+    expect(await new OutboxDispatcher(db, transport, { maxAttempts: 3, claimTtlMs: 100, baseBackoffMs: 10, maxBackoffMs: 100 }).dispatchOne(lease, 2000)).toBeNull();
+    expect(calls).toBe(0);
+    expect(db.prepare("SELECT delivery_state,last_error FROM collaboration_outbox WHERE id=?").get(id))
+      .toEqual({ delivery_state: "dead_letter", last_error: "delivery_unconfirmed_after_restart" });
+    db.close();
+  });
+  it("retains a proven-unsent retry across restart for non-idempotent transport", async () => {
+    const db = database();
+    const id = enqueue(db, 1, 1000);
+    const lease = new InstanceLeaseCoordinator(db, "scheduler").acquire(1000, 10000)!;
+    let calls = 0;
+    const transport = { retryPolicy: "only-confirmed-unsent" as const, async deliver() {
+      calls++; return calls === 1 ? { outcome: "retryable" as const, error: "credentials_not_loaded" } : { outcome: "sent" as const };
+    } };
+    const options = { maxAttempts: 3, claimTtlMs: 100, baseBackoffMs: 10, maxBackoffMs: 100 };
+    expect(await new OutboxDispatcher(db, transport, options).dispatchOne(lease, 1001)).toMatchObject({ state: "retry_scheduled" });
+    expect(await new OutboxDispatcher(db, transport, options).dispatchOne(lease, 2000)).toMatchObject({ state: "sent" });
+    expect(calls).toBe(2);
+    expect(db.prepare("SELECT last_error FROM collaboration_outbox WHERE id=?").get(id)).toEqual({ last_error: null });
+    db.close();
+  });
+  it("does not retry an uncertain non-idempotent delivery after a dispatcher restart", async () => {
+    const db = database();
+    const id = enqueue(db, 1, 1000);
+    let calls = 0;
+    const transport = { retryPolicy: "only-confirmed-unsent" as const, async deliver() { calls++; return { outcome: "unknown" as const, error: "delivery_unconfirmed" }; } };
+    const lease = new InstanceLeaseCoordinator(db, "scheduler").acquire(1000, 10000)!;
+    const options = { maxAttempts: 3, claimTtlMs: 100, baseBackoffMs: 10, maxBackoffMs: 100 };
+    expect(await new OutboxDispatcher(db, transport, options).dispatchOne(lease, 1001)).toMatchObject({ state: "dead_letter" });
+    expect(await new OutboxDispatcher(db, transport, options).dispatchOne(lease, 2000)).toBeNull();
+    expect(calls).toBe(1);
+    expect(db.prepare("SELECT sent_at,delivery_state,last_error FROM collaboration_outbox WHERE id=?").get(id))
+      .toEqual({ sent_at: null, delivery_state: "dead_letter", last_error: "delivery_unconfirmed" });
+    db.close();
+  });
+  it("does not retransmit a crashed non-idempotent send whose claim expired", async () => {
+    const db = database();
+    const id = enqueue(db, 1, 1000);
+    let calls = 0;
+    const transport = { retryPolicy: "only-confirmed-unsent" as const, async deliver() { calls++; return { outcome: "sent" as const }; } };
+    const lease = new InstanceLeaseCoordinator(db, "replacement").acquire(2000, 10000)!;
+    db.prepare("UPDATE collaboration_outbox SET delivery_state='claimed',claim_owner='crashed',claim_fence=1,claim_expires_at=1500,attempt=1 WHERE id=?").run(id);
+    const dispatcher = new OutboxDispatcher(db, transport, { maxAttempts: 3, claimTtlMs: 100, baseBackoffMs: 10, maxBackoffMs: 100 });
+    expect(await dispatcher.dispatchOne(lease, 2000)).toBeNull();
+    expect(calls).toBe(0);
+    expect(db.prepare("SELECT delivery_state,last_error FROM collaboration_outbox WHERE id=?").get(id))
+      .toEqual({ delivery_state: "dead_letter", last_error: "delivery_unconfirmed_after_restart" });
+    db.close();
+  });
   it("does not record a displayed choice when delivery was rejected", async () => {
     const db = database();
     enqueueInboundCard(db, { sourceEventId: "failed-choice", aggregateType: "association", aggregateId: "unrelated", aggregateVersion: 1,

@@ -38,6 +38,7 @@ export interface DingTalkHttpResult {
   ok: boolean;
   status: number;
   code?: string;
+  deliveryState?: "not_sent" | "unknown";
 }
 
 export interface DingTalkSessionSendPort {
@@ -55,6 +56,7 @@ export interface DingTalkActiveSendPort {
 export type DingTalkDeliveryResult =
   | { kind: "sent"; channel: "session" | "proactive" }
   | { kind: "retryable"; code: string }
+  | { kind: "unknown"; code: string }
   | { kind: "permanent"; code: string };
 
 /** Transport-neutral shape consumed by the collaboration outbox dispatcher. */

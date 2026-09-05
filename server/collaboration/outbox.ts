@@ -23,6 +23,8 @@ export interface CollaborationOutboxEntry {
 
 /** Transport-neutral contract implemented by the real DingTalk adapter. */
 export interface OutboxDeliveryPort {
+  /** Remote sends without server-enforced idempotency may retry only proven non-delivery. */
+  retryPolicy?: "only-confirmed-unsent";
   deliver(message: {
     id: string;
     source: string;

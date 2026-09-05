@@ -1,5 +1,15 @@
 # Meta 协作验证记录
 
+## 2026-09-06 非幂等投递回执丢失保护（当前批）
+
+- 只读 DWS help 75008 exit 0，结合 dingtalk-chat chat-bot/contracts 本地契约：processQueryKey 不等于 openMessageId，Bot/Webhook 不支持幂等键。仅接口能力调查，不是实际消息或远端映射结果。
+- 先行 router/Outbox 8766dc exit 1：5 失败 / 9 通过，证明未知发送会跨通道或自动重试、崩溃认领会重新发出。初修 82639 exit 0：4 文件 / 39 项/typecheck/diff。旧 pending 回归 fadb8a exit 1；安全分类标记长度错误 62150 exit 1，修正后 94981 exit 0：4 文件 / 46 项/typecheck/diff。
+- 定向命令：`pnpm vitest run server/integrations/dingtalk/reply-router.test.ts server/integrations/dingtalk/interactive-card-sender.test.ts server/collaboration/outbox-dispatcher.test.ts server/collaboration/operations/runtime-lifecycle-recovery.test.ts && pnpm typecheck && git diff --check`。包含真实 headless 装配+受控 fetch+SQLite 的丢回执后重新构造 dispatcher 不重发，发送前 token 失败仍可重试，明确业务拒绝可回退，unknown 不标送达，旧待重试/崩溃认领停止。
+- 全仓命令：`pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-delivery-certainty-typecheck && git diff --check`，82059 exit 1（4d104e），507.66 秒：264 文件通过 / 1 失败 / 1 跳过，2,659 项通过 / 4 失败 / 18 跳过，注册数 2,681。失败为 index.test.ts 第 688/936/1058 行三项 20 秒超时及第 1306 行 Mira 2 vs Mira 4。因短路，broker 等后续检查和 typecheck/编译未执行；不列为全仓通过。
+- `pnpm vitest run server/index.test.ts` 独立复测 13711 exit 0（46156f），88 项 / 31.20 秒，未变更测试条件。源码显示 POST /api/bots 等待 defaultSelection，驱动 snapshot 存在 8 秒 CLI 探测超时，与首次很多请求约 8 秒相符；尚无进程证据确认是哪次探测，名称差异可能来自前项超时后的残留操作，不下确定根因结论。
+- 第二次同一完整命令 40092 已 exit 0（d40202），无排除：主测试 452.74 秒，265 文件通过 / 1 跳过，2,663 项通过 / 18 跳过，注册数 2,681；index 88 项全部通过。附属 broker 7、updater 15、desktop-viewer 5、package-link 2、save-file 10 全通过；打包服务无可访问 node_modules 启动及 9 条 spawned proxy 路径通过。后续 pnpm typecheck、独立服务端编译、git diff --check 均通过。独立检查 97112 亦 exit 0。所有句柄已结束。本次未复现首轮失败，不等于已定位或修复超时根因。
+- 未实际调用钉钉/模型/文档、未运行 Docker、未部署；本地待核查保护不是端到端恰好一次投递或机器人引用验收。
+
 ## 2026-09-06 引用上下文与乱序续办（当前批）
 
 - TDD 26823 exit 1：association/natural-association 两文件 4 失败 / 32 通过，证明未知引用导致错误新建或模型误归并。初修 61624 exit 0（36 项/typecheck）。新增入站通俗反馈 44000 exit 1（1 失败 / 34 通过），修正后 17641 exit 0（64 项/typecheck/diff）。

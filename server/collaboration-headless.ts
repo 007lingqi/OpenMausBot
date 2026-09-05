@@ -249,6 +249,7 @@ export function createDingTalkDelivery(
   );
   const databaseFile = join(dataDirectory, "collaboration", "collaboration.sqlite");
   return {
+    retryPolicy: "only-confirmed-unsent",
     async deliver(message) {
       const eventId = sourceEventId(message.dedupeKey);
       const routedSourceEventId =
@@ -279,6 +280,7 @@ export function createDingTalkDelivery(
       });
       if (result.kind === "sent") return { outcome: "sent" as const };
       if (result.kind === "permanent") return { outcome: "permanent_failure" as const, error: result.code };
+      if (result.kind === "unknown") return { outcome: "unknown" as const, error: result.code };
       return { outcome: "retryable" as const, error: result.code };
     },
   };

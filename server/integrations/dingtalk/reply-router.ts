@@ -3,12 +3,20 @@ import type {
   DingTalkDeliveryPort,
   DingTalkDeliveryResult,
   DingTalkSessionSendPort,
+  DingTalkHttpResult,
 } from "./ports.ts";
 import type { DingTalkSessionReplyChannel } from "./types.ts";
 import { isDingTalkCandidateOwnerCard } from "./cards.ts";
 
 function isRetryableStatus(status: number): boolean {
   return status === 408 || status === 429 || status >= 500;
+}
+
+/** No Bot/Webhook idempotency key is guaranteed by the remote API. */
+function deliveryUncertain(result: DingTalkHttpResult): boolean {
+  if (result.deliveryState) return result.deliveryState === "unknown";
+  if (result.code && /^dingtalk_\d+$/u.test(result.code)) return false;
+  return result.status === 408 || result.status >= 500 || (result.status >= 200 && result.status < 300);
 }
 
 function validSessionWebhook(value: string): URL {
@@ -84,11 +92,12 @@ export class DingTalkReplyRouter implements DingTalkDeliveryPort {
           idempotencyKey: input.idempotencyKey,
         });
         if (response.ok) return { kind: "sent", channel: "proactive" };
+        if (deliveryUncertain(response)) return { kind: "unknown", code: "interactive_card_delivery_unconfirmed" };
         return isRetryableStatus(response.status)
           ? { kind: "retryable", code: response.code ?? "interactive_card_send_failed" }
           : { kind: "permanent", code: response.code ?? "interactive_card_send_rejected" };
       } catch {
-        return { kind: "retryable", code: "interactive_card_transport_error" };
+        return { kind: "unknown", code: "interactive_card_delivery_unconfirmed" };
       }
     }
     const channel = input.sourceEventId ? this.sessions.active(input.sourceEventId) : null;
@@ -98,15 +107,14 @@ export class DingTalkReplyRouter implements DingTalkDeliveryPort {
         if (response.ok) {
           return { kind: "sent", channel: "session" };
         }
+        if (deliveryUncertain(response)) return { kind: "unknown", code: "session_delivery_unconfirmed" };
         if (!input.proactiveOpenConversationId || !this.activeSender) {
           return isRetryableStatus(response.status)
             ? { kind: "retryable", code: response.code ?? "session_send_failed" }
             : { kind: "permanent", code: response.code ?? "session_send_rejected" };
         }
       } catch {
-        if (!input.proactiveOpenConversationId || !this.activeSender) {
-          return { kind: "retryable", code: "session_transport_error" };
-        }
+        return { kind: "unknown", code: "session_delivery_unconfirmed" };
       }
     }
 
@@ -120,11 +128,12 @@ export class DingTalkReplyRouter implements DingTalkDeliveryPort {
         idempotencyKey: input.idempotencyKey,
       });
       if (response.ok) return { kind: "sent", channel: "proactive" };
+      if (deliveryUncertain(response)) return { kind: "unknown", code: "proactive_delivery_unconfirmed" };
       return isRetryableStatus(response.status)
         ? { kind: "retryable", code: response.code ?? "proactive_send_failed" }
         : { kind: "permanent", code: response.code ?? "proactive_send_rejected" };
     } catch {
-      return { kind: "retryable", code: "proactive_transport_error" };
+      return { kind: "unknown", code: "proactive_delivery_unconfirmed" };
     }
   }
 }

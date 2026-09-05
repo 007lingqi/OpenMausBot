@@ -4,6 +4,34 @@ import type { DingTalkActiveSendPort, DingTalkSessionSendPort } from "./ports.ts
 import { DingTalkReplyRouter, DingTalkSessionReplyRegistry } from "./reply-router.ts";
 
 describe("DingTalk reply routing", () => {
+  it("allows a safe fallback after a verifiable session rejection and safe retry before message submission", async () => {
+    const sessions = new DingTalkSessionReplyRegistry(() => 1000);
+    sessions.capture({ sourceEventId: "event", webhookUrl: "https://oapi.dingtalk.com/robot/sendBySession", expiresAt: 2000 });
+    let calls = 0;
+    const router = new DingTalkReplyRouter(sessions, { async send() { return { ok: false, status: 200, code: "dingtalk_310000" }; } },
+      { async send() { calls++; return { ok: false, status: 503, deliveryState: "not_sent" }; } });
+    expect(await router.send({ sourceEventId: "event", proactiveOpenConversationId: "group", payload: {}, idempotencyKey: "key" }))
+      .toMatchObject({ kind: "retryable" });
+    expect(calls).toBe(1);
+  });
+  it("does not retry an uncertain proactive send", async () => {
+    const router = new DingTalkReplyRouter(new DingTalkSessionReplyRegistry(), { async send() { throw new Error("unused"); } },
+      { async send() { throw new Error("provider error with private details"); } });
+    expect(await router.send({ proactiveOpenConversationId: "group", payload: {}, idempotencyKey: "key" }))
+      .toEqual({ kind: "unknown", code: "proactive_delivery_unconfirmed" });
+  });
+  it.each(["throw", "http_502", "invalid_response"])("does not fall back or report retry-safe after uncertain session delivery: %s", async mode => {
+    const sessions = new DingTalkSessionReplyRegistry(() => 1000);
+    sessions.capture({ sourceEventId: "event", webhookUrl: "https://oapi.dingtalk.com/robot/sendBySession?session=opaque", expiresAt: 2000 });
+    let activeCalls = 0;
+    const router = new DingTalkReplyRouter(sessions, { async send() {
+      if (mode === "throw") throw new Error("lost acknowledgement");
+      return { ok: false, status: mode === "http_502" ? 502 : 200, code: mode === "http_502" ? "http_502" : "dingtalk_response_invalid" };
+    } }, { async send() { activeCalls++; return { ok: true, status: 200 }; } });
+    expect(await router.send({ sourceEventId: "event", proactiveOpenConversationId: "group", payload: {}, idempotencyKey: "same-event" }))
+      .toMatchObject({ kind: "unknown" });
+    expect(activeCalls).toBe(0);
+  });
   it("uses a live session webhook without confusing it with proactive conversation identity", async () => {
     const sessions = new DingTalkSessionReplyRegistry(() => 1_000);
     sessions.capture({

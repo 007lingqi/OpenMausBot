@@ -52,6 +52,27 @@ async function fixture() {
 }
 
 describe("runtime passive lifecycle recovery", () => {
+  it("wires uncertain real-adapter delivery into a durable no-resend state without real credentials", async () => {
+    const f = await fixture();
+    const fetcher = vi.fn(async () => new Response("lost business receipt", { status: 200 }));
+    vi.stubGlobal("fetch", fetcher);
+    try {
+      const row = f.db.prepare("SELECT id FROM collaboration_outbox WHERE source_event_id='recovery'").get() as { id: string };
+      f.db.prepare("UPDATE collaboration_outbox SET delivery_state='sent',sent_at=1 WHERE id<>?").run(row.id);
+      const sessions = new DingTalkSessionReplyRegistry();
+      sessions.capture({ sourceEventId: "recovery", webhookUrl: "https://api.dingtalk.com/session-fixture", expiresAt: Date.now()+60000 });
+      const delivery = createDingTalkDelivery(sessions, {}, f.root);
+      expect(delivery.retryPolicy).toBe("only-confirmed-unsent");
+      const lease = new InstanceLeaseCoordinator(f.db, "delivery-test").acquire(Date.now(), 60000)!;
+      const options = { maxAttempts: 3, claimTtlMs: 1000, baseBackoffMs: 1, maxBackoffMs: 10 };
+      expect(await new OutboxDispatcher(f.db, delivery, options).dispatchOne(lease, Date.now())).toMatchObject({ state: "dead_letter" });
+      const restarted = createDingTalkDelivery(new DingTalkSessionReplyRegistry(), {}, f.root);
+      expect(await new OutboxDispatcher(f.db, restarted, options).dispatchOne(lease, Date.now()+100)).toBeNull();
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(f.db.prepare("SELECT sent_at,last_error FROM collaboration_outbox WHERE id=?").get(row.id))
+        .toEqual({ sent_at: null, last_error: "session_delivery_unconfirmed" });
+    } finally { vi.unstubAllGlobals(); f.db.close(); }
+  });
   it.each(["unchanged", "pause", "cancel", "new_contribution", "settled", "retry_pause", "expired_claim", "recovered", "new_activity"] as const)("revalidates recovery notice at delivery: %s", async change => {
     const f = await fixture(); const runtime = f.runtime(); let sends = 0;
     try {
