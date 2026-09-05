@@ -288,7 +288,7 @@ describe("DingTalk session sender", () => {
     const sender = new FetchDingTalkSessionSender(async () =>
       new Response(JSON.stringify({ errcode: 310000, errmsg: "invalid payload" }), { status: 200 }));
     await expect(sender.send("https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend", primaryStatus))
-      .resolves.toEqual({ ok: false, status: 200, code: "dingtalk_310000" });
+      .resolves.toEqual({ ok: false, status: 200, code: "dingtalk_310000", deliveryState: "not_sent" });
   });
 
   it("fails closed when a successful HTTP response has no verifiable business result", async () => {

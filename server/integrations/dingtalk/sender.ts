@@ -1,6 +1,7 @@
 import type { DingTalkHttpResult, DingTalkSessionSendPort } from "./ports.ts";
 import { renderDingTalkSessionMessage } from "./session-message.ts";
 import { boundedReplyRequest } from "./bounded-reply-request.ts";
+import { inspectDingTalkBusinessStatus } from "./business-status.ts";
 
 type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
@@ -39,11 +40,13 @@ export class FetchDingTalkSessionSender implements DingTalkSessionSendPort {
       return { ok: false, status: response.status, code: "dingtalk_response_invalid" };
     }
     const business = result as { errcode?: unknown; success?: unknown };
+    const status = inspectDingTalkBusinessStatus(result);
+    if (status === "unconfirmed") return { ok: false, status: response.status, code: "dingtalk_response_inconsistent", deliveryState: "unknown" };
     if (business.errcode === 0 || business.success === true) return { ok: true, status: response.status };
     const code =
       typeof business.errcode === "number" && Number.isSafeInteger(business.errcode)
         ? `dingtalk_${business.errcode}`
         : "dingtalk_business_rejected";
-    return { ok: false, status: response.status, code };
+    return { ok: false, status: response.status, code, deliveryState: status === "rejected" ? "not_sent" : "unknown" };
   }
 }

@@ -3,6 +3,7 @@ import { isDingTalkCandidateOwnerCard, renderDingTalkOwnerStatusCard } from "./c
 import type { DingTalkActiveSendPort, DingTalkHttpResult } from "./ports.ts";
 import { renderDingTalkSessionMessage } from "./session-message.ts";
 import { boundedReplyRequest } from "./bounded-reply-request.ts";
+import { inspectDingTalkBusinessStatus } from "./business-status.ts";
 
 type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
@@ -90,7 +91,10 @@ export class FetchDingTalkInteractiveCardSender implements DingTalkActiveSendPor
     if (!response.ok) return { ok: false, status: response.status, code: `http_${response.status}` };
     const result = response.record;
     if (!result) return { ok: false, status: response.status, code: "dingtalk_response_invalid", deliveryState: "unknown" };
-    if (result.success === false || (typeof result.code === "string" && result.code !== "0")) {
+    const hasMessageReceipt = typeof result.processQueryKey === "string" && !!result.processQueryKey.trim();
+    const status = inspectDingTalkBusinessStatus(result, !card && hasMessageReceipt);
+    if (status === "unconfirmed") return { ok: false, status: response.status, code: "dingtalk_response_inconsistent", deliveryState: "unknown" };
+    if (status === "rejected") {
       return {
         ok: false,
         status: response.status,
@@ -98,7 +102,7 @@ export class FetchDingTalkInteractiveCardSender implements DingTalkActiveSendPor
         deliveryState: "not_sent",
       };
     }
-    if (!card && (typeof result.processQueryKey !== "string" || !result.processQueryKey.trim())) {
+    if (!card && !hasMessageReceipt) {
       return { ok: false, status: response.status, code: "dingtalk_group_message_unconfirmed", deliveryState: "unknown" };
     }
     return { ok: true, status: response.status };
@@ -123,6 +127,7 @@ export class FetchDingTalkInteractiveCardSender implements DingTalkActiveSendPor
     }
     if (!response.ok) return null;
     const result = response.record;
+    if (!result || inspectDingTalkBusinessStatus(result) !== "clear") return null;
     const accessToken = typeof result?.accessToken === "string" ? result.accessToken.trim() : "";
     const expireIn = typeof result?.expireIn === "number" ? result.expireIn : 0;
     if (!accessToken || accessToken.length > 8_192 || !Number.isFinite(expireIn) || expireIn < 60) return null;

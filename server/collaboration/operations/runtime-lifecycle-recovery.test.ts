@@ -85,9 +85,9 @@ describe("runtime passive lifecycle recovery", () => {
         .toEqual({ sent_at: null, last_error: "session_delivery_unconfirmed" });
     } finally { vi.useRealTimers(); vi.unstubAllGlobals(); f.db.close(); }
   });
-  it("wires uncertain real-adapter delivery into a durable no-resend state without real credentials", async () => {
+  it.each(["lost business receipt", JSON.stringify({ errcode: 0, success: false }), JSON.stringify({ errcode: 310000, success: true })])("wires uncertain real-adapter delivery into a durable no-resend state: %s", async body => {
     const f = await fixture();
-    const fetcher = vi.fn(async () => new Response("lost business receipt", { status: 200 }));
+    const fetcher = vi.fn(async () => new Response(body, { status: 200 }));
     vi.stubGlobal("fetch", fetcher);
     try {
       const row = f.db.prepare("SELECT id FROM collaboration_outbox WHERE source_event_id='recovery'").get() as { id: string };

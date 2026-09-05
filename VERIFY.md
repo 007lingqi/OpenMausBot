@@ -1,5 +1,14 @@
 # Meta 协作验证记录
 
+## 2026-09-06 钉钉业务回执冲突保护（当前批）
+
+- `pnpm vitest run server/integrations/dingtalk/business-receipt.test.ts`：a6f78d exit 1，18 失败 / 7 通过。修复前会将冲突状态误报成功、忽略部分数字错误码、缓存并使用被拒绝的令牌。
+- 初修定向 37235 exit 0（b2324a）：7 文件 / 104 项、typecheck/diff 通过。扩展后 14024，命令为 `pnpm vitest run server/integrations/dingtalk/business-receipt.test.ts server/integrations/dingtalk/sender-deadline.test.ts server/integrations/dingtalk/sender.test.ts server/integrations/dingtalk/interactive-card-sender.test.ts server/integrations/dingtalk/reply-router.test.ts server/collaboration/outbox-dispatcher.test.ts server/collaboration/operations/runtime-lifecycle-recovery.test.ts && pnpm typecheck && git diff --check`。
+- 覆盖正常成功兼容、明确拒绝回退、冲突/无效类型不成功不重发、异常令牌连续两次均重新获取且从未发消息、普通消息不能以通用 success 代替查询回执；生产 headless + SQLite + 受控 fetch 验证冲突送达未确认且重建 dispatcher 不重发。无真实钉钉/模型/文档/卡片目标回执证明。
+- 扩展定向 14024 exit 0（b45969）：7 文件 / 116 项、typecheck/diff 通过。
+- 全仓命令：`pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-business-receipt-typecheck && git diff --check`；45428 已 exit 0（4a040c）。主集结果见 6cbdf3：290.95 秒，267 文件通过 / 1 跳过，2,718 项通过 / 18 跳过，注册数 2,736；index 88 项通过，仍有约 8 秒调用，不宣称旧间歇性延迟已修复。
+- broker 7、updater 15、desktop-viewer 5、package-link 2、save-file 10 通过；打包服务无可访问 node_modules 启动、9 条 spawned proxy 路径、后续 typecheck、独立服务端编译和 diff 检查均通过。所有句柄终态，未运行真实钉钉/文档/模型/Docker，不是产品最终验收。
+
 ## 2026-09-06 回复超时与有界正文读取（当前批）
 
 - TDD `pnpm vitest run server/integrations/dingtalk/sender-deadline.test.ts`：26d27c exit 1，10 项失败。当前实现在 header/body/超大无 EOF 响应中不会结束，受控 fake timers 复现，不调用真实网络。
