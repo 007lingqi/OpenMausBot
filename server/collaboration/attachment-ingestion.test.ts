@@ -95,6 +95,131 @@ function row(databaseFile: string, ref = REF_A): Record<string, unknown> {
 }
 
 describe("AttachmentIngestionCoordinator", () => {
+  it("upgrades v22 preserving download failure receipts without inventing projection failures", async () => {
+    const setup = context([resource()]);
+    await new AttachmentIngestionCoordinator({ ...setup, downloader: { download: async () => ({ ok: false, kind: "retryable", code: "dingtalk_attachment_timeout" }) } }).process([capability()], 1000);
+    const db = new DatabaseSync(setup.databaseFile);
+    const failures = db.prepare("SELECT * FROM collaboration_attachment_failures").all();
+    const outbox = db.prepare("SELECT * FROM collaboration_outbox").all();
+    db.exec("DROP TABLE collaboration_attachment_projection_failures; DELETE FROM collaboration_schema_migrations WHERE version=23; PRAGMA user_version=22");
+    db.close();
+    const upgraded = openCollaborationLedger(join(setup.dataDirectory, "collaboration"));
+    expect(upgraded.migrationState).toEqual({ schemaVersion: 23, appliedMigrations: 23 });
+    upgraded.close();
+    const after = new DatabaseSync(setup.databaseFile);
+    expect(after.prepare("SELECT * FROM collaboration_attachment_failures").all()).toEqual(failures);
+    expect(after.prepare("SELECT * FROM collaboration_outbox").all()).toEqual(outbox);
+    expect(after.prepare("SELECT count(*) AS n FROM collaboration_attachment_projection_failures").get()).toEqual({ n: 0 });
+    after.close();
+  });
+  it("does not starve healthy projection behind a full batch of stopped attachments", async () => {
+    const resources = Array.from({ length: 51 }, (_, i) => resource({ capabilityRef: (i + 1).toString(16).padStart(64, "0") }));
+    const setup = context(resources);
+    const bytes = Buffer.from("stored source");
+    const download = vi.fn(async (): Promise<DingTalkAttachmentDownloadResult> => ({ ok: true, bytes, sha256: hash(bytes) }));
+    const ingest = new AttachmentIngestionCoordinator({ ...setup, downloader: { download } });
+    await ingest.process(resources.map(r => capability(r.capabilityRef)), 1000);
+    await ingest.process([], 1001);
+    const db = new DatabaseSync(setup.databaseFile);
+    const stopped = db.prepare("SELECT id FROM collaboration_attachments ORDER BY ordinal LIMIT 50").all() as Array<{ id: string }>;
+    for (const attachment of stopped) for (let attempt = 1; attempt <= 3; attempt++) {
+      db.prepare("INSERT INTO collaboration_attachment_projection_failures(attachment_id,claim_token,error_code,created_at,retry_after) VALUES(?,?,?,?,?)")
+        .run(attachment.id, `${attachment.id}:${attempt}`, "attachment_projection_unavailable", attempt, 1000);
+    }
+    const onEvidence = vi.fn();
+    await new AttachmentIngestionCoordinator({ ...setup, downloader: { download }, onEvidence }).process([], 10000);
+    expect(onEvidence).toHaveBeenCalledTimes(1);
+    expect(db.prepare("SELECT ordinal FROM collaboration_attachments WHERE evidence_projected_at IS NOT NULL").all()).toEqual([{ ordinal: 50 }]);
+    expect(download).toHaveBeenCalledTimes(51);
+    db.close();
+  });
+
+  it.each(["superseded", "aborted"])("does not record a late projection failure after it is %s", async mode => {
+    const setup = context([resource()]);
+    const bytes = Buffer.from("retained evidence");
+    const controller = new AbortController();
+    let reject!: (error: Error) => void;
+    const callback = vi.fn(() => new Promise<void>((_resolve, failure) => { reject = failure; }));
+    const download = vi.fn(async (): Promise<DingTalkAttachmentDownloadResult> => ({ ok: true, bytes, sha256: hash(bytes) }));
+    const first = new AttachmentIngestionCoordinator({ ...setup, downloader: { download }, onEvidence: callback, signal: controller.signal });
+    const pending = first.process([capability()], 1000);
+    const rejected = expect(pending).rejects.toThrow(mode === "aborted" ? "attachment_ingestion_inactive" : "attachment_projection_claim_superseded");
+    await vi.waitFor(() => expect(callback).toHaveBeenCalledTimes(1));
+    if (mode === "aborted") controller.abort();
+    else await new AttachmentIngestionCoordinator({ ...setup, downloader: { download }, onEvidence() {} }).process([], 62000);
+    reject(new Error("late secret detail"));
+    await rejected;
+    const db = new DatabaseSync(setup.databaseFile);
+    expect(db.prepare("SELECT count(*) AS n FROM collaboration_attachment_projection_failures").get()).toEqual({ n: 0 });
+    expect(db.prepare("SELECT count(*) AS n FROM collaboration_outbox").get()).toEqual({ n: 0 });
+    expect(row(setup.databaseFile).evidence_projected_at).toBe(mode === "aborted" ? null : 62000);
+    db.close();
+  });
+
+  it("rolls back projection failure receipts if the notification cannot be saved", async () => {
+    const setup = context([resource()]);
+    const bytes = Buffer.from("stored source");
+    const db = new DatabaseSync(setup.databaseFile);
+    db.exec("CREATE TRIGGER reject_projection_feedback BEFORE INSERT ON collaboration_outbox BEGIN SELECT RAISE(ABORT,'fixture_outbox_failed'); END");
+    const coordinator = new AttachmentIngestionCoordinator({ ...setup, downloader: { download: async () => ({ ok: true, bytes, sha256: hash(bytes) }) }, onEvidence() { throw new Error("callback failed"); } });
+    await expect(coordinator.process([capability()], 1000)).rejects.toThrow("fixture_outbox_failed");
+    expect(db.prepare("SELECT count(*) AS n FROM collaboration_attachment_projection_failures").get()).toEqual({ n: 0 });
+    expect(row(setup.databaseFile).evidence_projected_at).toBeNull();
+    db.exec("DROP TRIGGER reject_projection_feedback");
+    await expect(coordinator.process([], 62000)).rejects.toThrow("callback failed");
+    expect(db.prepare("SELECT count(*) AS n FROM collaboration_attachment_projection_failures").get()).toEqual({ n: 1 });
+    expect(() => db.exec("DELETE FROM collaboration_attachment_projection_failures")).toThrow();
+    db.close();
+  });
+
+  it("stops repeated projection failures across restarts while preserving extracted content and truthful feedback", async () => {
+    const setup = context([resource()]);
+    const bytes = Buffer.from("a useful bug description");
+    const download = vi.fn(async (): Promise<DingTalkAttachmentDownloadResult> => ({ ok: true, bytes, sha256: hash(bytes) }));
+    const onEvidence = vi.fn(() => { throw new Error("private projection detail must not leak"); });
+    for (const now of [1000, 6000, 11000]) {
+      await expect(new AttachmentIngestionCoordinator({ ...setup, downloader: { download }, onEvidence }).process([capability()], now)).rejects.toThrow();
+    }
+    await new AttachmentIngestionCoordinator({ ...setup, downloader: { download }, onEvidence }).process([], 16000);
+    expect(onEvidence).toHaveBeenCalledTimes(3);
+    expect(download).toHaveBeenCalledTimes(1);
+    expect(row(setup.databaseFile)).toMatchObject({ ingest_state: "ready", evidence_projected_at: null });
+    const db = new DatabaseSync(setup.databaseFile);
+    expect(db.prepare("SELECT count(*) AS n FROM collaboration_attachment_extractions").get()).toEqual({ n: 1 });
+    expect(db.prepare("SELECT count(*) AS n FROM collaboration_attachment_projection_failures").get()).toEqual({ n: 3 });
+    const notices = db.prepare("SELECT payload_json FROM collaboration_outbox WHERE source_event_id LIKE '%:projection:%'").all() as Array<{ payload_json: string }>;
+    expect(notices).toHaveLength(2);
+    const text = JSON.stringify(notices);
+    expect(text).toContain("连续 3 次");
+    expect(text).toContain("已保留");
+    expect(text).not.toMatch(/尚未读到|读取失败|private projection detail|修改完成/);
+    const rendered = JSON.stringify(renderDingTalkSessionMessage(JSON.parse(notices[1]!.payload_json)));
+    expect(rendered).toContain("需求整理未完成");
+    expect(rendered).not.toContain(WORK_ITEM_ID);
+    db.close();
+  });
+
+  it("backs off projection retries, then suppresses obsolete feedback after successful projection", async () => {
+    const setup = context([resource()]);
+    const bytes = Buffer.from("recoverable projection");
+    const download = vi.fn(async (): Promise<DingTalkAttachmentDownloadResult> => ({ ok: true, bytes, sha256: hash(bytes) }));
+    const onEvidence = vi.fn().mockImplementationOnce(() => { throw new Error("temporary"); });
+    const coordinator = new AttachmentIngestionCoordinator({ ...setup, downloader: { download }, onEvidence });
+    await expect(coordinator.process([capability()], 1000)).rejects.toThrow();
+    await coordinator.process([], 1001);
+    expect(onEvidence).toHaveBeenCalledTimes(1);
+    await coordinator.process([], 2000);
+    expect(onEvidence).toHaveBeenCalledTimes(2);
+    expect(row(setup.databaseFile).evidence_projected_at).toBe(2000);
+    const db = new DatabaseSync(setup.databaseFile);
+    const lease = new InstanceLeaseCoordinator(db, "projection-delivery").acquire(2000, 30000)!;
+    const deliver = vi.fn(async () => ({ outcome: "sent" as const }));
+    const dispatcher = new OutboxDispatcher(db, { deliver }, { maxAttempts: 3, claimTtlMs: 1000, baseBackoffMs: 1, maxBackoffMs: 100 });
+    expect(await dispatcher.dispatchOne(lease, 2000)).toMatchObject({ state: "superseded" });
+    expect(deliver).not.toHaveBeenCalled();
+    db.close();
+  });
+
   it("rolls back failure evidence and state together when feedback persistence fails", async () => {
     const setup = context([resource()]);
     const db = new DatabaseSync(setup.databaseFile);

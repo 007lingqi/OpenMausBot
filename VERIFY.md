@@ -1,5 +1,13 @@
 # Meta 协作验证记录
 
+## 2026-09-06 投影失败三次收束与无端口回归（最新）
+
+- 默认权限 `node:net` 随机端口绑定 127.0.0.1 预检返回 EPERM（569e5c exit 1）；未产生运行服务器。结合上轮两次审批超时，本轮不重复申请全仓执行，也不把缺失的端口/全仓测试列作通过。
+- TDD 摄取套件 2 失败 / 18 通过（27545 exit 1）：第四次仍调用失败回调、1 ms 后即再次调用。初实现 3 失败 / 24 通过（41976 exit 1），原因是把重试时间写到 owner=NULL 的租约 expiry，违反既有 paired-null CHECK；新 schema 的不可变 receipt 增加 retry_after，释放 owner/expiry 同时归空，未删除或放宽约束。
+- 修复后摄取与 db 27 项/typecheck 通过（91999 exit 0）；加入 50 停止 + 1 健康批次、旧 claim/取消、反馈写入失败回滚与不可变收据后，摄取/db/service/lifecycle-recovery/backup 五文件 69 项/typecheck 通过（26677 exit 0）。
+- 最终 `pnpm vitest run server/collaboration server/integrations/dingtalk server/collaboration-headless.test.ts --exclude server/collaboration/operations/natural-intake-model.test.ts && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-projection-retry-typecheck && git diff --check` 全链通过（85915 exit 0）：70 文件 / 594 项，04:45:17 开始，Vitest 65.97 秒。含最后新增 v22 升级原下载失败/Outbox 保留和实际文本渲染断言。排除项仅因需监听权限，仍未验收，不是隐藏失败或修改全仓脚本。
+- 未重新运行完整 pnpm test，未验证真实钉钉/模型/在线文档/解析容器和主机重启。停止后的安全恢复入口尚未实现；换实例/重启不能清空三次停止状态。当前没有运行中验证句柄，历史未验证项继续保留。
+
 ## 2026-09-06 生产附件 ACK 组合边界（最新）
 
 - 计划对固定 fc2033f 执行 `pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-attachment-feedback-full-typecheck && git diff --check`。原请求及仅一次重试均自动权限审核超时，命令未启动、无进程句柄；不计为失败测试，不存在可以继续 poll 的全仓测试。

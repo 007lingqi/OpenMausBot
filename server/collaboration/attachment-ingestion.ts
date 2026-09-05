@@ -20,6 +20,7 @@ import type { DingTalkAttachmentCapabilityVault } from "../integrations/dingtalk
 import type { DingTalkAttachmentDownloadResult } from "../integrations/dingtalk/attachment-downloader.ts";
 import type { DingTalkPrivateResourceCapability } from "../integrations/dingtalk/types.ts";
 import { enqueueAttachmentFeedback } from "./attachment-feedback.ts";
+import { claimAttachmentProjection, finishAttachmentProjection } from "./attachment-projection-retry.ts";
 import {
   extractAttachmentText,
   MAX_EXTRACTED_CHARACTERS,
@@ -35,7 +36,6 @@ const STALE_CLAIM_MILLISECONDS = 5 * 60 * 1_000;
 const BASE_RETRY_MILLISECONDS = 60 * 1_000;
 const MAX_RETRY_MILLISECONDS = 60 * 60 * 1_000;
 const PROCESS_LIMIT = 50;
-const PROJECTION_CLAIM_MILLISECONDS = 60_000;
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 const UNSUPPORTED_EXTRACTION_ERRORS = new Set([
@@ -641,7 +641,6 @@ export class AttachmentIngestionCoordinator {
   private readonly downloader: AttachmentDownloader;
   private readonly extract: NonNullable<AttachmentIngestionCoordinatorInput["extract"]>;
   private readonly onEvidence: ((notification: AttachmentEvidenceNotification) => void | Promise<void>) | undefined;
-  private readonly projectionOwner = randomUUID();
 
   constructor(input: AttachmentIngestionCoordinatorInput) {
     this.signal = input.signal;
@@ -752,34 +751,25 @@ export class AttachmentIngestionCoordinator {
   private async projectUnprojectedEvidence(database: DatabaseSync, now: number): Promise<void> {
     if (!this.onEvidence) return;
     const rows = database.prepare(
-      "SELECT id FROM collaboration_attachments " +
+      "SELECT a.id FROM collaboration_attachments a " +
         "WHERE ingest_state = 'ready' AND evidence_projected_at IS NULL " +
+        "AND coalesce((SELECT retry_after FROM collaboration_attachment_projection_failures f WHERE f.attachment_id=a.id ORDER BY sequence DESC LIMIT 1),0)<=? " +
+        "AND (SELECT count(*)=3 AND count(DISTINCT error_code)=1 FROM (SELECT error_code FROM collaboration_attachment_projection_failures f WHERE f.attachment_id=a.id ORDER BY sequence DESC LIMIT 3))=0 " +
         "ORDER BY updated_at, created_at, external_event_id, ordinal LIMIT ?",
-    ).all(PROCESS_LIMIT) as unknown as ProjectionRow[];
+    ).all(now, PROCESS_LIMIT) as unknown as ProjectionRow[];
     for (const row of rows) {
       this.assertActive();
-      const claimed = database.prepare(
-        "UPDATE collaboration_attachments SET evidence_projection_owner = ?, " +
-          "evidence_projection_expires_at = ? WHERE id = ? AND ingest_state = 'ready' " +
-          "AND evidence_projected_at IS NULL AND (evidence_projection_owner IS NULL OR evidence_projection_expires_at <= ?)",
-      ).run(this.projectionOwner, now + PROJECTION_CLAIM_MILLISECONDS, row.id, now);
-      if (claimed.changes !== 1) continue;
-      const notification = readAttachmentEvidenceNotification(database, row.id);
+      const token = claimAttachmentProjection(database, row.id, now, () => this.assertActive());
+      if (!token) continue;
       try {
         this.assertActive();
+        const notification = readAttachmentEvidenceNotification(database, row.id);
         await this.onEvidence(notification);
         this.assertActive();
-        database.prepare(
-          "UPDATE collaboration_attachments SET evidence_projected_at = ?, evidence_projection_owner = NULL, " +
-            "evidence_projection_expires_at = NULL WHERE id = ? AND ingest_state = 'ready' " +
-            "AND evidence_projected_at IS NULL AND evidence_projection_owner = ?",
-        ).run(now, row.id, this.projectionOwner);
+        finishAttachmentProjection(database, { attachmentId: row.id, token, now, assertActive: () => this.assertActive() });
       } catch (error) {
         this.assertActive();
-        database.prepare(
-          "UPDATE collaboration_attachments SET evidence_projection_owner = NULL, evidence_projection_expires_at = NULL " +
-            "WHERE id = ? AND evidence_projected_at IS NULL AND evidence_projection_owner = ?",
-        ).run(row.id, this.projectionOwner);
+        finishAttachmentProjection(database, { attachmentId: row.id, token, now, assertActive: () => this.assertActive(), failure: error });
         throw error;
       }
     }

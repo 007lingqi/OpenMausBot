@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { OPENMAUSBOT_SOURCE_BASELINE } from "./config.ts";
 
-export const COLLABORATION_SCHEMA_VERSION = 22;
+export const COLLABORATION_SCHEMA_VERSION = 23;
 
 interface Migration {
   version: number;
@@ -1193,6 +1193,26 @@ const migrations: readonly Migration[] = [
           BEGIN SELECT RAISE(ABORT,'attachment failure receipts are immutable'); END;
         CREATE TRIGGER attachment_failures_no_delete BEFORE DELETE ON collaboration_attachment_failures
           BEGIN SELECT RAISE(ABORT,'attachment failure receipts are immutable'); END;
+      `);
+    },
+  },
+  {
+    version: 23, name: "attachment-projection-failure-receipts", checksum: "v23:immutable-claimed-projection-failures-with-backoff",
+    apply(database) {
+      database.exec(`
+        CREATE TABLE collaboration_attachment_projection_failures (
+          sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+          attachment_id TEXT NOT NULL REFERENCES collaboration_attachments(id),
+          claim_token TEXT NOT NULL UNIQUE,
+          error_code TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          retry_after INTEGER NOT NULL CHECK(retry_after>=created_at)
+        ) STRICT;
+        CREATE INDEX attachment_projection_failure_order ON collaboration_attachment_projection_failures(attachment_id,sequence DESC);
+        CREATE TRIGGER attachment_projection_failures_no_update BEFORE UPDATE ON collaboration_attachment_projection_failures
+          BEGIN SELECT RAISE(ABORT,'projection failure receipts are immutable'); END;
+        CREATE TRIGGER attachment_projection_failures_no_delete BEFORE DELETE ON collaboration_attachment_projection_failures
+          BEGIN SELECT RAISE(ABORT,'projection failure receipts are immutable'); END;
       `);
     },
   },

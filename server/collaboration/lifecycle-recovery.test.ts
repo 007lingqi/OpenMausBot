@@ -144,8 +144,8 @@ describe("passive lifecycle recovery", () => {
         for (const table of ["commands", "proofs"]) f.db.exec(`DROP TRIGGER ${kind}_${table}_finalizing`);
         f.db.exec(`DROP TABLE collaboration_${kind}_finalization_intents`);
       }
-      f.db.exec("DROP TABLE collaboration_attachment_failures; DELETE FROM collaboration_schema_migrations WHERE version>=21; PRAGMA user_version=20");
-      expect(applyCollaborationMigrations(f.db)).toEqual({ schemaVersion: 22, appliedMigrations: 22 });
+      f.db.exec("DROP TABLE collaboration_attachment_projection_failures; DROP TABLE collaboration_attachment_failures; DELETE FROM collaboration_schema_migrations WHERE version>=21; PRAGMA user_version=20");
+      expect(applyCollaborationMigrations(f.db)).toEqual({ schemaVersion: 23, appliedMigrations: 23 });
       expect(["sessions", "commands", "proofs"].map(table => f.db.prepare(`SELECT * FROM collaboration_execution_${table}`).all())).toEqual(before);
       expect(f.db.prepare("SELECT count(*) AS n FROM collaboration_execution_finalization_intents").get()).toEqual({ n: 0 });
       f.empty();

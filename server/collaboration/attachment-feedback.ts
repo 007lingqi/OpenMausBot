@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { enqueueInboundCard } from "./outbox.ts";
+import { isCurrentProjectionFeedback } from "./attachment-projection-retry.ts";
 
 const PREFIX = "attachment-feedback:";
 
@@ -35,6 +36,7 @@ export function enqueueAttachmentFeedback(db: DatabaseSync, attachmentId: string
 
 export function isCurrentAttachmentFeedback(db: DatabaseSync, message: { source_event_id: string; aggregate_id: string; aggregate_version: number }): boolean {
   if (!message.source_event_id.startsWith(PREFIX)) return true;
+  if (message.source_event_id.includes(":projection:")) return isCurrentProjectionFeedback(db, message);
   return !!db.prepare(
     "SELECT 1 FROM collaboration_attachments a JOIN collaboration_external_events e ON e.id=a.external_event_id " +
     "JOIN collaboration_work_items w ON w.id=e.work_item_id WHERE ?='attachment-feedback:'||a.id||':'||a.attempt_count||':'||a.ingest_state " +
