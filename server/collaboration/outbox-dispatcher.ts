@@ -4,6 +4,7 @@ import { assertCurrentInstanceLease, type InstanceLease, StaleFenceError } from 
 import type { CollaborationOutboxEntry, OutboxDeliveryPort } from "./outbox.ts";
 import { assertLedgerArmed } from "./restore-guard.ts";
 import { isCurrentRecoveryNotification } from "./recovery-notification.ts";
+import { isCurrentAttachmentFeedback } from "./attachment-feedback.ts";
 
 interface DispatchRow {
   id: string;
@@ -139,7 +140,7 @@ export class OutboxDispatcher {
           "AND newer.aggregate_version > current.aggregate_version AND newer.superseded_at IS NULL)",
       )
       .get(row.id, instance.ownerId, instance.fence, now);
-    if (current && isCurrentRecoveryNotification(this.database, row)) return true;
+    if (current && isCurrentRecoveryNotification(this.database, row) && isCurrentAttachmentFeedback(this.database, row)) return true;
     const updated = this.database
       .prepare(
         "UPDATE collaboration_outbox SET delivery_state = 'superseded', superseded_at = ?, " +

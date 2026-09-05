@@ -13,6 +13,11 @@ import { AttachmentIngestionCoordinator, type AttachmentEvidenceNotification } f
 import { AttachmentStore, type PublicAttachmentResource } from "./attachment-store.ts";
 import { openCollaborationLedger } from "./db.ts";
 import { extractAttachmentText } from "./attachment-text-extractor.ts";
+import { OutboxDispatcher } from "./outbox-dispatcher.ts";
+import { InstanceLeaseCoordinator } from "./leases.ts";
+import { renderDingTalkSessionMessage } from "../integrations/dingtalk/session-message.ts";
+import { createDingTalkDelivery } from "../collaboration-headless.ts";
+import { DingTalkSessionReplyRegistry } from "../integrations/dingtalk/reply-router.ts";
 
 const VAULT_SECRET = "attachment-ingestion-test-secret-at-least-32-bytes";
 const WORK_ITEM_ID = "WI-attachment-ingestion";
@@ -23,6 +28,7 @@ const REF_B = "b".repeat(64);
 const scratchDirectories: string[] = [];
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   for (const directory of scratchDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
@@ -89,6 +95,95 @@ function row(databaseFile: string, ref = REF_A): Record<string, unknown> {
 }
 
 describe("AttachmentIngestionCoordinator", () => {
+  it("rolls back failure evidence and state together when feedback persistence fails", async () => {
+    const setup = context([resource()]);
+    const db = new DatabaseSync(setup.databaseFile);
+    db.exec("CREATE TRIGGER reject_feedback BEFORE INSERT ON collaboration_outbox BEGIN SELECT RAISE(ABORT,'fixture_feedback_unavailable'); END");
+    const coordinator = new AttachmentIngestionCoordinator({ ...setup, downloader: { download: async () => ({ ok: false, kind: "retryable", code: "dingtalk_attachment_timeout" }) } });
+    await expect(coordinator.process([capability()], 1000)).rejects.toThrow("fixture_feedback_unavailable");
+    expect(row(setup.databaseFile).ingest_state).toBe("downloading");
+    expect(db.prepare("SELECT count(*) AS n FROM collaboration_attachment_failures").get()).toEqual({ n: 0 });
+    expect(setup.vault.read(REF_A)).toEqual(capability());
+    db.exec("DROP TRIGGER reject_feedback");
+    await coordinator.process([], 301001);
+    expect(db.prepare("SELECT count(*) AS n FROM collaboration_attachment_failures").get()).toEqual({ n: 1 });
+    expect(db.prepare("SELECT count(*) AS n FROM collaboration_outbox").get()).toEqual({ n: 1 });
+    db.close();
+  });
+
+  it("delivers attachment feedback to the original source session, not a newer task message", async () => {
+    const setup = context([resource()]);
+    const db = new DatabaseSync(setup.databaseFile);
+    db.prepare("INSERT INTO collaboration_external_events(id,source,source_event_id,transport_message_id,conversation_id,principal_id,kind,normalized_json,raw_hash,association_state,work_item_id,received_at) " +
+      "SELECT 'newer','dingtalk','newer-event','newer-transport',conversation_id,principal_id,kind,normalized_json,raw_hash,association_state,work_item_id,999 FROM collaboration_external_events WHERE id=?").run(EVENT_ID);
+    await new AttachmentIngestionCoordinator({ ...setup, downloader: { download: async () => ({ ok: false, kind: "permanent", code: "dingtalk_attachment_resolve_rejected" }) } }).process([capability()], 1000);
+    const fetcher = vi.fn(async (_url: string | URL, _init?: RequestInit) => new Response(JSON.stringify({ errcode: 0 }), { status: 200 }));
+    vi.stubGlobal("fetch", fetcher);
+    const sessions = new DingTalkSessionReplyRegistry();
+    sessions.capture({ sourceEventId: "source-event-1", webhookUrl: "https://api.dingtalk.com/original-fixture", expiresAt: Date.now() + 60000 });
+    sessions.capture({ sourceEventId: "newer-event", webhookUrl: "https://api.dingtalk.com/newer-fixture", expiresAt: Date.now() + 60000 });
+    const lease = new InstanceLeaseCoordinator(db, "source-test").acquire(1000, 30000)!;
+    const dispatcher = new OutboxDispatcher(db, createDingTalkDelivery(sessions, {}, setup.dataDirectory), { maxAttempts: 3, claimTtlMs: 1000, baseBackoffMs: 1, maxBackoffMs: 100 });
+    expect(await dispatcher.dispatchOne(lease, 1000)).toMatchObject({ state: "sent" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(String(fetcher.mock.calls[0]?.[0])).toBe("https://api.dingtalk.com/original-fixture");
+    await new AttachmentIngestionCoordinator({ ...setup, downloader: { download: async () => { throw new Error("must not run"); } } }).process([], 2000);
+    expect(await dispatcher.dispatchOne(lease, 2000)).toBeNull();
+    db.close();
+  });
+
+  it("stops the third identical download failure across restarts and durably explains it once", async () => {
+    const setup = context([resource()]);
+    const download = vi.fn(async (): Promise<DingTalkAttachmentDownloadResult> => ({ ok: false, kind: "retryable", code: "dingtalk_attachment_timeout" }));
+    let now = 1000;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await new AttachmentIngestionCoordinator({ ...setup, downloader: { download } }).process([capability()], now);
+      now = Number(row(setup.databaseFile).next_attempt_at);
+    }
+    expect(row(setup.databaseFile)).toMatchObject({ ingest_state: "failed", attempt_count: 3 });
+    await new AttachmentIngestionCoordinator({ ...setup, downloader: { download } }).process([capability()], now + 1000000);
+    expect(download).toHaveBeenCalledTimes(3);
+    const db = new DatabaseSync(setup.databaseFile);
+    const notices = db.prepare("SELECT payload_json FROM collaboration_outbox WHERE source_event_id LIKE 'attachment-feedback:%' ORDER BY created_at").all() as Array<{ payload_json: string }>;
+    expect(notices).toHaveLength(2);
+    expect(JSON.stringify(notices)).toContain("连续 3 次");
+    expect(JSON.stringify(notices)).not.toMatch(/private-download-code|dingtalk_attachment_timeout/);
+    const rendered = JSON.stringify(renderDingTalkSessionMessage(JSON.parse(notices[1]!.payload_json)));
+    expect(rendered).toContain("连续 3 次");
+    expect(rendered).not.toContain(WORK_ITEM_ID);
+    expect(db.prepare("SELECT count(*) AS n FROM collaboration_attachment_failures").get()).toEqual({ n: 3 });
+    expect(() => db.exec("DELETE FROM collaboration_attachment_failures")).toThrow();
+    db.close();
+  });
+
+  it("counts consecutive failure reasons rather than total attempts", async () => {
+    const setup = context([resource()]);
+    const codes = ["dingtalk_attachment_timeout", "dingtalk_attachment_timeout", "dingtalk_attachment_download_transport", "dingtalk_attachment_timeout", "dingtalk_attachment_timeout", "dingtalk_attachment_timeout"];
+    const download = vi.fn(async (): Promise<DingTalkAttachmentDownloadResult> => ({ ok: false, kind: "retryable", code: codes.shift()! }));
+    let now = 1000;
+    for (let attempt = 1; attempt <= 6; attempt++) {
+      await new AttachmentIngestionCoordinator({ ...setup, downloader: { download } }).process([capability()], now);
+      expect(row(setup.databaseFile).ingest_state).toBe(attempt === 6 ? "failed" : "pending");
+      now = Number(row(setup.databaseFile).next_attempt_at);
+    }
+  });
+
+  it("suppresses queued retry feedback after attachment recovery", async () => {
+    const setup = context([resource()]);
+    let now = 1000;
+    await new AttachmentIngestionCoordinator({ ...setup, downloader: { download: async () => ({ ok: false, kind: "retryable", code: "dingtalk_attachment_timeout" }) } }).process([capability()], now);
+    now = Number(row(setup.databaseFile).next_attempt_at);
+    const bytes = Buffer.from("recovered");
+    await new AttachmentIngestionCoordinator({ ...setup, downloader: { download: async () => ({ ok: true, bytes, sha256: hash(bytes) }) } }).process([], now);
+    const db = new DatabaseSync(setup.databaseFile);
+    const lease = new InstanceLeaseCoordinator(db, "feedback-test").acquire(now, 30000)!;
+    const deliver = vi.fn(async () => ({ outcome: "sent" as const }));
+    const dispatcher = new OutboxDispatcher(db, { deliver }, { maxAttempts: 3, claimTtlMs: 1000, baseBackoffMs: 1, maxBackoffMs: 100 });
+    expect(await dispatcher.dispatchOne(lease, now)).toMatchObject({ state: "superseded" });
+    expect(deliver).not.toHaveBeenCalled();
+    db.close();
+  });
+
   it.each(["download", "extract-success", "extract-failure"])("fences a superseded attempt after delayed %s without changing evidence or removing capabilities", async (stage) => {
     const setup = context([resource()]);
     const bytes = Buffer.from("delayed content");

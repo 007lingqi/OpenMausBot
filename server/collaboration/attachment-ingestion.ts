@@ -19,6 +19,7 @@ import { DatabaseSync } from "node:sqlite";
 import type { DingTalkAttachmentCapabilityVault } from "../integrations/dingtalk/attachment-capability-vault.ts";
 import type { DingTalkAttachmentDownloadResult } from "../integrations/dingtalk/attachment-downloader.ts";
 import type { DingTalkPrivateResourceCapability } from "../integrations/dingtalk/types.ts";
+import { enqueueAttachmentFeedback } from "./attachment-feedback.ts";
 import {
   extractAttachmentText,
   MAX_EXTRACTED_CHARACTERS,
@@ -291,19 +292,36 @@ function setDownloadFailure(
   attempt: number,
   now: number,
   result: Extract<DingTalkAttachmentDownloadResult, { ok: false }>,
+  assertActive: () => void,
 ): "pending" | "failed" {
-  if (result.kind === "retryable") {
+  const safeCodes = new Set([
+    "attachment_capability_unavailable", "attachment_storage_write_failed", "attachment_download_failed",
+    ...["cancelled", "timeout", "capability_invalid", "credentials_unavailable", "credentials_missing", "too_large", "stream_invalid", "size_mismatch", "download_url_unsafe",
+      "token_transport", "token_http", "token_response_invalid", "token_rejected", "resolve_transport", "resolve_http", "resolve_response_invalid", "resolve_rejected", "download_transport", "download_http"]
+      .map(code => `dingtalk_attachment_${code}`),
+  ]);
+  const code = safeCodes.has(result.code) ? result.code : "attachment_download_failed";
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    assertActive();
+    if (!database.prepare("SELECT 1 FROM collaboration_attachments WHERE id=? AND ingest_state='downloading' AND attempt_count=?").get(attachmentId, attempt)) throw new Error("attachment_claim_superseded");
+    database.prepare("INSERT INTO collaboration_attachment_failures(attachment_id,attempt,error_code,created_at) VALUES(?,?,?,?)")
+      .run(attachmentId, attempt, code, now);
+    const recent = database.prepare("SELECT error_code FROM collaboration_attachment_failures WHERE attachment_id=? ORDER BY attempt DESC LIMIT 3")
+      .all(attachmentId) as Array<{ error_code: string }>;
+    const exhausted = recent.length === 3 && recent.every(row => row.error_code === code);
+    const state = result.kind === "retryable" && !exhausted ? "pending" : "failed";
     database.prepare(
-      "UPDATE collaboration_attachments SET ingest_state = 'pending', error_code = ?, next_attempt_at = ?, " +
+      "UPDATE collaboration_attachments SET ingest_state = ?, error_code = ?, next_attempt_at = ?, " +
         "updated_at = ? WHERE id = ? AND ingest_state = 'downloading' AND attempt_count = ?",
-    ).run(result.code, retryAt(now, attempt), now, attachmentId, attempt);
-    return "pending";
+    ).run(state, code, state === "pending" ? retryAt(now, attempt) : now, now, attachmentId, attempt);
+    enqueueAttachmentFeedback(database, attachmentId, now);
+    database.exec("COMMIT");
+    return state;
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
   }
-  database.prepare(
-    "UPDATE collaboration_attachments SET ingest_state = 'failed', error_code = ?, next_attempt_at = ?, " +
-      "updated_at = ? WHERE id = ? AND ingest_state = 'downloading' AND attempt_count = ?",
-  ).run(result.code, now, now, attachmentId, attempt);
-  return "failed";
 }
 
 function setIntegrityFailure(
@@ -667,6 +685,7 @@ export class AttachmentIngestionCoordinator {
     try {
       this.assertActive();
       this.persistActiveCapabilities(database, privateCapabilities);
+      this.recoverTerminalFeedback(database, now);
       await this.projectUnprojectedEvidence(database, now);
       this.assertActive();
       const pending = new AttachmentStore(database).readPending({ now, limit: PROCESS_LIMIT });
@@ -685,6 +704,7 @@ export class AttachmentIngestionCoordinator {
       }
       await this.projectUnprojectedEvidence(database, now);
       this.assertActive();
+      this.recoverTerminalFeedback(database, now);
       return { processed, ...counts };
     } finally {
       database.close();
@@ -695,6 +715,19 @@ export class AttachmentIngestionCoordinator {
     return Boolean(database.prepare(
       "SELECT 1 FROM collaboration_external_events WHERE id = ? AND work_item_id IS NOT NULL",
     ).get(attachment.externalEventId));
+  }
+
+  private recoverTerminalFeedback(database: DatabaseSync, now: number): void {
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      this.assertActive();
+      const rows = database.prepare("SELECT a.id FROM collaboration_attachments a JOIN collaboration_external_events e ON e.id=a.external_event_id " +
+        "JOIN collaboration_work_items w ON w.id=e.work_item_id WHERE a.ingest_state IN ('failed','unsupported') AND w.control_state='active' " +
+        "AND w.status NOT IN ('accepted','cancelled') AND NOT EXISTS(SELECT 1 FROM collaboration_outbox o WHERE o.source_event_id='attachment-feedback:'||a.id||':'||a.attempt_count||':'||a.ingest_state) LIMIT 20")
+        .all() as Array<{ id: string }>;
+      for (const row of rows) enqueueAttachmentFeedback(database, row.id, now);
+      database.exec("COMMIT");
+    } catch (error) { database.exec("ROLLBACK"); throw error; }
   }
 
   private persistActiveCapabilities(
@@ -776,18 +809,18 @@ export class AttachmentIngestionCoordinator {
         counts.failed += 1;
         return;
       }
-      database.prepare(
-        "UPDATE collaboration_attachments SET ingest_state = 'pending', error_code = ?, next_attempt_at = ?, " +
-          "updated_at = ? WHERE id = ? AND ingest_state = 'downloading' AND attempt_count = ?",
-      ).run("attachment_capability_unavailable", retryAt(now, attempt), now, attachment.id, attempt);
-      counts.pending += 1;
+      const state = setDownloadFailure(database, attachment.id, attempt, now, { ok: false, kind: "retryable", code: "attachment_capability_unavailable" }, () => this.assertActive());
+      if (state === "failed") this.vault.remove(attachment.capabilityRef);
+      counts[state] += 1;
       return;
     }
 
-    const downloaded = await this.downloader.download(capability, this.signal);
+    let downloaded: DingTalkAttachmentDownloadResult;
+    try { downloaded = await this.downloader.download(capability, this.signal); }
+    catch { downloaded = { ok: false, kind: "retryable", code: "attachment_download_failed" }; }
     assertClaim();
     if (!downloaded.ok) {
-      const state = setDownloadFailure(database, attachment.id, attempt, now, downloaded);
+      const state = setDownloadFailure(database, attachment.id, attempt, now, downloaded, () => this.assertActive());
       counts[state] += 1;
       if (state === "failed") this.vault.remove(attachment.capabilityRef);
       return;
@@ -807,11 +840,9 @@ export class AttachmentIngestionCoordinator {
     try {
       writeContentAddressed(this.attachmentDirectory, actualHash, downloaded.bytes);
     } catch {
-      database.prepare(
-        "UPDATE collaboration_attachments SET ingest_state = 'pending', error_code = ?, next_attempt_at = ?, " +
-          "updated_at = ? WHERE id = ? AND ingest_state = 'downloading' AND attempt_count = ?",
-      ).run("attachment_storage_write_failed", retryAt(now, attempt), now, attachment.id, attempt);
-      counts.pending += 1;
+      const state = setDownloadFailure(database, attachment.id, attempt, now, { ok: false, kind: "retryable", code: "attachment_storage_write_failed" }, () => this.assertActive());
+      if (state === "failed") this.vault.remove(attachment.capabilityRef);
+      counts[state] += 1;
       return;
     }
 

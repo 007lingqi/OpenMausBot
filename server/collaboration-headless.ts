@@ -58,6 +58,7 @@ import { DingTalkStreamAdapter } from "./integrations/dingtalk/stream-adapter.ts
 import { DingTalkAttachmentCapabilityVault } from "./integrations/dingtalk/attachment-capability-vault.ts";
 import { FetchDingTalkAttachmentDownloader } from "./integrations/dingtalk/attachment-downloader.ts";
 import { AttachmentIngestionCoordinator } from "./collaboration/attachment-ingestion.ts";
+import { attachmentFeedbackSourceEvent } from "./collaboration/attachment-feedback.ts";
 import { RealDingTalkStreamSdk } from "./integrations/dingtalk/stream-sdk.ts";
 import { validateTargetCommandSpec, type TargetCommandSpec } from "./collaboration/quality-gate.ts";
 import type { AcceptanceCondition } from "./collaboration/snapshot.ts";
@@ -180,9 +181,10 @@ function sourceEventId(dedupeKey: string): string | undefined {
     : undefined;
 }
 
-function latestWorkItemSourceEventId(databaseFile: string, workItemId: string): string | undefined {
+function latestWorkItemSourceEventId(databaseFile: string, workItemId: string, attachmentFeedbackEvent?: string): string | undefined {
   const database = new DatabaseSync(databaseFile, { readOnly: true });
   try {
+    if (attachmentFeedbackEvent) return attachmentFeedbackSourceEvent(database, attachmentFeedbackEvent);
     const row = database
       .prepare(
         "SELECT source_event_id FROM collaboration_external_events " +
@@ -248,8 +250,11 @@ export function createDingTalkDelivery(
   const databaseFile = join(dataDirectory, "collaboration", "collaboration.sqlite");
   return {
     async deliver(message) {
+      const eventId = sourceEventId(message.dedupeKey);
       const routedSourceEventId =
-        message.aggregateType === "plan" ||
+        eventId?.startsWith("attachment-feedback:")
+          ? latestWorkItemSourceEventId(databaseFile, message.aggregateId, eventId)
+          : message.aggregateType === "plan" ||
         (message.aggregateType === "work_item" && message.dedupeKey.startsWith("dingtalk:event:lifecycle-recovery:"))
           ? latestWorkItemSourceEventId(databaseFile, message.aggregateId) ?? sourceEventId(message.dedupeKey)
           : sourceEventId(message.dedupeKey);

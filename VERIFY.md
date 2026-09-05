@@ -1,5 +1,12 @@
 # Meta 协作验证记录
 
+## 2026-09-06 附件失败收据与业务反馈（最新）
+
+- 先行 `pnpm vitest run server/collaboration/attachment-ingestion.test.ts`，3 失败 / 13 通过（20231 exit 1）：第三次仍 pending、不同原因串联后没有停止、恢复后没有可检查的积压回复。不是因缺失新 schema 而假造红灯。
+- 初实现同文件 16 项和 typecheck 通过（85148 exit 0）；数据库/摄取/服务/生命周期恢复/备份 5 文件 60 项及 typecheck 通过（22544 exit 0）。来源路由测试首次导入错误使套件未运行；修正实际 reply-router 路径后，摄取与数据库 2 文件 / 25 项及 typecheck 通过（11796 exit 0）。覆盖三次同因、变更原因重计、重建 coordinator、不可变收据、事务回滚、恢复后的旧提示抑制、原附件 session 真实装配和重复投递抑制、v21 无虚构历史失败升级。
+- 最终 `pnpm vitest run server/collaboration server/integrations/dingtalk server/collaboration-headless.test.ts && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-attachment-feedback-typecheck && git diff --check`，59374 exit 0，71 文件 / 592 项，04:11:10 开始，Vitest 66.84 秒。请求等待期间未重启；现已终态。
+- 本批未运行全仓 pnpm test、真实钉钉/模型/在线文档或 Docker；测试网络为受控 fetch、没有真实凭据。不能据此宣称自然协作六类试点通过。投影回调异常仍需独立的失败预算与反馈设计，解析器进程收束不由下载失败收据替代。
+
 ## 2026-09-06 附件非阻塞生命周期（最新）
 
 - 下载器先行测试：`pnpm vitest run server/integrations/dingtalk/attachment-downloader.test.ts`，8 失败 / 13 通过（15722 exit 1）。六个网络/流阶段无超时、取消无法结束、迟到 token 测试挂起均被复现，未以测试超时冒充成功。

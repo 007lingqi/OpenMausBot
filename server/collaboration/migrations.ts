@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { OPENMAUSBOT_SOURCE_BASELINE } from "./config.ts";
 
-export const COLLABORATION_SCHEMA_VERSION = 21;
+export const COLLABORATION_SCHEMA_VERSION = 22;
 
 interface Migration {
   version: number;
@@ -1176,6 +1176,24 @@ const migrations: readonly Migration[] = [
       for (const table of ["commands", "proofs"]) database.exec(`CREATE TRIGGER verification_${table}_finalizing BEFORE INSERT ON collaboration_verification_${table}
         WHEN EXISTS(SELECT 1 FROM collaboration_verification_finalization_intents WHERE session_id=NEW.session_id)
         BEGIN SELECT RAISE(ABORT,'verification already finalizing'); END;`);
+    },
+  },
+  {
+    version: 22, name: "attachment-failure-receipts", checksum: "v22:immutable-attachment-attempt-failures",
+    apply(database) {
+      database.exec(`
+        CREATE TABLE collaboration_attachment_failures (
+          attachment_id TEXT NOT NULL REFERENCES collaboration_attachments(id),
+          attempt INTEGER NOT NULL CHECK(attempt>0),
+          error_code TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          PRIMARY KEY (attachment_id, attempt)
+        ) STRICT;
+        CREATE TRIGGER attachment_failures_no_update BEFORE UPDATE ON collaboration_attachment_failures
+          BEGIN SELECT RAISE(ABORT,'attachment failure receipts are immutable'); END;
+        CREATE TRIGGER attachment_failures_no_delete BEFORE DELETE ON collaboration_attachment_failures
+          BEGIN SELECT RAISE(ABORT,'attachment failure receipts are immutable'); END;
+      `);
     },
   },
 ];
