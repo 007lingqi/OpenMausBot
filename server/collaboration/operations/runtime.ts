@@ -30,6 +30,8 @@ import {
   verifyContainmentProof,
 } from "../containment.ts";
 import type { CandidateExecutorOptions, CandidateExecutionOutcome } from "../executor.ts";
+import { authorizedPreparationRetrySql, preparationDispatchAllowed, recordPreparationResult } from "../execution-preparation.ts";
+import { CommandCleanupError } from "../execution-limits.ts";
 import type { PlanningPolicy } from "../graph.ts";
 import type { InboundMessageOutcome } from "../inbound.ts";
 import { assertCurrentInstanceLease, InstanceLeaseCoordinator, type InstanceLease } from "../leases.ts";
@@ -1254,6 +1256,10 @@ export class CollaborationHeadlessRuntime {
       this.queuedWorkItems.delete(workItemId);
       return;
     }
+    if (!preparationDispatchAllowed(this.database, workItemId, ready.plan_revision)) {
+      this.queuedWorkItems.delete(workItemId);
+      return;
+    }
     const attempt = ready.previous_attempt + 1;
     if (attempt > this.options.execution!.limits.maxAttempts) { this.queuedWorkItems.delete(workItemId); return; }
     const repository = this.repositoryQueueKey(ready.repository);
@@ -1275,7 +1281,15 @@ export class CollaborationHeadlessRuntime {
     this.scheduledWorkItems.add(workItemId);
     void this.executeCurrentPlan(workItemId, attempt)
       .then(async (outcome) => await this.enqueueExecutionStatus(outcome))
-      .catch(() => this.enqueueExecutionFailure(workItemId, ready.plan_revision))
+      .catch((error: unknown) => {
+        if (!this.database || !this.lease) return;
+        try {
+          if (recordPreparationResult(this.database, { workItemId, planRevision: ready.plan_revision, attempt,
+            state: error instanceof CommandCleanupError ? "unsettled" : "failed", lease: this.lease,
+            maxAttempts: this.options.execution!.limits.maxAttempts, now: this.clock.now() })) return;
+        } catch { /* A stale scheduler must not publish a new completion claim. */ return; }
+        this.enqueueExecutionFailure(workItemId, ready.plan_revision);
+      })
       .finally(() => {
         this.scheduledWorkItems.delete(workItemId);
         this.activeRepositoryExecutions.delete(repository);
@@ -1316,7 +1330,9 @@ export class CollaborationHeadlessRuntime {
       "AND max(COALESCE((SELECT MAX(r.attempt) FROM collaboration_runs r WHERE r.work_item_id=w.id),0)," +
       "COALESCE((SELECT MAX(d.attempt) FROM collaboration_execution_dispatches d WHERE d.work_item_id=w.id),0)) < ? " +
       "AND p.status='published' AND NOT EXISTS (SELECT 1 FROM collaboration_runs r WHERE r.work_item_id=w.id AND r.plan_revision=w.current_plan_revision) " +
-      "AND NOT EXISTS (SELECT 1 FROM collaboration_execution_dispatches d WHERE d.work_item_id=w.id AND d.plan_revision=w.current_plan_revision) " +
+      "AND (NOT EXISTS (SELECT 1 FROM collaboration_execution_dispatches d WHERE d.work_item_id=w.id AND d.plan_revision=w.current_plan_revision) " +
+      "OR EXISTS (SELECT 1 FROM collaboration_execution_dispatches d WHERE d.work_item_id=w.id AND d.plan_revision=w.current_plan_revision " +
+      "AND d.attempt=(SELECT MAX(latest.attempt) FROM collaboration_execution_dispatches latest WHERE latest.work_item_id=w.id) AND " + authorizedPreparationRetrySql + ")) " +
       (excluded.length ? `AND w.id NOT IN (${excluded.map(() => "?").join(",")}) ` : "") +
       "ORDER BY p.created_at,w.created_at,w.id LIMIT 64").all(this.options.execution!.limits.maxAttempts, ...excluded) as unknown as Array<{ id: string }>;
     for (const row of rows) this.scheduleReadyExecution(row.id);
@@ -1461,9 +1477,28 @@ export class CollaborationHeadlessRuntime {
         candidates,
         positiveInteger(this.options.recoveryMaxAttempts ?? 3, "recoveryMaxAttempts"),
       ).scan(this.lease!, this.clock.now());
+      this.recoverInterruptedPreparations();
     } catch {
       this.reason = "recovery_failed";
     }
+  }
+
+  private recoverInterruptedPreparations(): void {
+    if (!this.database || !this.lease || !this.executionEnabled()) return;
+    const rows = this.database.prepare(
+      "SELECT d.work_item_id,d.plan_revision,d.attempt FROM collaboration_execution_dispatches d " +
+      "JOIN collaboration_work_items w ON w.id=d.work_item_id AND w.current_plan_revision=d.plan_revision " +
+      "WHERE (d.instance_owner<>? OR d.instance_fence<>?) " +
+      "AND w.status NOT IN ('accepted','cancelled') " +
+      "AND d.attempt=(SELECT MAX(latest.attempt) FROM collaboration_execution_dispatches latest WHERE latest.work_item_id=w.id) " +
+      "AND NOT EXISTS (SELECT 1 FROM collaboration_execution_preparation_results f WHERE f.work_item_id=w.id AND f.attempt=d.attempt) " +
+      "AND NOT EXISTS (SELECT 1 FROM collaboration_runs r WHERE r.work_item_id=w.id AND r.plan_revision=d.plan_revision AND r.attempt=d.attempt) " +
+      "ORDER BY d.created_at,w.id LIMIT 64",
+    ).all(this.lease.ownerId, this.lease.fence) as unknown as Array<{ work_item_id: string; plan_revision: number; attempt: number }>;
+    for (const row of rows) recordPreparationResult(this.database, {
+      workItemId: row.work_item_id, planRevision: row.plan_revision, attempt: row.attempt, state: "interrupted",
+      lease: this.lease, maxAttempts: this.options.execution!.limits.maxAttempts, now: this.clock.now(),
+    });
   }
 
   private async startDingTalk(): Promise<void> {
@@ -1622,6 +1657,7 @@ export class CollaborationHeadlessRuntime {
       maintained = true;
     }
     if (serviceReady) this.retryDirtyMetaBundles();
+    if (serviceReady && !this.options.probeOnly) this.recoverInterruptedPreparations();
     if (serviceReady) this.rebuildNeverStartedQueue();
     if (serviceReady && this.options.naturalIntake && !this.naturalIntakeTask) {
       // Do not block lease renewal, Stream maintenance or other group messages on model latency.

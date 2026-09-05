@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { isolatedExecutionEnvironment, runArgv } from "./execution-limits.ts";
 import { renderCandidateStatus, validateTargetCommandSpec } from "./quality-gate.ts";
@@ -18,6 +18,17 @@ function cwd(): string {
 }
 
 describe("bounded argv execution", () => {
+  it("identifies unconfirmed process cleanup separately from a settled command failure", async () => {
+    const originalKill = process.kill;
+    const kill = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+      if (pid < 0) throw Object.assign(new Error("fixture cleanup denied"), { code: "EPERM" });
+      return originalKill(pid, signal);
+    });
+    try {
+      await expect(runArgv({ argv: [process.execPath, "-e", "process.exit(0)"], timeoutMs: 2000, maxOutputBytes: 8000 },
+        { cwd: cwd(), env: process.env })).rejects.toMatchObject({ name: "CommandCleanupError" });
+    } finally { kill.mockRestore(); }
+  });
   it("passes shell metacharacters literally and strips credential environment", async () => {
     const home = cwd();
     const env = isolatedExecutionEnvironment(

@@ -18,6 +18,13 @@ export interface ArgvResult {
   outputLimitExceeded: boolean;
 }
 
+export class CommandCleanupError extends Error {
+  constructor(cause: unknown) {
+    super("Command process cleanup could not be confirmed", { cause });
+    this.name = "CommandCleanupError";
+  }
+}
+
 const CREDENTIAL_ENV = /^(?:GIT_|SSH_|GCM_|GH_|GITHUB_|NPM_|PNPM_|YARN_|.*(?:TOKEN|SECRET|PASSWORD|CREDENTIAL|API_KEY).*)$/iu;
 const PROCESS_GROUP_TERM_GRACE_MS = 1_000;
 const PROCESS_GROUP_KILL_GRACE_MS = 1_000;
@@ -165,7 +172,7 @@ export async function runArgv(command: ArgvCommand, options: { cwd: string; env:
       if (hardKill) clearTimeout(hardKill);
       void cleanup().then(
         () => reject(error),
-        (cleanupError) => reject(new AggregateError([error, cleanupError], "Command failed and process cleanup failed")),
+        (cleanupError) => reject(new CommandCleanupError(new AggregateError([error, cleanupError]))),
       );
     });
     child.once("close", (exitCode, signal) => {
@@ -184,7 +191,7 @@ export async function runArgv(command: ArgvCommand, options: { cwd: string; env:
             timedOut,
             outputLimitExceeded,
           }),
-        reject,
+        (cleanupError) => reject(new CommandCleanupError(cleanupError)),
       );
     });
     const timer = setTimeout(() => {

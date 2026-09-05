@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { OPENMAUSBOT_SOURCE_BASELINE } from "./config.ts";
 
-export const COLLABORATION_SCHEMA_VERSION = 15;
+export const COLLABORATION_SCHEMA_VERSION = 16;
 
 interface Migration {
   version: number;
@@ -1020,6 +1020,25 @@ const migrations: readonly Migration[] = [
         BEGIN SELECT RAISE(ABORT,'execution dispatch is immutable'); END;
       CREATE TRIGGER collaboration_execution_dispatch_no_delete BEFORE DELETE ON collaboration_execution_dispatches
         BEGIN SELECT RAISE(ABORT,'execution dispatch is immutable'); END;
+    `); },
+  },
+  {
+    version: 16, name: "execution-preparation-results", checksum: "v16:immutable-preparation-outcomes",
+    apply(database) { database.exec(`
+      CREATE TABLE collaboration_execution_preparation_results (
+        work_item_id TEXT NOT NULL,
+        attempt INTEGER NOT NULL,
+        state TEXT NOT NULL CHECK(state IN ('failed','interrupted','unsettled')),
+        work_item_version INTEGER NOT NULL CHECK(work_item_version > 0),
+        max_attempts INTEGER NOT NULL CHECK(max_attempts > 0),
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY(work_item_id,attempt),
+        FOREIGN KEY(work_item_id,attempt) REFERENCES collaboration_execution_dispatches(work_item_id,attempt)
+      ) STRICT;
+      CREATE TRIGGER collaboration_preparation_no_update BEFORE UPDATE ON collaboration_execution_preparation_results
+        BEGIN SELECT RAISE(ABORT,'preparation result is immutable'); END;
+      CREATE TRIGGER collaboration_preparation_no_delete BEFORE DELETE ON collaboration_execution_preparation_results
+        BEGIN SELECT RAISE(ABORT,'preparation result is immutable'); END;
     `); },
   },
 ];

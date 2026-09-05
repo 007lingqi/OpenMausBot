@@ -3,7 +3,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { WorktreeManager } from "../worktree-manager.ts";
+import { CommandCleanupError } from "../execution-limits.ts";
 
 import type { DingTalkInboundMessage } from "../../integrations/dingtalk/types.ts";
 import {
@@ -22,6 +24,8 @@ import type {
   TargetCommandSpec,
 } from "../quality-gate.ts";
 import { startCollaborationService } from "../service.ts";
+import { currentInstanceLease } from "../leases.ts";
+import { recordPreparationResult } from "../execution-preparation.ts";
 import { CollaborationHeadlessRuntime, type CollaborationHeadlessRuntimeOptions } from "./runtime.ts";
 
 const scratch: string[] = [];
@@ -265,6 +269,151 @@ async function stopHarness(harness: RuntimeHarness): Promise<void> {
 }
 
 describe("runtime repository single-writer scheduling", () => {
+  it("refuses Owner retry when preparation process cleanup could not be confirmed", async () => {
+    const root = temporaryDirectory();
+    const h = createHarness([createRepository(root, "unsettled-preparation")]);
+    h.options.execution!.limits.maxAttempts = 3;
+    const prepare = vi.spyOn(WorktreeManager.prototype, "prepare").mockRejectedValue(new CommandCleanupError(new Error("fixture")));
+    const db = new DatabaseSync(h.databaseFile);
+    await h.runtime.start();
+    try {
+      await waitFor(() => Boolean(db.prepare("SELECT 1 FROM collaboration_execution_preparation_results").get()), "missing unsettled result");
+      expect(db.prepare("SELECT state FROM collaboration_execution_preparation_results").get()).toEqual({ state: "unsettled" });
+      const service = startCollaborationService({ dataDirectory: h.options.dataDirectory });
+      service.bootstrapOwnerLocally({ senderCorpId: "corp", senderStaffId: "staff", now: Date.now() });
+      expect(service.performDirectOwnerAction({ sourceEventId: "unsafe-cleanup-retry", action: "retry", workItemId: h.items[0].workItemId,
+        sender: inbound({ sourceEventId: "sender", conversationId: "group", text: "" }).sender, now: Date.now() }).allowed).toBe(false);
+      service.close();
+      expect(h.agent.startedWorkItems).toEqual([]);
+    } finally { prepare.mockRestore(); db.close(); await stopHarness(h); }
+  });
+  it("does not publish an interrupted-preparation notice over a cancelled task", async () => {
+    const root = temporaryDirectory();
+    const h = createHarness([createRepository(root, "cancelled-preparation")]);
+    const db = new DatabaseSync(h.databaseFile);
+    db.prepare("INSERT INTO collaboration_execution_dispatches (work_item_id,plan_revision,attempt,instance_owner,instance_fence,created_at) VALUES (?,1,1,'dead-instance',1,1)").run(h.items[0].workItemId);
+    db.prepare("UPDATE collaboration_work_items SET status='cancelled',control_state='cancelled' WHERE id=?").run(h.items[0].workItemId);
+    await h.runtime.start();
+    try {
+      expect(db.prepare("SELECT count(*) AS count FROM collaboration_execution_preparation_results").get()).toEqual({ count: 0 });
+      expect(db.prepare("SELECT count(*) AS count FROM collaboration_outbox WHERE source_event_id LIKE 'execution-preparation:%'").get()).toEqual({ count: 0 });
+    } finally { db.close(); await stopHarness(h); }
+  });
+  it("consumes each Owner retry once and stops after three preparation failures", async () => {
+    const root = temporaryDirectory();
+    const repo = createRepository(root, "three-preparation-failures");
+    const h = createHarness([repo]);
+    h.options.execution!.limits.maxAttempts = 3;
+    h.options.execution!.repositories = { [repo.path]: { ...h.options.execution!.repositories[repo.path], baseSha: "0".repeat(40) } };
+    const service = startCollaborationService({ dataDirectory: h.options.dataDirectory });
+    service.bootstrapOwnerLocally({ senderCorpId: "corp", senderStaffId: "staff", now: Date.now() });
+    service.close();
+    const db = new DatabaseSync(h.databaseFile);
+    await h.runtime.start();
+    try {
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        await waitFor(() => Number((db.prepare("SELECT count(*) AS count FROM collaboration_execution_preparation_results").get() as { count: number }).count) === attempt, "preparation did not settle");
+        await h.runtime.drainOnce(); await h.runtime.drainOnce();
+        expect(db.prepare("SELECT count(*) AS count FROM collaboration_execution_dispatches").get()).toEqual({ count: attempt });
+        const command = { transportEventId: `retry-${attempt}`, transportMessageId: `transport-retry-${attempt}`,
+          command: "retry" as const, workItemId: h.items[0].workItemId,
+          sender: inbound({ sourceEventId: "sender", conversationId: "group", text: "" }).sender, receivedAt: Date.now() };
+        expect(h.runtime.performDingTalkOwnerTextCommand(command).allowed).toBe(attempt < 3);
+        expect(h.runtime.performDingTalkOwnerTextCommand(command)).toMatchObject({ allowed: attempt < 3, duplicate: true });
+      }
+      expect(h.agent.startedWorkItems).toEqual([]);
+      expect(db.prepare("SELECT count(*) AS count FROM collaboration_outbox WHERE source_event_id LIKE 'execution-preparation:%'").get()).toEqual({ count: 3 });
+      expect(() => db.prepare("UPDATE collaboration_execution_preparation_results SET state='interrupted'").run()).toThrow("immutable");
+    } finally { db.close(); await stopHarness(h); }
+  });
+
+  it("will not turn a running Agent into a retryable preparation failure", async () => {
+    const root = temporaryDirectory();
+    const h = createHarness([createRepository(root, "running-is-not-preparation")]);
+    const db = new DatabaseSync(h.databaseFile);
+    await h.runtime.start();
+    try {
+      await waitFor(() => h.agent.startedWorkItems.length === 1, "agent not started");
+      const lease = currentInstanceLease(db)!;
+      expect(recordPreparationResult(db, { workItemId: h.items[0].workItemId, planRevision: 1, attempt: 1,
+        state: "failed", lease, maxAttempts: 3, now: Date.now() })).toBe(false);
+      expect(() => recordPreparationResult(db, { workItemId: h.items[0].workItemId, planRevision: 1, attempt: 1,
+        state: "failed", lease: { ...lease, fence: lease.fence + 1 }, maxAttempts: 3, now: Date.now() })).toThrow("stale");
+      expect(db.prepare("SELECT count(*) AS count FROM collaboration_execution_preparation_results").get()).toEqual({ count: 0 });
+    } finally { db.close(); await stopHarness(h); }
+  });
+
+  it("upgrades the previous dispatch schema without losing a waiting preparation", async () => {
+    const root = temporaryDirectory();
+    const h = createHarness([createRepository(root, "schema-15-preparation")]);
+    const db = new DatabaseSync(h.databaseFile);
+    // Reconstruct the exact v15 delta in this disposable fixture only.
+    db.exec("DROP TABLE collaboration_execution_preparation_results; DELETE FROM collaboration_schema_migrations WHERE version=16; PRAGMA user_version=15");
+    db.prepare("INSERT INTO collaboration_execution_dispatches (work_item_id,plan_revision,attempt,instance_owner,instance_fence,created_at) VALUES (?,1,1,'dead-instance',1,1)").run(h.items[0].workItemId);
+    const original = db.prepare("SELECT * FROM collaboration_execution_dispatches").get();
+    await h.runtime.start();
+    try {
+      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 16 });
+      expect(db.prepare("SELECT * FROM collaboration_execution_dispatches").get()).toEqual(original);
+      expect(db.prepare("SELECT state FROM collaboration_execution_preparation_results").get()).toEqual({ state: "interrupted" });
+    } finally { db.close(); await stopHarness(h); }
+  });
+  it("notifies once about an orphan preparation without silently retrying it", async () => {
+    const root = temporaryDirectory();
+    const h = createHarness([createRepository(root, "orphan-dispatch")]);
+    const db = new DatabaseSync(h.databaseFile);
+    db.prepare("INSERT INTO collaboration_execution_dispatches (work_item_id,plan_revision,attempt,instance_owner,instance_fence,created_at) VALUES (?,1,1,'dead-instance',1,1)").run(h.items[0].workItemId);
+    for (let i = 0; i < 2; i++) {
+      const runtime = new CollaborationHeadlessRuntime(h.options);
+      try { await runtime.start(); await runtime.drainOnce(); } finally { await runtime.stop(); }
+    }
+    expect(h.agent.startedWorkItems).toEqual([]);
+    const messages = db.prepare("SELECT payload_json FROM collaboration_outbox WHERE source_event_id LIKE 'execution-preparation:%'").all() as Array<{ payload_json: string }>;
+    expect(messages).toHaveLength(1);
+    expect(messages[0].payload_json).toContain("中断");
+    expect(db.prepare("SELECT state FROM collaboration_execution_preparation_results").get()).toEqual({ state: "interrupted" });
+    const service = startCollaborationService({ dataDirectory: h.options.dataDirectory });
+    service.bootstrapOwnerLocally({ senderCorpId: "corp", senderStaffId: "staff", now: Date.now() });
+    expect(service.performDirectOwnerAction({ sourceEventId: "unsafe-orphan-retry", action: "retry", workItemId: h.items[0].workItemId,
+      sender: inbound({ sourceEventId: "sender", conversationId: "group", text: "" }).sender, now: Date.now() }).allowed).toBe(false);
+    service.close();
+    db.close();
+  });
+
+  it("requires a fresh Owner retry after a settled preparation failure and recovers that authorization after restart", async () => {
+    const root = temporaryDirectory();
+    const repo = createRepository(root, "owner-preparation-retry");
+    const h = createHarness([repo]);
+    h.options.execution!.limits.maxAttempts = 3;
+    const repositories = h.options.execution!.repositories;
+    h.options.execution!.repositories = { [repo.path]: { ...repositories[repo.path], baseSha: "0".repeat(40) } };
+    const db = new DatabaseSync(h.databaseFile);
+    await h.runtime.start();
+    const service = startCollaborationService({ dataDirectory: h.options.dataDirectory });
+    try {
+      await waitFor(() => Boolean(db.prepare("SELECT 1 FROM collaboration_execution_preparation_results WHERE state='failed'").get()), "failure not recorded");
+      await h.runtime.drainOnce(); await h.runtime.drainOnce();
+      expect(db.prepare("SELECT count(*) AS count FROM collaboration_execution_dispatches").get()).toEqual({ count: 1 });
+      service.bootstrapOwnerLocally({ senderCorpId: "corp", senderStaffId: "owner", now: Date.now() });
+      const sender = inbound({ sourceEventId: "sender", conversationId: "group", text: "" }).sender;
+      const command = { sourceEventId: "retry-preparation", action: "retry" as const, workItemId: h.items[0].workItemId, sender, now: Date.now() };
+      expect(service.performDirectOwnerAction(command).allowed).toBe(false);
+      const authorized = { ...command, sourceEventId: "owner-retry-preparation", sender: { ...sender, senderStaffId: "owner" } };
+      expect(service.performDirectOwnerAction(authorized)).toMatchObject({ allowed: true, duplicate: false });
+      expect(service.performDirectOwnerAction(authorized)).toMatchObject({ allowed: true, duplicate: true });
+      // Crash boundary: the durable Owner decision exists but scheduling has not occurred.
+      await stopHarness(h);
+      const agent = new DeferredAgent();
+      const runtime = new CollaborationHeadlessRuntime({ ...h.options, agent,
+        execution: { ...h.options.execution!, repositories } });
+      try {
+        await runtime.start();
+        await waitFor(() => agent.startedWorkItems.length === 1, "authorized retry was lost");
+        await runtime.drainOnce();
+        expect(db.prepare("SELECT count(*) AS count FROM collaboration_execution_dispatches").get()).toEqual({ count: 2 });
+      } finally { agent.releaseAll(); await runtime.stop(); }
+    } finally { service.close(); db.close(); await stopHarness(h); }
+  });
   it("recovers work after genuine Owner pause and resume without accepting unprojected contributions", async () => {
     const root = temporaryDirectory();
     const repo = createRepository(root, "owner-resume");

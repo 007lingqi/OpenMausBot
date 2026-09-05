@@ -3,6 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 
 import type { DingTalkSender } from "../integrations/dingtalk/types.ts";
 import { appendControlAudit } from "./audit.ts";
+import { pendingPreparation } from "./execution-preparation.ts";
 import {
   CANDIDATE_VERIFICATION_MAX_ATTEMPTS,
   candidateHasPassedMetaReview,
@@ -207,6 +208,8 @@ function hasRequiredEvidence(database: DatabaseSync, workItem: WorkItemRow, cand
 
 function hasRetryableResult(database: DatabaseSync, workItem: WorkItemRow): boolean {
   if (workItem.current_plan_revision === null) return false;
+  const preparation = pendingPreparation(database, workItem.id, workItem.current_plan_revision);
+  if (preparation) return preparation.state === "failed" && preparation.attempt < preparation.max_attempts!;
   const row = database
     .prepare(
       "SELECT 1 FROM collaboration_work_nodes WHERE work_item_id = ? AND plan_revision = ? AND active = 1 " +
