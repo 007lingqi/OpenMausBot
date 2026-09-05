@@ -1,5 +1,14 @@
 # Meta 协作验证记录
 
+## 2026-09-06 回复投递待核查的后台可见性（当前批）
+
+- TDD `pnpm vitest run server/collaboration/operations/delivery-health.test.ts`：fff00d exit 1，5 项失败；缺少排查状态而不是已有投递实现失败。
+- 初修 43040 exit 0（1186a9）：4 文件 / 43 项、typecheck/diff。扩展命令 `pnpm vitest run server/collaboration/operations/delivery-health.test.ts server/collaboration/operations/runtime.test.ts server/collaboration-headless.test.ts server/collaboration/outbox-dispatcher.test.ts server/collaboration/operations/runtime-lifecycle-recovery.test.ts && pnpm typecheck && git diff --check`，55022 终态待记录。
+- 覆盖真实 runtime + SQLite 聚合分类、记录前后完全不变、输出去敏、无法读取/未打开/已关闭时非伪零、认领刚好到期、无效时钟、待核查不阻塞下一回复、重启持久可见、--health 不取租约/不绑定 Owner/不消费队列。消息发送用受控 transport，不是真实钉钉。
+- 扩展 55022 exit 0（13a27f）：5 文件 / 69 项、typecheck/diff 通过。
+- 全仓命令 `pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-delivery-health-typecheck && git diff --check`：80516 已 exit 0（707063）。主集 315.04 秒，268 文件通过 / 1 跳过，2,725 项通过 / 18 跳过，注册数 2,743。
+- broker 7、updater 15、desktop-viewer 5、package-link 2、save-file 10 通过；打包服务在无可访问 node_modules 下启动、9 条 spawned proxy 路径通过；后续 typecheck、独立服务端编译及 diff 检查全通过。所有验证句柄终态；本批未实际运行 Docker、调用真实钉钉/模型/在线文档或部署。
+
 ## 2026-09-06 钉钉业务回执冲突保护（当前批）
 
 - `pnpm vitest run server/integrations/dingtalk/business-receipt.test.ts`：a6f78d exit 1，18 失败 / 7 通过。修复前会将冲突状态误报成功、忽略部分数字错误码、缓存并使用被拒绝的令牌。

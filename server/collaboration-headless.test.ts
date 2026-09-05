@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { openCollaborationLedger } from "./collaboration/db.ts";
+import { enqueueInboundCard } from "./collaboration/outbox.ts";
 import { LocalOwnerRegistry } from "./collaboration/owner.ts";
 import {
   parseHeadlessArguments,
@@ -58,6 +59,27 @@ function signalIo(): { io: HeadlessIo; signal(name: NodeJS.Signals): void } {
 }
 
 describe("secure collaboration headless CLI", () => {
+  it("prints a safe delivery-review summary in health-only mode without consuming the queue or acquiring ownership", async () => {
+    const directory = temporaryDirectory();
+    const ledger = openCollaborationLedger(join(directory, "collaboration"));
+    const database = new DatabaseSync(ledger.filePath);
+    try {
+      const row = enqueueInboundCard(database, { sourceEventId: "private-message", aggregateType: "work_item", aggregateId: "WI-PRIVATE", aggregateVersion: 1,
+        card: { type: "primary_status_card", headline: "已接收", acknowledgement: "private-body", workItemId: "WI-PRIVATE", workItemVersion: 1,
+          workItemStatus: "collecting", association: "created" }, now: 1000 });
+      database.prepare("UPDATE collaboration_outbox SET delivery_state='dead_letter',last_error='private-error' WHERE id=?").run(row.id);
+      const before = database.prepare("SELECT * FROM collaboration_outbox").all();
+      const output = io();
+      await runCollaborationHeadless(["--health", "--data-dir", directory], { OMB_DINGTALK_ENABLED: "0" }, { io: output.io });
+      expect(JSON.parse(output.stdout.join(""))).toMatchObject({ ready: true, delivery: {
+        status: "needs_attention", counts: { queued: 0, sending: 0, retrying: 0, needsReview: 1 }, summary: expect.stringContaining("1 条回复需要核查"),
+      } });
+      for (const value of ["private-message", "private-body", "private-error", "WI-PRIVATE", row.id]) expect(output.stdout.join("")).not.toContain(value);
+      expect(database.prepare("SELECT * FROM collaboration_outbox").all()).toEqual(before);
+      expect(database.prepare("SELECT owner_id FROM collaboration_instance_lease WHERE singleton=1").get()).toBeUndefined();
+      expect(database.prepare("SELECT COUNT(*) AS count FROM collaboration_owner_bindings").get()).toEqual({ count: 0 });
+    } finally { database.close(); ledger.close(); }
+  });
   it("preserves trusted assertion reporter configuration and rejects unknown modes", async () => {
     const root = temporaryDirectory();
     const key = join(root, "key");

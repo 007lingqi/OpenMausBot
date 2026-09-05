@@ -39,6 +39,7 @@ import type { PlanningPolicy } from "../graph.ts";
 import type { InboundMessageOutcome } from "../inbound.ts";
 import { assertCurrentInstanceLease, InstanceLeaseCoordinator, StaleFenceError, type InstanceLease } from "../leases.ts";
 import { OutboxDispatcher, type DispatchOutcome, type OutboxDispatcherOptions } from "../outbox-dispatcher.ts";
+import { readDeliveryHealth, type DeliveryHealth } from "./delivery-health.ts";
 import { enqueueInboundCard, type OutboxDeliveryPort } from "../outbox.ts";
 import { renderCommandStatusCard, renderPlanStatusCard } from "../message-renderer.ts";
 import { syncWorkItemMetaBundle } from "../meta-bundle.ts";
@@ -180,6 +181,8 @@ export interface CollaborationHeadlessRuntimeOptions {
 }
 
 export interface CollaborationRuntimeHealth {
+  /** Independent from readiness: a quarantined reply must not gate unrelated work. */
+  delivery: DeliveryHealth;
   app: "openmausbot-collaboration";
   sourceBaseline?: CollaborationHealth["sourceBaseline"];
   authority?: "headless";
@@ -869,6 +872,7 @@ export class CollaborationHeadlessRuntime {
       (this.options.probeOnly === true || !!this.lease);
     return {
       app: "openmausbot-collaboration",
+      delivery: readDeliveryHealth(this.database, this.clock.now()),
       state: this.currentState,
       status: stopped ? "stopped" : ready ? "healthy" : "degraded",
       ready,
