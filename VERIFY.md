@@ -1,5 +1,14 @@
 # Meta 协作验证记录
 
+## 2026-09-06 文档容器验证入口与防假通过（最新）
+
+- 最终 `pnpm vitest run server/collaboration server/integrations/dingtalk server/collaboration-headless.test.ts && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-document-smoke-typecheck && git diff --check` 全链通过（79314 exit 0）：71 文件 / 561 项，02:52:37 开始、65.07 秒；类型检查及服务端编译通过。之后只改状态文档。没有运行本批全仓 pnpm test，不挪用 18f4176 的全仓结果。
+- `/tmp/omb-parser-verification-20260905/bin/python -m unittest test_extractor test_smoke_fixtures` 在 parser 目录通过（5725c8 exit 0），13 项；仅自生成可信夹具。七份样例涵盖 Word 表格位置/脱敏样例、隐藏 Excel 页、未求值公式、PDF 页来源/部分未读、活动内容和加密文件拒绝。
+- 新 TS smoke 17 项含实际隔离参数断言与受控 Docker 命令端口编排。检查创建/隔离/进程状态/固定拒绝响应、超时确有运行中容器、逐案适配器清理，以及创建回执丢失、检查失败、错误退出、错误正文、假超时、重复场景、清理失败/谎报/无法查询。既有用户容器哨兵不被移除，单个清理失败仍检查其他本次容器。
+- TDD 首轮 15 项中 8 项失败（80c9c4 exit 1），实际复现通用异常误算成功；实现后相关 21 项和 typecheck 通过（93035 exit 0）。追加两个用例/证据来源标识后整组首次 560 通过 / 1 失败（44942 exit 1），仅 loopback listen EPERM。允许临时本机监听后原套件重跑取得最终通过，没有跳过、弱化或改写失败用例。
+- 只读 Docker ps（cfe447 exit 0）确认现有非生产 pilot healthy，未更改任何原有容器。真实镜像下载前段受 Docker Hub EOF/Colima DNS 超时阻塞；本批备用 public.ecr.aws HEAD 在 DNS 解析超时（83823 exit 28，15 秒）。首次权限审查超时未启动命令，唯一重试启动后跟进原句柄至终态。
+- 未构建/运行 parser 镜像、未执行真实 Docker smoke、未接入 headless、未调用在线文档/模型/钉钉、未改变身份或全局网络。报告把受控端口标为 controlled_docker_port；其通过不证明 Linux 隔离、正文 Ledger 摄取/恢复、真实群回复或六类场景。Goal active，下一步见 PROGRESS 当前批次。
+
 ## 2026-09-06 全仓基线与恢复通知投递门禁（最新）
 
 - 修改前保持 18f4176 源码不变，`pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-background-recovery-full-typecheck && git diff --check` 全链通过（51696 exit 0）。包括主 Vitest/test-floor、broker、Electron 测试与无 node_modules 打包启动/九个代理路径检查。中段工具输出被截断，未保留精确主测试数量，不提供推算值。这是修改前基线，不能冒充后续代码的全仓回归。

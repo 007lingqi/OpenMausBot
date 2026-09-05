@@ -14,4 +14,5 @@ ENTRYPOINT ["python", "-I", "/app/extractor.py"]
 
 FROM runtime AS parser-tests
 COPY test_extractor.py /app/test_extractor.py
+COPY smoke_fixtures.py test_smoke_fixtures.py /app/
 ENTRYPOINT ["python", "/app/test_extractor.py"]

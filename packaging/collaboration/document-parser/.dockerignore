@@ -3,3 +3,5 @@
 !requirements.lock
 !extractor.py
 !test_extractor.py
+!smoke_fixtures.py
+!test_smoke_fixtures.py
