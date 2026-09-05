@@ -1,5 +1,5 @@
 // Mid-turn steering, end to end: boots the real harness with the fake claude
-// CLI in `slow` mode (a gap after the tool result the way a real turn has
+// CLI in `wait-for-steer` mode (a gap after the tool result the way a real turn has
 // between model calls), sends a message WHILE the turn runs, and asserts
 // it is taken into the turn — 202 steered; in the transcript in order and
 // marked; folded into the reply — while an engine without a live session
@@ -51,7 +51,7 @@ posixOnly("mid-turn steering e2e", () => {
       join(home, ".openmausbot", "config.json"),
       JSON.stringify({
         instances: {
-          claude: { driver: "claudeAgent", environment: { FAKE_CLAUDE_MODE: "slow" }, config: { cli: FAKE_CLAUDE, permissionMode: "bypassPermissions" } },
+          claude: { driver: "claudeAgent", environment: { FAKE_CLAUDE_MODE: "wait-for-steer" }, config: { cli: FAKE_CLAUDE, permissionMode: "bypassPermissions" } },
           // no live session: a message while busy uses the server-side queue
           acp: { driver: "grokAgent", environment: { FAKE_ACP_MODE: "hang" }, config: { cli: FAKE_ACP, fullAuto: true } },
         },
@@ -98,6 +98,9 @@ posixOnly("mid-turn steering e2e", () => {
       await waitFor(async () => (await getBot(created.id)).busy === true, "the turn to start");
       // the fake pauses after its tool result; this lands inside that gap
       await waitFor(async () => (await getBot(created.id)).messages.some((m: any) => m.kind === "activity"), "the tool chip");
+      // A slow observer must not decide whether the fake's turn is still open.
+      // This deliberately exceeds the former 800 ms fixture completion window.
+      await new Promise((resolve) => setTimeout(resolve, 1200));
       const second = await api("POST", `/api/bots/${created.id}/messages`, { text: "and also this" });
       expect(second.status).toBe(202);
       expect(second.body.steered).toBe(true);

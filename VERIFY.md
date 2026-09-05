@@ -1,5 +1,22 @@
 # Meta 协作验证记录
 
+## 2026-09-06 同轮输入夹具与全仓回归恢复（最新）
+
+- 原源码完整 `pnpm vitest run server/index.test.ts server/steer-e2e.test.ts` 通过（5769 exit 0）：2 文件 / 90 项，03:22:11 开始、37.89 秒。这不证明历史 20 秒超时的原因，只排除稳定必现的两文件原顺序失败。
+- 延迟复现：在等待 activity 后、发送第二条消息前增加 1,200 ms，保持原 slow 夹具 800 ms 完成及全部原断言；`pnpm vitest run server/steer-e2e.test.ts -t 'a message during a Claude turn'` 失败（15930 exit 1），second.body.steered 为 undefined，与原全仓症状一致。这证实时序假设有缺陷，不说明 Chief 超时与它同因。
+- 专用夹具改为真实 stdin 补充事件握手后，`pnpm vitest run server/steer-e2e.test.ts server/drivers/claude.test.ts && pnpm typecheck && git diff --check` 通过（31289 exit 0）：2 文件 / 52 项通过 / 1 既有跳过，03:24:41 开始、41.28 秒。新增观察延迟保留为回归，原 slow 模式未移除，产品逻辑/40 秒测试时限不变。
+- 最终 `pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-steer-fixture-full-typecheck && git diff --check` 全链通过（36219 exit 0）。包含主 Vitest/test-floor、broker、Electron、打包无 node_modules 启动/全部九个代理路径、类型和服务端编译。完整主套件总数所在工具输出截断，不从上一轮推算。中间明确观察到 steer-e2e 2 项通过、index 88 项通过（Chief 690 ms，原 20 秒上限未改）。
+- 修复前完整两文件 1 次通过；延迟故障注入 1 次失败；修复后定点/共享夹具 1 次通过、正式全仓 1 次通过。有限试验不能保证永不抖动，Chief 原超时的直接根因仍未知。之后只更新状态文档；现无未结束验证进程或未解决当前测试失败。
+- 未改产品权限、运行服务/容器、网络或 Owner 身份，未调用真实模型/钉钉/在线文档。前两批正文链路已纳入本次完整回归，但真实 Docker 文档、线上来源、主机恢复和六类真实群协作依旧未验收；Goal active，下一步为 D-048 的附件后台生命周期。
+
+## 2026-09-06 固定 5db6a79 全仓复测（未通过）
+
+- 保持业务源码和测试不变，执行 `pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-document-source-full-typecheck && git diff --check`。启动请求等待后实际启动 15254，持续跟进同一句柄至 exit 1，没有因观察等待重启。主套件：2 文件失败 / 262 通过 / 1 跳过，2 项失败 / 2561 通过 / 18 跳过（2581 收集），03:11:42 开始、467.73 秒。test-floor 保留并按失败退出。
+- 失败 1：server/index.test.ts:688 `elects one Chief of Staff per section and preserves other section Chiefs`，20,000 ms 超时。失败 2：server/steer-e2e.test.ts:103 `second.body.steered` 期望 true、实际 undefined。没有证据将其归因于文档改动或 DNS，当前视为全仓验收未通过。
+- 原进程结束后原源码执行 `pnpm vitest run server/index.test.ts server/steer-e2e.test.ts -t 'elects one Chief|a message during a Claude turn'`，2 文件 / 2 项通过、88 项因定向过滤跳过（20997 exit 0），03:19:53 开始、7.28 秒。没有增大 timeout、屏蔽错误或修改断言。局部成功仅证明单独运行可通过，不能把整套失败改记为成功；仍需查共享状态/顺序/时序。
+- 单独补跑 `pnpm broker:test && pnpm test:updater && pnpm test:desktop-viewer && pnpm test:package-link && pnpm test:save-file && pnpm test:packaged-server && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-document-source-full-typecheck && git diff --check` 全链通过（26259 exit 0）：broker 7 项，Electron 15/5/2/10 项，打包无 node_modules 启动与全部 9 个代理路径、类型和服务端编译通过。它们在首次 && 链中并未执行，不能混为一次全仓通过。
+- 本批业务源码未变，只有状态文件更新，因全仓失败暂不自动提交。只读审查的附件 ACK/drain 阻塞及缺超时风险见 D-048；这不是已复现真实群故障或已实现修复。Goal active，未完成项仍含真实 Docker 文档镜像、在线文档/模型、完整主机重启和六类群试点。
+
 ## 2026-09-06 正文尾部、来源与字符完整性（最新）
 
 - 最终 `pnpm vitest run server/collaboration server/integrations/dingtalk server/collaboration-headless.test.ts && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-document-source-typecheck && git diff --check` 全链通过（31434 exit 0）：71 文件 / 570 项，03:04:42 开始、66.37 秒。之后只更新文档；本批未运行全仓 pnpm test，不将前几批全仓结果算作当前证据。

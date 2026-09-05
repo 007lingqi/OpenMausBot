@@ -4,7 +4,7 @@
 // scripted session. Failure modes are toggled by env var, mirroring how
 // the real thing misbehaves:
 //
-//   FAKE_CLAUDE_MODE   happy (default) | exit-early | hang | malformed
+//   FAKE_CLAUDE_MODE   happy (default) | exit-early | hang | malformed | wait-for-steer
 //                      | stream (partial-message text deltas before the
 //                        whole-message frame, plus subagent noise to drop)
 //   FAKE_CLAUDE_DUMP   path to write {argv, env, prompt, mcpConfig} as JSON,
@@ -77,6 +77,7 @@ const model = argAfter("--model") ?? "claude-fake";
 let dumped = false;
 let turnRunning = false;
 let steered: string[] = [];
+let finishAfterSteer: (() => void) | null = null;
 let stdinEnded = false;
 
 const promptText = (prompt: JsonValue): string => {
@@ -177,15 +178,19 @@ const playTurn = (prompt: JsonValue) => {
     turnRunning = false;
     finishIfDone();
   };
-  if (mode === "slow") {
+  if (mode === "slow" || mode === "wait-for-steer") {
     // a gap a test can steer into; the closing reply carries anything that
     // was folded in, the way the real CLI includes a mid-turn message in
     // the same turn's next model call
-    setTimeout(() => {
+    const reply = () => {
       const tail = steered.length ? ` + steered: ${steered.join(" | ")}` : "";
       out({ type: "assistant", message: { content: [{ type: "text", text: `reply to: ${promptText(prompt)}${tail}` }] } });
       finish();
-    }, 800);
+    };
+    // E2E steering tests synchronize on the real input event, not scheduler speed.
+    // The test's existing timeout still detects a missing steer or a hung turn.
+    if (mode === "wait-for-steer") finishAfterSteer = reply;
+    else setTimeout(reply, 800);
   } else {
     finish();
   }
@@ -205,7 +210,12 @@ process.stdin.on("data", (c) => {
     } catch {
       continue;
     }
-    if (turnRunning) steered.push(promptText(prompt));
+    if (turnRunning) {
+      steered.push(promptText(prompt));
+      const finish = finishAfterSteer;
+      finishAfterSteer = null;
+      finish?.();
+    }
     else playTurn(prompt);
   }
 });
