@@ -1,5 +1,14 @@
 # Meta 协作验证记录
 
+## 2026-09-06 被动恢复证据与收束边界（最新）
+
+- 最终 `pnpm vitest run server/collaboration server/integrations/dingtalk server/collaboration-headless.test.ts && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-lifecycle-recovery-typecheck && git diff --check` 全链通过（13581 exit 0）：69 文件 / 522 项，01:38:10 开始、62.15 秒。生产代码及测试此后未改，仅更新四份状态文档；未运行本批全仓 pnpm test，不用历史全仓证据替代。
+- 新增恢复测试 32 项；执行/复核重验原始隔离证明及 empty fingerprint、同一恢复重放/两个独立 SQLite 连接竞争只结算一次、恢复不改事项/候选/复核记录。活进程、未知、缺证明、证明拒绝、指纹不匹配、原实例仍有效、等待中失租、取消和数据库关闭均不落结算。
+- 收束标记不可改删，标记后不得继续预留命令或补证明；零命令执行无标记仍阻塞，零命令复核仅在旧实例失去租约后可恢复且旧命令预留被拒。v20 升级保留原 sessions/commands/proofs，不回填假的收束证据；v15/v18/v19 重建夹具、健康及备份版本检查同步到 schema 21。
+- 前段原有 6 个先行测试在模块未实现时失败，基础实现后 6 项及 typecheck 通过（54883 exit 0）。本次扩充后 14 项行为通过，但 TypeScript 报测试夹具联合类型无法安全收窄；统一夹具接口并继续补边界后 4 文件 / 90 项、typecheck、diff 检查通过（50811 exit 0），最终整组通过，无遗留测试失败。
+- 仅临时 Git/SQLite、受控 containment/runner、独立本机子进程及本机 HTTP 夹具，不调用真实模型、钉钉或在线文档。未更新原试点，不把 schema 21 本地回归说成线上完成。
+- 底层恢复函数尚未接到 runtime 一次性后台扫描、生命周期/关机等待及群内幂等提醒，也未证明 Linux/Docker 强制重启安全续办。下一批先为这些路径补测试再接入；完整产品 Goal 继续 active。
+
 ## 2026-09-06 执行层持久仓库占用与自测清理（最新）
 
 - 最终相关全链 `pnpm vitest run server/collaboration server/integrations/dingtalk server/collaboration-headless.test.ts && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-execution-lifecycle-typecheck && git diff --check` 通过（72596 exit 0）：68 文件 / 490 项，01:13:37 开始、59.66 秒。随后生产代码未改，只增强同仓库不同事项竞争断言；该测试、typecheck 及 diff 检查通过（69868 exit 0）。本批未跑全仓 pnpm test。

@@ -24,26 +24,34 @@ describe("collaboration ledger", () => {
     const directory = temporaryDirectory(); const store = openCollaborationLedger(directory); store.close();
     const db = new DatabaseSync(join(directory, COLLABORATION_DATABASE_NAME));
     db.prepare("INSERT INTO collaboration_acceptance_mapping_attempts VALUES('v19-preserved',1,'{}',1000)").run();
+    for (const kind of ["execution", "verification"]) {
+      for (const table of ["commands", "proofs"]) db.exec(`DROP TRIGGER ${kind}_${table}_finalizing`);
+      db.exec(`DROP TABLE collaboration_${kind}_finalization_intents`);
+    }
     for (const table of ["proofs", "commands", "settlements", "sessions"]) db.exec(`DROP TABLE collaboration_execution_${table}`);
-    db.exec("DELETE FROM collaboration_schema_migrations WHERE version=20; PRAGMA user_version=19"); db.close();
+    db.exec("DELETE FROM collaboration_schema_migrations WHERE version>=20; PRAGMA user_version=19"); db.close();
     const upgraded = openCollaborationLedger(directory);
-    expect(upgraded.migrationState.schemaVersion).toBe(20); upgraded.close();
+    expect(upgraded.migrationState.schemaVersion).toBe(21); upgraded.close();
     const after = new DatabaseSync(join(directory, COLLABORATION_DATABASE_NAME));
     try {
       expect(after.prepare("SELECT request_key FROM collaboration_acceptance_mapping_attempts").get()).toEqual({ request_key: "v19-preserved" });
       expect(after.prepare("SELECT count(*) AS n FROM collaboration_execution_sessions").get()).toEqual({ n: 0 });
-      expect(after.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type='trigger' AND name LIKE 'execution_%_no_%'").get()).toEqual({ n: 8 });
+      expect(after.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type='trigger' AND name LIKE 'execution_%_no_%'").get()).toEqual({ n: 10 });
     } finally { after.close(); }
   });
   it("upgrades an existing v18 ledger without losing mapping reservations", () => {
     const directory=temporaryDirectory(); const store=openCollaborationLedger(directory); store.close();
     const db=new DatabaseSync(join(directory,COLLABORATION_DATABASE_NAME));
     db.prepare("INSERT INTO collaboration_acceptance_mapping_attempts VALUES('preserved',1,'{}',1000)").run();
+    for (const kind of ["execution", "verification"]) {
+      for (const table of ["commands", "proofs"]) db.exec(`DROP TRIGGER ${kind}_${table}_finalizing`);
+      db.exec(`DROP TABLE collaboration_${kind}_finalization_intents`);
+    }
     for(const table of ["proofs","commands","settlements","sessions"]) db.exec(`DROP TABLE collaboration_execution_${table}`);
     for(const table of ["proofs","commands","settlements","sessions"]) db.exec(`DROP TABLE collaboration_verification_${table}`);
     db.exec("DELETE FROM collaboration_schema_migrations WHERE version>=19; PRAGMA user_version=18"); db.close();
     const upgraded=openCollaborationLedger(directory);
-    expect(upgraded.migrationState.schemaVersion).toBe(20); upgraded.close();
+    expect(upgraded.migrationState.schemaVersion).toBe(21); upgraded.close();
     const after=new DatabaseSync(join(directory,COLLABORATION_DATABASE_NAME));
     try {
       expect(after.prepare("SELECT request_key,attempt FROM collaboration_acceptance_mapping_attempts").all()).toEqual([{request_key:"preserved",attempt:1}]);
@@ -55,8 +63,8 @@ describe("collaboration ledger", () => {
     const ledger = openCollaborationLedger(directory);
     expect(ledger.databaseHealth()).toEqual({
       file: COLLABORATION_DATABASE_NAME,
-      schemaVersion: 20,
-      appliedMigrations: 20,
+      schemaVersion: 21,
+      appliedMigrations: 21,
       journalMode: "wal",
       foreignKeys: true,
     });
@@ -85,11 +93,11 @@ describe("collaboration ledger", () => {
     before.close();
 
     const second = openCollaborationLedger(directory);
-    expect(second.migrationState).toEqual({ schemaVersion: 20, appliedMigrations: 20 });
+    expect(second.migrationState).toEqual({ schemaVersion: 21, appliedMigrations: 21 });
     second.close();
 
     const after = new DatabaseSync(join(directory, COLLABORATION_DATABASE_NAME));
-    expect(after.prepare("SELECT count(*) AS count FROM collaboration_schema_migrations").get()).toEqual({ count: 20 });
+    expect(after.prepare("SELECT count(*) AS count FROM collaboration_schema_migrations").get()).toEqual({ count: 21 });
     expect(after.prepare("SELECT version, name, checksum, applied_at FROM collaboration_schema_migrations").all()).toEqual(
       initialMigration,
     );

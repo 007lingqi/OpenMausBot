@@ -425,6 +425,10 @@ describe("runtime repository single-writer scheduling", () => {
     const h = createHarness([createRepository(root, "schema-15-preparation")]);
     const db = new DatabaseSync(h.databaseFile);
     // Reconstruct the exact v15 delta in this disposable fixture only.
+    for (const kind of ["execution", "verification"]) {
+      for (const table of ["commands", "proofs"]) db.exec(`DROP TRIGGER ${kind}_${table}_finalizing`);
+      db.exec(`DROP TABLE collaboration_${kind}_finalization_intents`);
+    }
     for(const table of ["proofs","commands","settlements","sessions"]) db.exec(`DROP TABLE collaboration_execution_${table}`);
     for(const table of ["proofs","commands","settlements","sessions"]) db.exec(`DROP TABLE collaboration_verification_${table}`);
     db.exec("DROP TABLE collaboration_acceptance_mapping_results; DROP TABLE collaboration_acceptance_mapping_attempts; DROP INDEX collaboration_outbox_delivery_sequence; ALTER TABLE collaboration_outbox DROP COLUMN delivery_sequence; DROP TABLE collaboration_sent_association_choices; DROP TABLE collaboration_execution_preparation_results; DELETE FROM collaboration_schema_migrations WHERE version>=16; PRAGMA user_version=15");
@@ -432,7 +436,7 @@ describe("runtime repository single-writer scheduling", () => {
     const original = db.prepare("SELECT * FROM collaboration_execution_dispatches").get();
     await h.runtime.start();
     try {
-      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 20 });
+      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 21 });
       expect(db.prepare("SELECT * FROM collaboration_execution_dispatches").get()).toEqual(original);
       expect(db.prepare("SELECT state FROM collaboration_execution_preparation_results").get()).toEqual({ state: "interrupted" });
     } finally { db.close(); await stopHarness(h); }

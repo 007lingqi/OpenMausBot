@@ -56,6 +56,11 @@ export function recordVerificationProof(db: DatabaseSync,id: string,ordinal: num
 
 export async function settleVerification(db: DatabaseSync,id: string,lease: Lease,containment: ContainmentPort,now: () => number,canPersist: () => boolean): Promise<boolean> {
   if(!canPersist()) return false;
+  transaction(db,lease,now(),()=>{
+    assertSession(db,id,lease);
+    db.prepare("INSERT OR IGNORE INTO collaboration_verification_finalization_intents(session_id,command_count,created_at) SELECT ?,count(*),? FROM collaboration_verification_commands WHERE session_id=?")
+      .run(id,now(),id);
+  });
   const rows=db.prepare("SELECT c.ordinal,c.binding_json,p.proof_json FROM collaboration_verification_commands c LEFT JOIN collaboration_verification_proofs p ON p.session_id=c.session_id AND p.ordinal=c.ordinal WHERE c.session_id=? ORDER BY c.ordinal")
     .all(id) as unknown as Array<{ordinal:number;binding_json:string;proof_json:string|null}>;
   const evidence: Array<{ordinal:number;fingerprint:string;state:"empty"}>=[];

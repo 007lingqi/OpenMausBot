@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { OPENMAUSBOT_SOURCE_BASELINE } from "./config.ts";
 
-export const COLLABORATION_SCHEMA_VERSION = 20;
+export const COLLABORATION_SCHEMA_VERSION = 21;
 
 interface Migration {
   version: number;
@@ -1145,6 +1145,37 @@ const migrations: readonly Migration[] = [
       for (const table of ["commands", "proofs"]) database.exec(`CREATE TRIGGER execution_${table}_open BEFORE INSERT ON collaboration_execution_${table}
         WHEN EXISTS(SELECT 1 FROM collaboration_execution_settlements WHERE session_id=NEW.session_id)
         BEGIN SELECT RAISE(ABORT,'execution already settled'); END;`);
+    },
+  },
+  {
+    version: 21, name: "lifecycle-finalization-intent", checksum: "v21:immutable-coordinator-finished-boundaries",
+    apply(database) {
+      database.exec(`
+        CREATE TABLE collaboration_execution_finalization_intents (
+          session_id TEXT PRIMARY KEY REFERENCES collaboration_execution_sessions(id),
+          command_count INTEGER NOT NULL CHECK(command_count>=0), created_at INTEGER NOT NULL
+        ) STRICT;
+        CREATE TRIGGER execution_finalization_no_update BEFORE UPDATE ON collaboration_execution_finalization_intents
+          BEGIN SELECT RAISE(ABORT,'execution finalization is immutable'); END;
+        CREATE TRIGGER execution_finalization_no_delete BEFORE DELETE ON collaboration_execution_finalization_intents
+          BEGIN SELECT RAISE(ABORT,'execution finalization is immutable'); END;
+      `);
+      for (const table of ["commands", "proofs"]) database.exec(`CREATE TRIGGER execution_${table}_finalizing BEFORE INSERT ON collaboration_execution_${table}
+        WHEN EXISTS(SELECT 1 FROM collaboration_execution_finalization_intents WHERE session_id=NEW.session_id)
+        BEGIN SELECT RAISE(ABORT,'execution already finalizing'); END;`);
+      database.exec(`
+        CREATE TABLE collaboration_verification_finalization_intents (
+          session_id TEXT PRIMARY KEY REFERENCES collaboration_verification_sessions(id),
+          command_count INTEGER NOT NULL CHECK(command_count>=0), created_at INTEGER NOT NULL
+        ) STRICT;
+        CREATE TRIGGER verification_finalization_no_update BEFORE UPDATE ON collaboration_verification_finalization_intents
+          BEGIN SELECT RAISE(ABORT,'verification finalization is immutable'); END;
+        CREATE TRIGGER verification_finalization_no_delete BEFORE DELETE ON collaboration_verification_finalization_intents
+          BEGIN SELECT RAISE(ABORT,'verification finalization is immutable'); END;
+      `);
+      for (const table of ["commands", "proofs"]) database.exec(`CREATE TRIGGER verification_${table}_finalizing BEFORE INSERT ON collaboration_verification_${table}
+        WHEN EXISTS(SELECT 1 FROM collaboration_verification_finalization_intents WHERE session_id=NEW.session_id)
+        BEGIN SELECT RAISE(ABORT,'verification already finalizing'); END;`);
     },
   },
 ];

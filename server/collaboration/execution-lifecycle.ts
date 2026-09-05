@@ -61,6 +61,13 @@ export class ExecutionLifecycle {
   }
 
   async settle(containment: ContainmentPort): Promise<boolean> {
+    // Called only after the executor has stopped issuing native worktree operations.
+    // A new instance must not infer this boundary just from empty Agent containers.
+    this.transaction(() => {
+      this.assertOpen();
+      this.db.prepare("INSERT OR IGNORE INTO collaboration_execution_finalization_intents(session_id,command_count,created_at) SELECT ?,count(*),? FROM collaboration_execution_commands WHERE session_id=?")
+        .run(this.id, Date.now(), this.id);
+    });
     const rows = this.db.prepare("SELECT c.ordinal,c.binding_json,p.proof_json FROM collaboration_execution_commands c LEFT JOIN collaboration_execution_proofs p ON p.session_id=c.session_id AND p.ordinal=c.ordinal WHERE c.session_id=? ORDER BY c.ordinal")
       .all(this.id) as unknown as Array<{ ordinal: number; binding_json: string; proof_json: string | null }>;
     const evidence: Array<{ ordinal: number; fingerprint: string; state: "empty" }> = [];
