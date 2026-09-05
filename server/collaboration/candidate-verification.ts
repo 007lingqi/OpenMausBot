@@ -149,6 +149,7 @@ function verificationContractHash(
                   timeoutMs: command.timeoutMs,
                   maxOutputBytes: command.maxOutputBytes,
                   assertionContract: command.assertionContract ?? null,
+                  assertionReporter: command.assertionReporter ?? null,
                 }
               : null,
           };

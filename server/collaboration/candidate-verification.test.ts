@@ -243,6 +243,15 @@ function verify(item: Fixture, runner: SandboxedCommandRunner, now = 4_000, maxA
 }
 
 describe("independent candidate verification", () => {
+  it("rejects a runner that did not attest the configured trusted reporter", async () => {
+    const item = fixture();
+    item.commands["pnpm test target"].argv = ["node", "--test", "case.test.mjs"];
+    item.commands["pnpm test target"].assertionReporter = "node-test-v1";
+    const outcome = await verify(item, new FakeRunner());
+    expect(outcome.passed).toBe(false);
+    expect(outcome.reasons).toContain("sandbox attestation rejected for command: pnpm test target");
+    expect(candidateHasPassedMetaReview(item.database, item.runId, item.candidateSha)).toBe(false);
+  });
   it("requires assertion evidence from the developer self-test as well as the independent rerun", async () => {
     const item = fixture(undefined, false);
     const outcome = await verify(item, new FakeRunner());

@@ -1,5 +1,15 @@
 # Meta 协作验证记录
 
+## 2026-09-05 Node test 报告器与真实 Docker smoke（最新）
+
+- 最终 `pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-node-reporter-typecheck && git diff --check` 全链通过，82423 exit 0。主 Vitest 256 文件通过 / 1 文件跳过，2415 项通过 / 18 项跳过（2433，总数门禁通过），21:56:38 开始、236.44 秒。broker 7 项、Electron 独立套件 32 项、打包服务无 node_modules 启动和 9 个代理路径检查均通过；类型检查、服务端编译及补丁检查通过。平台跳过项不是跨平台验收通过。
+- 前一轮相关回归 63 文件 / 421 项、类型检查和服务端编译通过（85172 exit 0）。后补“未 attestation reporter 的 runner 不通过”用例，在最终全仓 candidate-verification 20 项中通过。报告器自身 6 项、headless 9 项通过。
+- 真实 Docker smoke：固定已缓存镜像 sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e，context colima-openmausbot-pilot，`operations/node-test-reporter.smoke.ts` exit 0。真实读取候选文件：passed→passed、failed→missing、skipped→missing；普通 stdout 伪报告未进入证据，测试中改写只读报告器被拒绝。通过 runTargetTests 完整收集和 containment 校验，不是 FakeDocker 参数断言。
+- smoke 仅生成自有临时数据、随机测试证明密钥与 3 个一次性无网络/非 root 容器；成功后清理。随后只读 ps 核对原 openmausbot-collaboration-pilot 仍 healthy、未出现本次测试容器，历史退出容器保留。不拉取镜像、不更新运行服务、不调用真实模型或钉钉、不读取用户凭据。
+- 先行失败：新增 reporter 测试因模块尚未实现而无法导入；实现后 6 项通过。检索曾使用不存在文件或无匹配 shell glob，属于定位错误，不作产品失败证据。最终无未解决测试失败。
+- 不证明：自动 Spec-to-case 生成/独立语义核对、抵御同 UID 恶意测试的父进程/旁路干扰、完整 Linux cgroup/主机重启恢复、真实在线文档、复杂解析镜像、真实模型自然群聊和六类试点。当前 reporter 和断言配置没有部署到服务。Goal 保持 active。
+
+
 ## 2026-09-05 断言级业务验收（最新）
 
 - 最终命令：`pnpm vitest run server/collaboration server/integrations/dingtalk server/collaboration-headless.test.ts && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-assertion-acceptance-typecheck && git diff --check`。62 文件 / 414 项通过，21:43:16 开始、41.01 秒；句柄 73209 exit 0，类型检查、服务端编译及补丁检查全部通过。

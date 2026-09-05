@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { assertionContractSchema, readAssertionReport, type AssertionContract, type AssertionResult } from "./acceptance-assertions.ts";
+import { validateNodeTestArgv } from "./node-test-reporter.ts";
 
 import {
   type ContainmentPort,
@@ -16,6 +17,7 @@ export interface TargetCommandSpec {
   timeoutMs: number;
   maxOutputBytes: number;
   assertionContract?: AssertionContract;
+  assertionReporter?: "node-test-v1";
 }
 
 export interface SandboxCommandAttestation {
@@ -26,6 +28,7 @@ export interface SandboxCommandAttestation {
   processIsolated: boolean;
   processTreeReaped: boolean;
   containmentProof?: ContainmentProof;
+  assertionReporter?: "node-test-v1";
 }
 
 export interface SandboxedCommandRequest {
@@ -42,6 +45,7 @@ export interface SandboxedCommandRequest {
   };
   containmentBinding: ContainmentBinding;
   registerContainment(proof: ContainmentProof): Promise<void>;
+  assertionReporter?: "node-test-v1";
 }
 
 export interface SandboxedCommandResult {
@@ -98,6 +102,10 @@ function contained(root: string, candidate: string): boolean {
 }
 
 export function validateTargetCommandSpec(commandId: string, spec: TargetCommandSpec): void {
+  if (spec.assertionReporter !== undefined) {
+    if (spec.assertionReporter !== "node-test-v1" || !spec.assertionContract) throw new Error("Target command assertion reporter is invalid");
+    validateNodeTestArgv(spec.argv);
+  }
   if (spec.assertionContract !== undefined && !assertionContractSchema.safeParse(spec.assertionContract).success) throw new Error("Target command assertion contract is invalid");
   if (!commandId.trim()) throw new Error("Target command ID is required");
   const executable = spec.argv[0].split(/[\\/]/u).at(-1)?.toLowerCase() ?? "";
@@ -174,9 +182,11 @@ export async function runTargetTests(input: {
     const result = await input.runner.run({
       commandId,
       argv: spec.argv,
+      assertionReporter: spec.assertionReporter,
       cwd,
       environment: spec.assertionContract ? { ...input.environment,
-        OMB_ASSERTION_RUN_ID: containmentBinding.runId, OMB_ASSERTION_NONCE: containmentBinding.nonce } : input.environment,
+        OMB_ASSERTION_RUN_ID: containmentBinding.runId, OMB_ASSERTION_NONCE: containmentBinding.nonce,
+        ...(spec.assertionReporter ? { OMB_ASSERTION_ROOT: root } : {}) } : input.environment,
       timeoutMs: spec.timeoutMs,
       maxOutputBytes: spec.maxOutputBytes,
       sandbox: { writableRoot: root, deniedPaths, network: "deny" },
@@ -192,6 +202,7 @@ export async function runTargetTests(input: {
     });
     const attestedDenied = [...new Set(result.attestation.deniedPaths.map((path) => realpathSync(path)))].sort();
     if (
+      (spec.assertionReporter !== undefined && result.attestation.assertionReporter !== spec.assertionReporter) ||
       !result.attestation.sandboxEnforced ||
       realpathSync(result.attestation.writableRoot) !== root ||
       result.attestation.network !== "deny" ||

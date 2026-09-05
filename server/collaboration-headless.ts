@@ -343,7 +343,7 @@ function targetCommands(environment: NodeJS.ProcessEnv): Record<string, TargetCo
   if (entries.length < 1 || entries.length > 16) throw new Error("OMB_EXECUTION_TARGET_COMMANDS_JSON_invalid");
   for (const [id, value] of entries) {
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("OMB_EXECUTION_TARGET_COMMANDS_JSON_invalid");
-    const item = value as { argv?: unknown; cwd?: unknown; timeoutMs?: unknown; maxOutputBytes?: unknown; assertionContract?: TargetCommandSpec["assertionContract"] };
+    const item = value as { argv?: unknown; cwd?: unknown; timeoutMs?: unknown; maxOutputBytes?: unknown; assertionContract?: TargetCommandSpec["assertionContract"]; assertionReporter?: TargetCommandSpec["assertionReporter"] };
     if (
       !Array.isArray(item.argv) || item.argv.length < 1 || item.argv.some((argument) => typeof argument !== "string") ||
       !Number.isSafeInteger(item.timeoutMs) || Number(item.timeoutMs) < 1 ||
@@ -358,6 +358,7 @@ function targetCommands(environment: NodeJS.ProcessEnv): Record<string, TargetCo
       maxOutputBytes: Number(item.maxOutputBytes),
       ...(typeof item.cwd === "string" ? { cwd: item.cwd } : {}),
       ...(item.assertionContract !== undefined ? { assertionContract: item.assertionContract } : {}),
+      ...(item.assertionReporter !== undefined ? { assertionReporter: item.assertionReporter } : {}),
     };
     validateTargetCommandSpec(id, spec);
     commands[id] = spec;

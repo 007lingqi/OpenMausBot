@@ -58,6 +58,30 @@ function signalIo(): { io: HeadlessIo; signal(name: NodeJS.Signals): void } {
 }
 
 describe("secure collaboration headless CLI", () => {
+  it("preserves trusted assertion reporter configuration and rejects unknown modes", async () => {
+    const root = temporaryDirectory();
+    const key = join(root, "key");
+    const generation = join(root, "generation");
+    writeFileSync(key, Buffer.alloc(32, 1), { mode: 0o600 });
+    writeFileSync(generation, "fixture-boot-generation");
+    const command = { argv: ["node", "--test", "case.test.mjs"], timeoutMs: 1000, maxOutputBytes: 32000,
+      assertionReporter: "node-test-v1", assertionContract: { format: "omb-assertions-v1", bindings: [{ conditionHash: "a".repeat(64), assertionIds: ["case"] }] } };
+    const environment = { OMB_DINGTALK_ENABLED: "0", OMB_EXECUTION_ENABLED: "1", OMB_EXECUTION_BACKEND: "docker",
+      OMB_EXECUTION_REPOSITORY: root, OMB_EXECUTION_WORKTREE_ROOT: join(root, "worktrees"), OMB_EXECUTION_EXCHANGE_ROOT: join(root, "exchange"),
+      OMB_EXECUTION_BASE_SHA: "b".repeat(40), OMB_DOCKER_COMMAND_IMAGE: "fixture:local", OMB_CONTAINMENT_VERIFIER_KEY_FILE: key,
+      OMB_HOST_GENERATION_FILE: generation, OMB_EXECUTION_TARGET_COMMANDS_JSON: JSON.stringify({ cases: command }),
+      OMB_EXECUTION_WRITE_SCOPES_JSON: '["src/**"]', OMB_EXECUTION_ACCEPTANCE_JSON: '[{"description":"保存成功","observation":"显示已保存"}]' };
+    const seen: CollaborationHeadlessRuntimeOptions[] = [];
+    const dependencies = { io: io().io, createRuntime(options: CollaborationHeadlessRuntimeOptions) {
+      seen.push(options);
+      return new CollaborationHeadlessRuntime({ dataDirectory: root, probeOnly: true });
+    } };
+    await runCollaborationHeadless(["--health", "--data-dir", root], environment, dependencies);
+    expect(seen[0].execution?.repositories[root].targetCommands.cases).toEqual(command);
+    await expect(runCollaborationHeadless(["--health", "--data-dir", root], { ...environment,
+      OMB_EXECUTION_TARGET_COMMANDS_JSON: JSON.stringify({ cases: { ...command, assertionReporter: "arbitrary" } }) }, dependencies)).rejects.toThrow("assertion reporter");
+    expect(seen).toHaveLength(1);
+  });
   it("requires and validates an explicit DingTalk conversation allowlist", () => {
     expect(() => readDingTalkAllowedConversationIds({})).toThrow("dingtalk_allowed_conversation_ids_required");
     expect([...readDingTalkAllowedConversationIds({

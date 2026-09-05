@@ -1,5 +1,6 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
+import { NODE_TEST_REPORTER_SOURCE, validateNodeTestArgv } from "../node-test-reporter.ts";
 
 import type {
   SandboxedCommandRequest,
@@ -69,10 +70,18 @@ export class DockerSandboxedCommandRunner implements SandboxedCommandRunner {
   }
 
   async run(request: SandboxedCommandRequest): Promise<SandboxedCommandResult> {
+    if (request.assertionReporter !== undefined) {
+      if (request.assertionReporter !== "node-test-v1") throw new Error("docker_assertion_reporter_invalid");
+      validateNodeTestArgv(request.argv);
+      if (["NODE_OPTIONS", "NODE_PATH", "NODE_TEST_CONTEXT"].some(key => request.environment[key] !== undefined)) throw new Error("docker_assertion_reporter_environment_invalid");
+    }
     const startedAt = Date.now();
     const runDirectory = join(this.exchangeRoot, safeName(`${request.containmentBinding.runId}-${request.commandId}-${request.containmentBinding.nonce}`));
     mkdirSync(runDirectory, { recursive: true, mode: 0o700 });
     const gate = join(runDirectory, "start");
+    if (request.assertionReporter) writeFileSync(join(runDirectory, "node-test-reporter.mjs"), NODE_TEST_REPORTER_SOURCE, { mode: 0o444, flag: "wx" });
+    const argv = request.assertionReporter
+      ? [request.argv[0], "--test-reporter=/run/openmausbot/node-test-reporter.mjs", ...request.argv.slice(1)] : request.argv;
     const labels = this.containment.labels(request.containmentBinding).flatMap((label) => ["--label", label]);
     const name = safeName(`${request.containmentBinding.runId}-${request.commandId}-${request.containmentBinding.nonce.slice(0, 8)}`);
     const create = await this.docker.run([
@@ -95,7 +104,7 @@ export class DockerSandboxedCommandRunner implements SandboxedCommandRunner {
       "--entrypoint", "/bin/sh",
       this.image,
       "-c", "while [ ! -f /run/openmausbot/start ]; do sleep 0.02; done; exec \"$@\"", "openmausbot-command",
-      ...request.argv,
+      ...argv,
     ], { timeoutMs: 30_000, maxOutputBytes: 64 * 1024 });
     if (create.exitCode !== 0) {
       rmSync(runDirectory, { recursive: true, force: true });
@@ -152,6 +161,7 @@ export class DockerSandboxedCommandRunner implements SandboxedCommandRunner {
           processIsolated: true,
           processTreeReaped,
           containmentProof: proof,
+          ...(request.assertionReporter ? { assertionReporter: request.assertionReporter } : {}),
         },
       };
     } finally {
