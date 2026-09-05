@@ -268,7 +268,7 @@ function mappingHarness(item: Fixture) {
 describe("independent candidate verification", () => {
   it("does not record test results when cancelled by a late runner response", async () => {
     const item=fixture(); const controller=new AbortController();
-    const runner=new FakeRunner(() => { controller.abort(); return {}; });
+    const runner=new FakeRunner(request => { expect(request.signal).toBe(controller.signal); controller.abort(); return {}; });
     await expect(coordinator(item,runner).verify({candidateRunId:item.runId,worktreePath:item.worktree,
       instance:{ownerId:"instance-1",fence:1},now:4000,signal:controller.signal})).rejects.toThrow();
     expect(item.database.prepare("SELECT count(*) AS count FROM collaboration_candidate_reviews").get()).toEqual({count:0});

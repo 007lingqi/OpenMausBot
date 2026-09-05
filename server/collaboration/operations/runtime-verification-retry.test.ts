@@ -24,6 +24,7 @@ import type {
   TargetCommandSpec,
 } from "../quality-gate.ts";
 import { startCollaborationService } from "../service.ts";
+import { CommandCleanupError } from "../execution-limits.ts";
 import { CollaborationHeadlessRuntime } from "./runtime.ts";
 
 const scratch: string[] = [];
@@ -270,6 +271,20 @@ async function runningRuntime(item: RetryFixture, runner: FailingVerifierRunner,
 }
 
 describe("runtime Owner verification retry", () => {
+  it("does not release or restart a runtime after verifier process cleanup is unconfirmed", async () => {
+    const item=seedRetryableCandidate(); const runner=new FailingVerifierRunner();
+    const {runtime}=await runningRuntime(item,runner);
+    runner.onRun=()=>{throw new CommandCleanupError(new Error("test cleanup unknown"));};
+    try {
+      expect(runtime.performDingTalkOwnerTextCommand(ownerRetry(item,"cleanup-unconfirmed",4100)).allowed).toBe(true);
+      await vi.waitFor(()=>expect(runtime.health()).toMatchObject({ready:false,reason:"verification_containment_unconfirmed"}));
+      expect(await runtime.stop()).toMatchObject({reason:"verification_containment_unconfirmed"});
+      await expect(runtime.start()).rejects.toThrow("verification_containment_unconfirmed");
+      const db=new DatabaseSync(join(item.dataDirectory,"collaboration","collaboration.sqlite"));
+      try { expect(db.prepare("SELECT 1 FROM collaboration_instance_lease WHERE expires_at>4000").get()).toBeDefined(); }
+      finally { db.close(); }
+    } finally { await runtime.stop(); }
+  });
   it("does not persist or notify a retry that finishes after shutdown", async () => {
     const item = seedRetryableCandidate(); const runner = new FailingVerifierRunner();
     const { runtime } = await runningRuntime(item, runner, 50);

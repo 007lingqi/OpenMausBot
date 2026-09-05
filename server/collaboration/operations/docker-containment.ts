@@ -229,6 +229,29 @@ export class DockerCliContainmentSupervisor implements ContainmentPort {
     return { state: "unknown", reason: "containment_container_did_not_stop" };
   }
 
+  /** Cleanup for this invocation's full create receipt, including failures before proof registration. */
+  async terminateBoundContainer(containerId: string, binding: ContainmentBinding): Promise<ContainmentInspection> {
+    const identity = this.identity(containerId);
+    const fingerprint = runtimeIdentityFingerprint(identity);
+    const deadline = Date.now() + this.emptyTimeoutMs;
+    let killRequested = false;
+    do {
+      const inspection = await this.inspection(identity.opaqueId);
+      if (!inspection || inspection.Id !== identity.opaqueId || !this.labelsMatch(inspection, binding)) {
+        return { state: "unknown", reason: "containment_binding_unconfirmed" };
+      }
+      if (inspection.State?.Running === false) return { state: "empty", fingerprint };
+      if (inspection.State?.Running !== true) return { state: "unknown", reason: "containment_state_unconfirmed" };
+      if (!killRequested) {
+        // Even a nonzero kill response can race a normal exit; only the next inspect proves emptiness.
+        await this.docker.run(["kill", identity.opaqueId], { timeoutMs: this.emptyTimeoutMs, maxOutputBytes: 16 * 1024 });
+        killRequested = true;
+      }
+      await new Promise(resolve => setTimeout(resolve, 25));
+    } while (Date.now() <= deadline);
+    return { state: "unknown", reason: "containment_container_did_not_stop" };
+  }
+
   private identity(containerId: string): RuntimeIdentity {
     const normalized = containerId.trim().toLowerCase();
     if (!/^[0-9a-f]{64}$/u.test(normalized)) throw new Error("containment_container_id_invalid");

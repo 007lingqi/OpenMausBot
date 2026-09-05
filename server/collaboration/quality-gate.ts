@@ -32,6 +32,7 @@ export interface SandboxCommandAttestation {
 }
 
 export interface SandboxedCommandRequest {
+  signal?: AbortSignal;
   commandId: string;
   argv: readonly [string, ...string[]];
   cwd: string;
@@ -183,6 +184,7 @@ export async function runTargetTests(input: {
     };
     let registeredFingerprint: string | null = null;
     const result = await input.runner.run({
+      signal: input.signal,
       commandId,
       argv: spec.argv,
       assertionReporter: spec.assertionReporter,

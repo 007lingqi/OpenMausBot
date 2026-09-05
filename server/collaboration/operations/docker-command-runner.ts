@@ -1,6 +1,7 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { NODE_TEST_REPORTER_SOURCE, validateNodeTestArgv } from "../node-test-reporter.ts";
+import { CommandCleanupError } from "../execution-limits.ts";
 
 import type {
   SandboxedCommandRequest,
@@ -34,6 +35,21 @@ function containerId(stdout: Buffer): string {
   const value = stdout.toString("utf8").trim().toLowerCase();
   if (!CONTAINER_ID.test(value)) throw new Error("docker_create_did_not_return_container_id");
   return value;
+}
+
+function assertNotCancelled(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new Error("docker_command_cancelled");
+}
+
+async function cancellable<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  assertNotCancelled(signal);
+  let cancel: (() => void) | undefined;
+  const cancelled = new Promise<never>((_, reject) => {
+    cancel = () => reject(new Error("docker_command_cancelled"));
+    signal?.addEventListener("abort", cancel, { once: true });
+  });
+  try { return await Promise.race([operation(), cancelled]); }
+  finally { if (cancel) signal?.removeEventListener("abort", cancel); }
 }
 
 export class DockerSandboxedCommandRunner implements SandboxedCommandRunner {
@@ -70,6 +86,7 @@ export class DockerSandboxedCommandRunner implements SandboxedCommandRunner {
   }
 
   async run(request: SandboxedCommandRequest): Promise<SandboxedCommandResult> {
+    assertNotCancelled(request.signal);
     if (request.assertionReporter !== undefined) {
       if (request.assertionReporter !== "node-test-v1") throw new Error("docker_assertion_reporter_invalid");
       validateNodeTestArgv(request.argv);
@@ -84,7 +101,9 @@ export class DockerSandboxedCommandRunner implements SandboxedCommandRunner {
       ? [request.argv[0], "--test-reporter=/run/openmausbot/node-test-reporter.mjs", ...request.argv.slice(1)] : request.argv;
     const labels = this.containment.labels(request.containmentBinding).flatMap((label) => ["--label", label]);
     const name = safeName(`${request.containmentBinding.runId}-${request.commandId}-${request.containmentBinding.nonce.slice(0, 8)}`);
-    const create = await this.docker.run([
+    let id: string;
+    try {
+      const create = await this.docker.run([
       "create",
       "--name", name,
       "--network", "none",
@@ -105,32 +124,38 @@ export class DockerSandboxedCommandRunner implements SandboxedCommandRunner {
       this.image,
       "-c", "while [ ! -f /run/openmausbot/start ]; do sleep 0.02; done; exec \"$@\"", "openmausbot-command",
       ...argv,
-    ], { timeoutMs: 30_000, maxOutputBytes: 64 * 1024 });
-    if (create.exitCode !== 0) {
-      rmSync(runDirectory, { recursive: true, force: true });
-      throw new Error(`docker_command_create_failed:${create.stderr.toString("utf8").slice(0, 300)}`);
+      ], { timeoutMs: 30_000, maxOutputBytes: 64 * 1024 });
+      if (create.exitCode !== 0) throw new Error("docker_command_create_failed");
+      id = containerId(create.stdout);
+    } catch {
+      // No authoritative container id: do not guess a target or discard recovery material.
+      throw new CommandCleanupError(new Error("docker_command_create_unconfirmed"));
     }
-    const id = containerId(create.stdout);
     let proof;
     let timedOut = false;
     let outputLimitExceeded = false;
     try {
+      assertNotCancelled(request.signal);
       const start = await this.docker.run(["start", id], { timeoutMs: 10_000, maxOutputBytes: 64 * 1024 });
       if (start.exitCode !== 0) throw new Error("docker_command_start_failed");
+      assertNotCancelled(request.signal);
       proof = await this.containment.issueProof(id, request.containmentBinding);
-      await request.registerContainment(proof);
+      await cancellable(() => request.registerContainment(proof!), request.signal);
+      assertNotCancelled(request.signal);
       writeFileSync(gate, "start\n", { mode: 0o600 });
       let exitCode: number | null = null;
       try {
-        const waited = await this.docker.run(["wait", id], {
+        const waited = await cancellable(() => this.docker.run(["wait", id], {
           timeoutMs: request.timeoutMs,
           maxOutputBytes: 16 * 1024,
-        });
+        }), request.signal);
         const parsed = Number(waited.stdout.toString("utf8").trim());
         exitCode = Number.isSafeInteger(parsed) ? parsed : waited.exitCode === 0 ? 127 : waited.exitCode;
       } catch (error) {
+        assertNotCancelled(request.signal);
         timedOut = error instanceof Error && /timeout|timed out/iu.test(error.message);
-        await this.containment.terminateAndWaitEmpty(proof.identity);
+        const stopped = await this.containment.terminateBoundContainer(id, request.containmentBinding);
+        if (stopped.state !== "empty") throw new CommandCleanupError(new Error("docker_command_cleanup_unconfirmed"));
       }
       let stdout: Buffer<ArrayBufferLike> = Buffer.alloc(0);
       let stderr: Buffer<ArrayBufferLike> = Buffer.alloc(0);
@@ -145,6 +170,7 @@ export class DockerSandboxedCommandRunner implements SandboxedCommandRunner {
         outputLimitExceeded = error instanceof Error && error.message === "docker_output_limit_exceeded";
       }
       const inspected = await this.containment.inspect(proof.identity);
+      assertNotCancelled(request.signal);
       const processTreeReaped = inspected.state === "empty";
       return {
         exitCode,
@@ -165,6 +191,12 @@ export class DockerSandboxedCommandRunner implements SandboxedCommandRunner {
         },
       };
     } finally {
+      try {
+        const stopped = await this.containment.terminateBoundContainer(id, request.containmentBinding);
+        if (stopped.state !== "empty") throw new Error("docker_command_cleanup_unconfirmed");
+      } catch {
+        throw new CommandCleanupError(new Error("docker_command_cleanup_unconfirmed"));
+      }
       rmSync(runDirectory, { recursive: true, force: true });
     }
   }

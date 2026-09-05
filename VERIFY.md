@@ -1,5 +1,14 @@
 # Meta 协作验证记录
 
+## 2026-09-05 Docker 取消与清理确认（最新）
+
+- 最终 `pnpm vitest run server/collaboration server/integrations/dingtalk server/collaboration-headless.test.ts && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-docker-cancel-typecheck && git diff --check` 全链通过（91577 exit 0）：68 文件 / 470 项，23:57:24 开始、50.56 秒。本批未运行全仓 pnpm test。
+- Docker 先行测试 7 failed / 1 passed，复现取消不生效、登记失败残留运行容器及清理不明仍作普通失败。runtime 新测试复现清理不明仍 ready；修正后针对性 21 项及 typecheck 通过。
+- 第一轮整组（25900）469 passed / 1 failed：自然归属正例只生成旧提问、未先送达，同毫秒排序会产生后续提问；夹具改为先真实 dispatch 旧提问再创建归属问题，保留产品规则及原断言。重跑首次审批超时未执行，一次重试成功。最终无遗留测试失败；上一轮 20 工具轮收束时尚未取得最终类型检查状态，本轮先跟进同一 91577 句柄确认 exit 0，没有重复启动测试。
+- 真实 docker-command-cancel.smoke.ts exit 0：context colima-openmausbot-pilot，固定缓存镜像 sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e。before_gate 未执行；running_tree 观察到子进程 heartbeat 后取消，确认 Running=false 且 heartbeat 不再更新；同时检查无网络、只读根和非 root。
+- 两个自建临时容器及目录已清理，前后 ps 确认原钉钉试点仍 Up 2 days healthy，历史容器不动。没有镜像下载、服务替换、真实模型/群消息/在线文档或凭据变化。
+- 不证明 verifier 持久运行/恢复、跨实例接管安全、启动后台化或六类真实群聊。清理未确认标记仍仅内存，后续须持久化。Goal active。
+
 ## 2026-09-05 复核取消与关机后迟到结果（最新）
 
 - 最终 `pnpm vitest run server/collaboration server/integrations/dingtalk server/collaboration-headless.test.ts && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-verification-cancel-typecheck && git diff --check` 全链通过，89949 exit 0：67 文件 / 461 项，23:41:31 开始、49.87 秒。消息接收/归属/Owner/Ledger/Outbox/回复及 headless 在整组范围内。本批未运行全仓 pnpm test。

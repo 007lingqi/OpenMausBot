@@ -644,6 +644,7 @@ export class CollaborationHeadlessRuntime {
   private dingTalkState: CollaborationRuntimeHealth["dingtalk"]["state"];
   private naturalIntakeTask: Promise<void> | null = null;
   private verificationAbort = new AbortController();
+  private verificationCleanupUnconfirmed = false;
   private drainPromise: Promise<DrainOutcome> | null = null;
   private stopPromise: Promise<CollaborationRuntimeHealth> | null = null;
   private readonly activeExecutions = new Set<Promise<unknown>>();
@@ -678,6 +679,7 @@ export class CollaborationHeadlessRuntime {
   }
 
   async start(): Promise<CollaborationRuntimeHealth> {
+    if (this.verificationCleanupUnconfirmed) throw new Error("verification_containment_unconfirmed");
     if (this.activeVerifications.size) throw new Error("collaboration_verification_still_settling");
     if (this.currentState !== "stopped" || this.service || this.database) {
       throw new Error("collaboration_runtime_already_started");
@@ -1168,6 +1170,10 @@ export class CollaborationHeadlessRuntime {
         releaseLease = false;
         this.reason = "shutdown_verification_unsettled";
       }
+      if (this.verificationCleanupUnconfirmed) {
+        releaseLease = false;
+        this.reason = "verification_containment_unconfirmed";
+      }
     } catch {
       this.reason = "shutdown_failed";
       releaseLease = false;
@@ -1416,6 +1422,14 @@ export class CollaborationHeadlessRuntime {
     });
     this.activeVerifications.add(verification);
     try { return await verification; }
+    catch (error) {
+      if (error instanceof CommandCleanupError) {
+        this.verificationCleanupUnconfirmed = true;
+        this.reason = "verification_containment_unconfirmed";
+        if (this.currentState === "running") this.currentState = "degraded";
+      }
+      throw error;
+    }
     finally { this.activeVerifications.delete(verification); }
   }
 

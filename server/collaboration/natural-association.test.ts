@@ -73,15 +73,18 @@ describe("natural group association before requirement interpretation", () => {
     // Finish earlier requirement questions before asking the attribution question.
     // Otherwise "second" is genuinely ambiguous, as covered by intervening_question.
     for (let i=0;i<4;i++) await h.service.processNaturalIntake();
+    const lease = new InstanceLeaseCoordinator(h.db, "fixture").acquire(Date.now(), 120000)!;
+    const dispatcher = new OutboxDispatcher(h.db, { async deliver() { return { outcome: "sent" as const }; } },
+      { maxAttempts: 3, claimTtlMs: 10000, baseBackoffMs: 100, maxBackoffMs: 1000 });
+    // Deliver the earlier questions first, not merely generate them. Millisecond ties in
+    // queued creation times must not turn this positive scenario into an intervening question.
+    for (let i=0;i<20;i++) if (!await dispatcher.dispatchOne(lease, Date.now())) break;
     const original = h.service.ingestDingTalkMessage(message("which", "错误时也要显示处理建议"));
     await h.service.processNaturalIntake();
     const card = original.card;
     if (card.type !== "association_choice_card") throw new Error("expected choices");
     const chosen = card.candidateWorkItems[1].id;
     expect([first.workItemId, second.workItemId]).toContain(chosen);
-    const lease = new InstanceLeaseCoordinator(h.db, "fixture").acquire(Date.now(), 120000)!;
-    const dispatcher = new OutboxDispatcher(h.db, { async deliver() { return { outcome: "sent" as const }; } },
-      { maxAttempts: 3, claimTtlMs: 10000, baseBackoffMs: 100, maxBackoffMs: 1000 });
     for (let i=0;i<20;i++) if (!await dispatcher.dispatchOne(lease, Date.now())) break;
     expect(h.db.prepare("SELECT id FROM collaboration_outbox WHERE sent_at IS NOT NULL AND kind IN ('association_choice_card','clarification_card') ORDER BY delivery_sequence DESC LIMIT 1").get()).toEqual({ id: original.outboxId });
     // Recency and ordering change after the actual question was sent.

@@ -17,6 +17,15 @@
 
 ## 本批执行记录
 
+### Docker 测试取消与退出确认（2026-09-05 最新）
+
+- 上批 3566eb5 为已提交进展。本批把 signal 从质量门禁传递到 Docker runner：已取消不创建，create 返回后取消不 start，隔离登记或 wait 期间取消会退出等待并清理本次容器。
+- finally 通过完整 create ID + 当前 binding/host-generation 标签核查身份，确认 Running=false 后才删除交换目录。登记拒绝也会清理启动门前容器；身份/退出无法确认则抛 CommandCleanupError 并保留交换材料，不回显原始 Docker stderr、不猜测名字杀容器。正常 exited 容器不自动删除。
+- runtime 对 verifier 清理未确认降级，禁止同一对象重启，关机不释放租约。此标记当前仅内存，不能防止租约过期后的其他实例接管；持久化 verifier run/containment/recovery 仍为下一优先项。
+- 8 项 Docker runner 新测试及 runtime 清理失败保护已通过；针对性 21 项与 typecheck 通过。最终整组 68 文件 / 470 项、全仓类型检查、服务端编译和补丁检查通过（91577 exit 0，本轮先恢复同一验证句柄确认）。第一轮发现自然对话夹具未先送达旧提问的时序问题，修正夹具后重跑通过；详见 VERIFY。未运行本批全仓 pnpm test。
+- 真实 Docker smoke exit 0：固定缓存 Node 镜像，before_gate 未执行测试；running_tree 在观察到子进程 heartbeat 后取消，确认容器 Running=false 且 heartbeat 不再更新。两个临时容器/自有目录已清理，前后 ps 核对现有试点仍 Up 2 days healthy，历史退出容器保留；无拉镜像/部署/凭据或群消息操作。
+- 按 docker-helper 检查隔离资源、无网络、只读根目录、非 root 与挂载边界；按 goal-protocol 本批最多 20 工具轮保存证据。下一步须补 verifier 持久运行记录、未知清理后的受控恢复和跨实例竞争，再后台化 startup。不能将本次容器取消测试说成六类真实群聊或完整主机重启验收。
+
 ### 复核取消与运行期保护（2026-09-05 最新）
 
 - 上批已提交 fa35a53，是实质进展。本批增加外部取消信号：提议/独立模型等待可及时退出；模型忽略取消或超时后迟到返回，不启动下一阶段模型、不写收据。已预留尝试保留，既不伪造失败结果也不清零预算。
