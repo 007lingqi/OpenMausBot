@@ -10,6 +10,7 @@ import { assertLedgerArmed } from "./restore-guard.ts";
 import { buildDefinitionPatchFromText } from "./spec-builder.ts";
 import { redactSensitiveText } from "./sensitive-text.ts";
 import { NaturalIntakeCoordinator, type NaturalIntakeInterpreter, type NaturalProjection } from "./natural-intake.ts";
+import { NaturalAssociationCoordinator } from "./natural-association.ts";
 import {
   appendWorkItemSnapshot,
   readLatestWorkItemSnapshot,
@@ -168,6 +169,7 @@ export class PlanningCoordinator {
   private readonly options: PlanningCoordinatorOptions;
   private closed = false;
   private readonly naturalIntake: NaturalIntakeCoordinator | null;
+  private readonly naturalAssociation: NaturalAssociationCoordinator | null;
 
   constructor(databaseFile: string, options: PlanningCoordinatorOptions) {
     this.options = options;
@@ -179,6 +181,10 @@ export class PlanningCoordinator {
     this.naturalIntake = options.naturalIntake ? new NaturalIntakeCoordinator(this.database, options.naturalIntake,
       options.policy.allowedRepositories, (workItemId, patch, now, natural) =>
         this.reviseDefinition(workItemId, patch, now, { natural }) !== null) : null;
+    this.naturalAssociation = options.naturalIntake?.associate ? new NaturalAssociationCoordinator(this.database,
+      options.naturalIntake.associate.bind(options.naturalIntake), (workItemId, sourceEventId, now) => {
+        this.observeAcceptedEvent(workItemId, "", now, sourceEventId);
+      }) : null;
   }
 
   reviseDefinition(
@@ -333,8 +339,10 @@ export class PlanningCoordinator {
     return this.persistPublishedPlan(workItemId, snapshots.current, plan, now);
   }
 
-  processNaturalIntake(now = Date.now()): Promise<string | null> {
+  async processNaturalIntake(now = Date.now()): Promise<string | null> {
     if (this.closed) throw new Error("Planning coordinator is closed");
+    if (this.naturalAssociation) await this.naturalAssociation.processOne(now);
+    if (this.closed) return null;
     return this.naturalIntake?.processOne(now) ?? Promise.resolve(null);
   }
 
@@ -488,6 +496,7 @@ export class PlanningCoordinator {
     if (this.closed) return;
     this.closed = true;
     this.naturalIntake?.close();
+    this.naturalAssociation?.close();
     this.database.close();
   }
 

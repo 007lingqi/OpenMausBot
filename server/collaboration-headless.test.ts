@@ -140,6 +140,16 @@ describe("secure collaboration headless CLI", () => {
     );
   });
 
+  it("rejects enabling natural interpretation without a trusted planning configuration before any model call", async () => {
+    const output = io();
+    await expect(runCollaborationHeadless(["--health", "--data-dir", temporaryDirectory()], {
+      OMB_DINGTALK_ENABLED: "0", OMB_NATURAL_INTAKE_ENABLED: "1",
+      OMB_NATURAL_INTAKE_MODEL: "configured-model", OMB_NATURAL_INTAKE_ENDPOINT: "https://model.example.invalid/v1/responses",
+      OMB_NATURAL_INTAKE_CREDENTIAL_FILE: "/nonexistent/credential-reference",
+    }, { io: output.io })).rejects.toThrow("natural_intake_requires_planning_configuration");
+    expect(output.stdout.join("")).not.toContain("credential-reference");
+  });
+
   it("recovers the sole Owner from an absolute secure reference without echoing identity", async () => {
     const dataDirectory = temporaryDirectory();
     const ledger = openCollaborationLedger(join(dataDirectory, "collaboration"));

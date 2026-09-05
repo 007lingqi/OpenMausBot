@@ -7,6 +7,7 @@ import { redactSensitiveText } from "./sensitive-text.ts";
 import { assertLedgerArmed } from "./restore-guard.ts";
 import { enqueueInboundCard } from "./outbox.ts";
 import { renderClarificationCard } from "./message-renderer.ts";
+import { interpretNaturalAssociation, type NaturalAssociationRequest, type NaturalAssociationPort } from "./natural-association.ts";
 
 export interface NaturalIntakeEvent { sourceEventId: string; principalId: string; text: string }
 export interface NaturalIntakeRequest {
@@ -19,6 +20,7 @@ export interface NaturalIntakeRequest {
 /** This port has no filesystem, execution, configuration or Owner-action capabilities. */
 export interface NaturalIntakeInterpreter {
   interpret(request: NaturalIntakeRequest, signal: AbortSignal): Promise<unknown>;
+  associate?: NaturalAssociationPort;
 }
 
 export interface NaturalIntakeModelPort {
@@ -28,6 +30,9 @@ export interface NaturalIntakeModelPort {
 export class ModelNaturalIntakeInterpreter implements NaturalIntakeInterpreter {
   private readonly model: NaturalIntakeModelPort;
   constructor(model: NaturalIntakeModelPort) { this.model = model; }
+  associate(request: NaturalAssociationRequest, signal: AbortSignal): Promise<unknown> {
+    return interpretNaturalAssociation(this.model, request, signal);
+  }
   interpret(request: NaturalIntakeRequest, signal: AbortSignal): Promise<unknown> {
     return this.model.complete({ signal, responseSchema: z.toJSONSchema(schema), user: JSON.stringify(request), system: [
       "你是内部研发助手的需求解释器。只输出符合 schema 的 JSON，不执行任何操作。",

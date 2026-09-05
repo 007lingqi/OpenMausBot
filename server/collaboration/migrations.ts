@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { OPENMAUSBOT_SOURCE_BASELINE } from "./config.ts";
 
-export const COLLABORATION_SCHEMA_VERSION = 12;
+export const COLLABORATION_SCHEMA_VERSION = 13;
 
 interface Migration {
   version: number;
@@ -981,6 +981,20 @@ const migrations: readonly Migration[] = [
           BEGIN SELECT RAISE(ABORT, 'natural intake provenance is immutable'); END;
       `);
     },
+  },
+  {
+    version: 13, name: "durable-natural-association", checksum: "v13:scoped-association-before-intake",
+    apply(database) { database.exec(`
+      CREATE TABLE collaboration_natural_association_jobs (
+        event_id TEXT PRIMARY KEY REFERENCES collaboration_external_events(id),
+        status TEXT NOT NULL CHECK(status IN ('pending','running','routed','projected','clarify','failed')),
+        attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts BETWEEN 0 AND 3),
+        claim_token TEXT, lease_until INTEGER, proposal_json TEXT
+      ) STRICT;
+      CREATE TRIGGER collaboration_natural_association_result_immutable BEFORE UPDATE ON collaboration_natural_association_jobs
+        WHEN OLD.status='projected' OR NEW.event_id<>OLD.event_id
+        BEGIN SELECT RAISE(ABORT,'natural association result is immutable'); END;
+    `); },
   },
 ];
 

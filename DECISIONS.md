@@ -1,5 +1,13 @@
 # Meta 协作决策记录
 
+## D-021 — 自然事项归并先于需求解释，模型调用必须无工具
+
+- 状态：可配置实现已完成，真实模型及 Docker 验收待进行。
+- 自然归并读取同群事项摘要和有限近期消息；模型可建议新建、关联或澄清，不得选择群外事项或执行 Owner 操作。并发版本变化使旧建议失效。
+- 真实模型适配走显式配置的 Responses HTTP 接口，不自动读取其他 API Key 或转用 Codex OAuth，不暴露执行工具，不跟随重定向、不要求服务端存储响应。
+- 配置入口：`OMB_NATURAL_INTAKE_ENABLED=1`、`OMB_NATURAL_INTAKE_ENDPOINT`（完整 Responses 地址）、`OMB_NATURAL_INTAKE_MODEL`、`OMB_NATURAL_INTAKE_CREDENTIAL_FILE`（已有 0600 纯文本凭据的绝对路径）；仅明确允许的本机测试代理可设置 `OMB_NATURAL_INTAKE_ALLOW_LOOPBACK_HTTP=1`。这些配置不是让普通群成员填写的模板，也没有在本批实际设置。
+- 模型/地址/凭据来自控制面，不来自聊天、附件或模型建议。缺失配置不得自动申请新付费、导出 OAuth 或改变身份。
+
 ## D-020 — 自然理解是有来源的建议，不是控制权限
 
 - 状态：解释队列、校验和运行时后台入口已实现；真实模型装配和效果验收尚未完成。

@@ -79,8 +79,10 @@ function titleFrom(text: string): string {
 export class InboundMessageProcessor {
   private readonly database: DatabaseSync;
   private closed = false;
+  private readonly naturalAssociation: boolean;
 
-  constructor(databaseFile: string) {
+  constructor(databaseFile: string, naturalAssociation = false) {
+    this.naturalAssociation = naturalAssociation;
     this.database = new DatabaseSync(databaseFile);
     this.database.exec("PRAGMA foreign_keys = ON");
     this.database.exec("PRAGMA busy_timeout = 5000");
@@ -138,6 +140,7 @@ export class InboundMessageProcessor {
         source: "dingtalk",
         conversationId,
         text,
+        deferUnreferenced: this.naturalAssociation,
         ...(message.replyToSourceEventId ? { replyToSourceEventId: message.replyToSourceEventId } : {}),
       });
       const outcome = this.persistNewEvent({
@@ -283,6 +286,7 @@ export class InboundMessageProcessor {
         "INSERT INTO collaboration_association_options (external_event_id, work_item_id) VALUES (?, ?)",
       );
       for (const candidate of input.association.workItemIds) insertOption.run(externalEventId, candidate);
+      if (this.naturalAssociation) this.database.prepare("INSERT INTO collaboration_natural_association_jobs (event_id,status) VALUES (?,'pending')").run(externalEventId);
     }
 
     const outbox = enqueueInboundCard(this.database, {

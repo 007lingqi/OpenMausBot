@@ -74,7 +74,7 @@ function ambiguous(candidateWorkItems: AssociationCandidate[]): AssociationDecis
 
 export function decideMessageAssociation(
   database: DatabaseSync,
-  input: { source: "dingtalk"; conversationId: string; text: string; replyToSourceEventId?: string },
+  input: { source: "dingtalk"; conversationId: string; text: string; replyToSourceEventId?: string; deferUnreferenced?: boolean },
 ): AssociationDecision {
   const references = [...new Set((input.text.match(WORK_ITEM_REFERENCE) ?? []).map((value) => value.toUpperCase()))];
   if (references.length) {
@@ -103,6 +103,8 @@ export function decideMessageAssociation(
 
   const candidates = activeWorkItems(database, input.conversationId);
   if (candidates.length === 0) return { kind: "create" };
+  // With semantic routing configured, do not preempt it using keyword/recency guesses.
+  if (input.deferUnreferenced) return ambiguous(candidates);
   if (CLEAR_CONTINUATION.test(input.text)) {
     const normalized = input.text.replace(/\s+/gu, "");
     const titleMatches = candidates.filter((candidate) => {

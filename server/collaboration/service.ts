@@ -85,7 +85,7 @@ export function startCollaborationService(options: CollaborationServiceOptions):
   const ledger: CollaborationLedger = openCollaborationLedger(join(options.dataDirectory, "collaboration"));
   let inbound: InboundMessageProcessor;
   try {
-    inbound = new InboundMessageProcessor(ledger.filePath);
+    inbound = new InboundMessageProcessor(ledger.filePath, !!options.planning?.naturalIntake?.associate);
   } catch (error) {
     ledger.close();
     throw error;

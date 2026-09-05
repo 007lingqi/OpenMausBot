@@ -61,6 +61,7 @@ import { AttachmentIngestionCoordinator } from "./collaboration/attachment-inges
 import { RealDingTalkStreamSdk } from "./integrations/dingtalk/stream-sdk.ts";
 import { validateTargetCommandSpec, type TargetCommandSpec } from "./collaboration/quality-gate.ts";
 import type { AcceptanceCondition } from "./collaboration/snapshot.ts";
+import { configuredNaturalIntake } from "./collaboration/operations/natural-intake-model.ts";
 
 interface HeadlessArguments {
   dataDirectory: string;
@@ -500,12 +501,16 @@ function productionRuntimeOptions(
     ? readDingTalkAllowedConversationIds(environment)
     : undefined;
   const credentialProvider = new SecureDingTalkCredentialFileProvider(environment);
+  const executionOptions = dockerExecutionOptions(environment);
+  const naturalIntake = configuredNaturalIntake(environment);
+  if (naturalIntake && !executionOptions.planner) throw new Error("natural_intake_requires_planning_configuration");
   return {
     dataDirectory: options.dataDirectory,
     shutdownTimeoutMs,
     probeOnly: options.healthOnly,
     logger: safeRuntimeLogger(io),
-    ...dockerExecutionOptions(environment),
+    ...executionOptions,
+    ...(naturalIntake ? { naturalIntake } : {}),
     ...(dingTalkEnabled
       ? { outboxDelivery: createDingTalkDelivery(sessions, environment, options.dataDirectory) }
       : {}),
