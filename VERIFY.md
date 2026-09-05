@@ -1,5 +1,13 @@
 # Meta 协作验证记录
 
+## 2026-09-06 生产附件 ACK 组合边界（最新）
+
+- 计划对固定 fc2033f 执行 `pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-attachment-feedback-full-typecheck && git diff --check`。原请求及仅一次重试均自动权限审核超时，命令未启动、无进程句柄；不计为失败测试，不存在可以继续 poll 的全仓测试。
+- 无新增权限的组合测试首次运行 3 失败 / 10 通过（86399 exit 1）：确认和能力持久化已通过，download 次数仍 0。源码 normalizer receivedAt=Date.now，inbound 用 receivedAt 登记 next_attempt_at，而夹具维护时间停在 1700000000000；证明测试时间轴不一致，不是生产调度缺陷。修正测试时钟与接收时间对齐，未修改业务代码或降低下载/确认断言。
+- 修正后 Stream 13 项、typecheck、diff 检查通过（49162 exit 0）。最终 `pnpm vitest run server/integrations/dingtalk/stream-adapter.test.ts server/integrations/dingtalk/attachment-downloader.test.ts server/collaboration/attachment-ingestion.test.ts server/collaboration/operations/runtime.test.ts && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-attachment-stream-integration-typecheck && git diff --check` 通过（20610 exit 0）：4 文件 / 73 项，04:29:06 开始，Vitest 3.35 秒。
+- 组合检查真实 Ledger/Vault/coordinator，但 SDK/下载为受控端口、投影回调未启用；覆盖 ACK 前持久证据、保存/ACK 失败与重复投递、确认后服务重建、单批挂起读取/持续续租/Outbox，以及停止后迟到结果不写失败和证据。不把这些测试称为真实钉钉、成功正文到 Spec 或整机重启证明。
+- 全仓回归当前仍未执行，真实模型/在线文档/Docker/六类试点仍未完成；没有访问真实凭据或更改运行环境。当前无未结束验证句柄。
+
 ## 2026-09-06 附件失败收据与业务反馈（最新）
 
 - 先行 `pnpm vitest run server/collaboration/attachment-ingestion.test.ts`，3 失败 / 13 通过（20231 exit 1）：第三次仍 pending、不同原因串联后没有停止、恢复后没有可检查的积压回复。不是因缺失新 schema 而假造红灯。

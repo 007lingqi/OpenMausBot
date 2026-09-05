@@ -1,4 +1,6 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { DatabaseSync } from "node:sqlite";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
@@ -9,6 +11,10 @@ import type { DingTalkInboundSink, DingTalkOwnerActionSink, DingTalkStreamSdkPor
 import { DingTalkSessionReplyRegistry } from "./reply-router.ts";
 import type { DingTalkCardAction, DingTalkInboundMessage, DingTalkStreamEnvelope } from "./types.ts";
 import { DingTalkStreamAdapter } from "./stream-adapter.ts";
+import { DingTalkAttachmentCapabilityVault } from "./attachment-capability-vault.ts";
+import { AttachmentIngestionCoordinator } from "../../collaboration/attachment-ingestion.ts";
+import { CollaborationHeadlessRuntime } from "../../collaboration/operations/runtime.ts";
+import type { DingTalkAttachmentDownloadResult } from "./attachment-downloader.ts";
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 
@@ -160,7 +166,94 @@ describe("DingTalk Stream adapter", () => {
     expect(sdk.acknowledgements).toEqual([recorded.transportMessageId]);
   });
 
-  it("persists and processes private attachment capabilities before acknowledging", async () => {
+  it.each(["none", "vault", "ack", "restart"])("combines real Ledger and Vault durability with nonblocking ACK and idempotent replay (%s boundary)", async failure => {
+    const root = mkdtempSync(join(tmpdir(), "stream-attachment-lifecycle-"));
+    let sdk = new FakeSdk();
+    let vault!: DingTalkAttachmentCapabilityVault;
+    let db!: DatabaseSync;
+    let release!: (result: DingTalkAttachmentDownloadResult) => void;
+    const waiting = new Promise<DingTalkAttachmentDownloadResult>(resolve => { release = resolve; });
+    const download = vi.fn(() => waiting);
+    const delivered: string[] = [];
+    let now = Date.now();
+    const runtime = new CollaborationHeadlessRuntime({ dataDirectory: root, platform: "linux", clock: { now: () => now },
+      outboxDelivery: { async deliver(item) { delivered.push(item.id); return { outcome: "sent" }; } },
+      attachmentIngestionFactory(context) {
+        db = new DatabaseSync(context.databaseFile);
+        vault = new DingTalkAttachmentCapabilityVault(join(root, "vault"), "synthetic-fixture-secret-at-least-32-bytes");
+        if (failure === "vault") vi.spyOn(vault, "store").mockImplementationOnce(() => { throw new Error("fixture_vault_unavailable"); });
+        return new AttachmentIngestionCoordinator({ ...context, vault, downloader: { download }, onEvidence: undefined });
+      },
+      dingTalk: { enabled: true, credentials: { load: () => ({ clientId: "fixture", clientSecret: "fixture" }) },
+        createStream(_credentials, sinks) {
+          const adapter = new DingTalkStreamAdapter(sdk, sinks, sinks, new DingTalkSessionReplyRegistry(), undefined,
+            { allowedConversationIds: new Set(["cid-group-1"]) });
+          return { start: async () => { await adapter.start(); return "connected"; }, stop: () => adapter.stop(), state: () => adapter.state(), maintain: () => adapter.maintain() };
+        },
+      },
+    });
+    const base = envelope("bot-message-text.json", "combined-attachment");
+    const payload = JSON.parse(base.data) as Record<string, unknown>;
+    payload.msgtype = "file";
+    payload.robotCode = "fixture";
+    payload.content = { fileName: "bugs.csv", downloadCode: "private-combined-code", fileType: "text/csv" };
+    delete payload.text;
+    const packet = { ...base, data: JSON.stringify(payload) };
+    try {
+      await runtime.start();
+      const acknowledge = sdk.acknowledge.bind(sdk);
+      vi.spyOn(sdk, "acknowledge").mockImplementation(id => {
+        const attachment = db.prepare("SELECT capability_ref FROM collaboration_attachments").get() as { capability_ref: string };
+        expect(vault.read(attachment.capability_ref).downloadCode).toBe("private-combined-code");
+        expect(db.prepare("SELECT count(*) AS n FROM collaboration_external_events").get()).toEqual({ n: 1 });
+        if (sdk.acknowledgements.length === 0) expect(download).not.toHaveBeenCalled();
+        acknowledge(id);
+      });
+      if (failure === "ack") sdk.acknowledgeError = new Error("fixture_ack_unavailable");
+      const emit = () => Promise.race([sdk.emit("robot", packet).then(() => true), new Promise(resolve => setTimeout(() => resolve(false), 100))]);
+      expect(await emit()).toBe(true);
+      if (failure === "vault" || failure === "ack") {
+        expect(sdk.acknowledgements).toEqual([]);
+        expect(db.prepare("SELECT count(*) AS n FROM collaboration_external_events").get()).toEqual({ n: 1 });
+        expect(download).not.toHaveBeenCalled();
+        sdk.acknowledgeError = null;
+        expect(await emit()).toBe(true);
+      }
+      expect(sdk.acknowledgements).toEqual(["combined-attachment"]);
+      expect(await emit()).toBe(true);
+      expect(db.prepare("SELECT count(*) AS n FROM collaboration_work_items").get()).toEqual({ n: 1 });
+      expect(db.prepare("SELECT count(*) AS n FROM collaboration_attachments").get()).toEqual({ n: 1 });
+      expect(db.prepare("SELECT count(*) AS n FROM collaboration_outbox").get()).toEqual({ n: 1 });
+      expect(JSON.stringify(db.prepare("SELECT normalized_json FROM collaboration_external_events").all())).not.toContain("private-combined-code");
+      if (failure === "restart") {
+        await runtime.stop();
+        db.close();
+        sdk = new FakeSdk();
+        await runtime.start();
+      }
+      // Normalization timestamps actual receipt, not the fixture's remote createAt.
+      now = Date.now();
+      expect((db.prepare("SELECT next_attempt_at FROM collaboration_attachments").get() as { next_attempt_at: number }).next_attempt_at).toBeLessThanOrEqual(now);
+      await runtime.drainOnce();
+      await vi.waitFor(() => expect(download).toHaveBeenCalledTimes(1));
+      for (let index = 0; index < 3; index++) { now += 20000; await runtime.drainOnce(); }
+      expect(runtime.health().ready).toBe(true);
+      expect(delivered).toHaveLength(1);
+      expect(download).toHaveBeenCalledTimes(1);
+      release({ ok: false, kind: "retryable", code: "dingtalk_attachment_cancelled" });
+      await runtime.stop();
+      expect(db.prepare("SELECT ingest_state FROM collaboration_attachments").get()).toEqual({ ingest_state: "downloading" });
+      expect(db.prepare("SELECT count(*) AS n FROM collaboration_attachment_failures").get()).toEqual({ n: 0 });
+      expect(db.prepare("SELECT count(*) AS n FROM collaboration_work_item_evidence").get()).toEqual({ n: 0 });
+    } finally {
+      release({ ok: false, kind: "retryable", code: "dingtalk_attachment_cancelled" });
+      await runtime.stop();
+      db?.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("passes private attachment capabilities to durable ingestion before acknowledging", async () => {
     const sdk = new FakeSdk();
     const order: string[] = [];
     const captured: unknown[] = [];
