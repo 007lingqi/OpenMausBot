@@ -67,11 +67,13 @@ class FakeContainment implements ContainmentPort {
 
 class FailingVerifierRunner implements SandboxedCommandRunner {
   readonly requests: SandboxedCommandRequest[] = [];
+  onRun?: () => void;
 
   async run(request: SandboxedCommandRequest): Promise<SandboxedCommandResult> {
     this.requests.push(request);
     const containmentProof = proof(request.containmentBinding);
     await request.registerContainment(containmentProof);
+    this.onRun?.();
     return {
       exitCode: 7,
       stdout: Buffer.alloc(0),
@@ -267,6 +269,76 @@ async function runningRuntime(item: RetryFixture, runner: FailingVerifierRunner)
 }
 
 describe("runtime Owner verification retry", () => {
+  it.each(["pause", "cancel", "new_plan", "new_contribution"])("does not announce a late verification failure after %s", async (change) => {
+    const item = seedRetryableCandidate();
+    const runner = new FailingVerifierRunner();
+    runner.onRun = () => {
+      const db = new DatabaseSync(join(item.dataDirectory, "collaboration", "collaboration.sqlite"));
+      try {
+        if (change === "pause" || change === "cancel") {
+          db.prepare("UPDATE collaboration_work_items SET control_state=? WHERE id=?")
+            .run(change === "pause" ? "paused" : "cancelled", item.workItemId);
+        } else if (change === "new_plan") {
+          db.prepare("UPDATE collaboration_work_items SET current_plan_revision=NULL WHERE id=?").run(item.workItemId);
+        } else {
+          db.prepare("UPDATE collaboration_work_items SET version=version+1 WHERE id=?").run(item.workItemId);
+        }
+      } finally { db.close(); }
+    };
+    const { runtime } = await runningRuntime(item, runner);
+    try {
+      const db = new DatabaseSync(join(item.dataDirectory, "collaboration", "collaboration.sqlite"));
+      try {
+        expect(db.prepare("SELECT source_event_id FROM collaboration_outbox WHERE source_event_id LIKE ?")
+          .all(`verification:${item.runId}:%`)).toEqual([]);
+      } finally { db.close(); }
+    } finally { await runtime.stop(); }
+  });
+
+  it("distinguishes pending mapping from a failure and fences replayed or older results", async () => {
+    const item = seedRetryableCandidate();
+    const runner = new FailingVerifierRunner();
+    const { runtime } = await runningRuntime(item, runner);
+    const db = new DatabaseSync(join(item.dataDirectory, "collaboration", "collaboration.sqlite"));
+    try {
+      const row = db.prepare("SELECT spec_hash FROM collaboration_candidate_reviews WHERE candidate_run_id=? LIMIT 1")
+        .get(item.runId) as { spec_hash: string };
+      const target = { runId: item.runId, workItemId: item.workItemId, planRevision: 1 };
+      const pending = { passed: false, status: "needs_configuration" as const, reasons: ["acceptance_mapping_pending"],
+        specHash: row.spec_hash, verifierAttempt: 1, metaAttempt: null };
+      runtime["enqueueVerificationFailure"](target, pending);
+      runtime["enqueueVerificationFailure"](target, pending);
+      const notices = () => db.prepare("SELECT payload_json FROM collaboration_outbox WHERE source_event_id LIKE ?")
+        .all(`verification:${item.runId}:%`).map(r => String(r.payload_json));
+      expect(notices().filter(r => r.includes("verification_pending"))).toHaveLength(1);
+      expect(notices().filter(r => r.includes("verification_blocked"))).toHaveLength(1);
+      expect(notices().join(" ")).not.toContain("自动复核环境尚未配置完整");
+      expect(runtime.performDingTalkOwnerTextCommand(ownerRetry(item, "new-verifier-attempt", 4_100)).allowed).toBe(true);
+      await vi.waitFor(() => expect(reviewCount(item)).toBe(2));
+      expect(runtime["verificationCoordinator"](item.runId).isCurrentNotification(item.runId, pending)).toBe(false);
+      const count = notices().length;
+      runtime["enqueueVerificationFailure"](target, { ...pending, reasons: ["acceptance_mapping_incomplete"] });
+      expect(notices()).toHaveLength(count);
+    } finally { db.close(); await runtime.stop(); }
+  });
+
+  it("silently drops a notification from a replaced instance and rejects a changed contract", async () => {
+    const item = seedRetryableCandidate();
+    const { runtime } = await runningRuntime(item, new FailingVerifierRunner());
+    const db = new DatabaseSync(join(item.dataDirectory, "collaboration", "collaboration.sqlite"));
+    try {
+      const row = db.prepare("SELECT spec_hash FROM collaboration_candidate_reviews WHERE candidate_run_id=? LIMIT 1")
+        .get(item.runId) as { spec_hash: string };
+      const target = { runId: item.runId, workItemId: item.workItemId, planRevision: 1 };
+      const pending = { passed: false, status: "needs_configuration" as const, reasons: ["acceptance_mapping_pending"],
+        specHash: row.spec_hash, verifierAttempt: 1, metaAttempt: null };
+      runtime["enqueueVerificationFailure"](target, { ...pending, specHash: "wrong-contract" });
+      db.prepare("UPDATE collaboration_instance_lease SET fencing_token=fencing_token+1 WHERE singleton=1").run();
+      expect(() => runtime["enqueueVerificationFailure"](target, pending)).not.toThrow();
+      expect(db.prepare("SELECT 1 FROM collaboration_outbox WHERE source_event_id LIKE ?")
+        .all(`verification:${item.runId}:attempt:1:pending:%`)).toEqual([]);
+    } finally { db.close(); await runtime.stop(); }
+  });
   it("re-runs the verifier for a succeeded candidate without re-running modify", async () => {
     const item = seedRetryableCandidate();
     const runner = new FailingVerifierRunner();

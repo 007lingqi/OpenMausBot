@@ -1,5 +1,12 @@
 # Meta 协作验证记录
 
+## 2026-09-05 复核反馈与过期通知（最新）
+
+- 最终 `pnpm vitest run server/collaboration server/integrations/dingtalk server/collaboration-headless.test.ts && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-verification-notices-typecheck && git diff --check` 全链通过，92132 exit 0；67 文件 / 454 项，23:17:04 开始、48.87 秒。覆盖接收、归属、Owner 权限、Ledger、Outbox、session 回复和 headless。没有运行本批全仓 pnpm test，不借用上批全仓证据。
+- 新增 9 项：三类通知无代码/状态/内部标识；pause/cancel/换计划/未投影贡献后旧失败；pending 区分去重与旧尝试拒绝；错误契约和被替换租约。首轮 8 failed / 15 passed 复现原问题，修复后 23 项和 typecheck 通过。补充租约夹具先误设 expires_at 违反约束，改为 fencing_token 增长后复现 StaleFenceError 外抛，修复后最终全组通过。文档补丁一次标题上下文不符未应用，核对后重试。
+- 临时 Git/SQLite 真实，执行和模型返回为受控端口；状态变化是夹具注入，非真实 Owner 群审批。pending 为运行时边界测试，未证明首个模型调用期间主动通知。无真实群聊、模型、在线文档调用或服务部署。
+- 未实施/未验证：启动复核后台化、等待期间租约维护、shutdown 等待/取消复核、后台 promise 异常收束、pending 自动重扫、完整 Docker 六类试点。整体目标继续进行。
+
 ## 2026-09-05 显式模型配置与最终收据核查（最新）
 
 - 最终 `pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-mapping-config-typecheck && git diff --check` 全链通过，66111 exit 0。主 Vitest 260 文件通过 / 1 文件跳过，2438 项通过 / 18 项跳过（2456，总数门禁通过），22:46:12 开始、491.13 秒；broker 7 项、Electron 独立套件 32 项、打包服务脱离 node_modules 启动和 9 个代理路径检查均通过。类型检查、服务端编译及补丁检查通过。

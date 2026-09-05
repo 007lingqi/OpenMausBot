@@ -35,7 +35,7 @@ import { authorizedPreparationRetrySql, preparationDispatchAllowed, recordPrepar
 import { CommandCleanupError } from "../execution-limits.ts";
 import type { PlanningPolicy } from "../graph.ts";
 import type { InboundMessageOutcome } from "../inbound.ts";
-import { assertCurrentInstanceLease, InstanceLeaseCoordinator, type InstanceLease } from "../leases.ts";
+import { assertCurrentInstanceLease, InstanceLeaseCoordinator, StaleFenceError, type InstanceLease } from "../leases.ts";
 import { OutboxDispatcher, type DispatchOutcome, type OutboxDispatcherOptions } from "../outbox-dispatcher.ts";
 import { enqueueInboundCard, type OutboxDeliveryPort } from "../outbox.ts";
 import { renderCommandStatusCard, renderPlanStatusCard } from "../message-renderer.ts";
@@ -242,6 +242,15 @@ function commandSummary(command: DingTalkOwnerTextCommand["command"], allowed: b
 
 function verificationFailureMessage(verification: CandidateVerificationOutcome): string {
   const reasons = new Set(verification.reasons);
+  if (reasons.has("acceptance_mapping_pending")) {
+    return "验收要求与测试的对应关系仍在核对中，尚未确认修改完成。无需重复发送原问题。";
+  }
+  if (reasons.has("acceptance_mapping_incomplete")) {
+    return "目前还无法确认测试已覆盖全部验收要求，本次修改不会标记完成。需要补齐测试或确认不明确的验收要求。";
+  }
+  if (reasons.has("acceptance_mapping_unavailable")) {
+    return "核对验收要求与测试的服务暂时不可用，本次修改尚未确认完成。请负责人检查复核服务后安排恢复。";
+  }
   if (reasons.has("verification_attempt_limit_exhausted")) {
     return "独立复核已连续三次未通过，系统已停止重复尝试。请补充或修正需求后再继续。";
   }
@@ -1418,13 +1427,28 @@ export class CollaborationHeadlessRuntime {
     outcome: Pick<CandidateExecutionOutcome, "runId" | "workItemId" | "planRevision">,
     verification: CandidateVerificationOutcome,
   ): void {
-    if (!this.database) return;
-    const sourceEventId = `verification:${outcome.runId}:attempt:${verification.verifierAttempt}`;
-    if (this.database.prepare(
-      "SELECT 1 FROM collaboration_outbox WHERE source = 'dingtalk' AND source_event_id = ?",
-    ).get(sourceEventId)) return;
+    if (!this.database || !this.lease) return;
+    const pending = verification.reasons.includes("acceptance_mapping_pending");
+    const sourceEventId = `verification:${outcome.runId}:attempt:${verification.verifierAttempt}` +
+      (pending ? `:pending:${verification.specHash}` : "");
     this.database.exec("BEGIN IMMEDIATE");
     try {
+      assertCurrentInstanceLease(this.database, this.lease, this.clock.now());
+      const current = this.database.prepare(
+        "SELECT 1 FROM collaboration_work_items w " +
+        "JOIN collaboration_plan_revisions p ON p.work_item_id=w.id AND p.revision=w.current_plan_revision " +
+        "JOIN collaboration_work_item_snapshots s ON s.work_item_id=w.id AND s.revision=p.snapshot_revision " +
+        "JOIN collaboration_runs r ON r.work_item_id=w.id AND r.plan_revision=w.current_plan_revision " +
+        "WHERE w.id=? AND w.current_plan_revision=? AND r.id=? " +
+        "AND w.status NOT IN ('accepted','cancelled') AND w.control_state='active' " +
+        currentExecutionSpecSql +
+        "AND r.attempt=(SELECT MAX(latest.attempt) FROM collaboration_runs latest WHERE latest.work_item_id=w.id AND latest.plan_revision=w.current_plan_revision) " +
+        "AND NOT EXISTS (SELECT 1 FROM collaboration_outbox o WHERE o.source='dingtalk' AND o.source_event_id=?)",
+      ).get(outcome.workItemId, outcome.planRevision, outcome.runId, sourceEventId);
+      if (!current || !this.verificationCoordinator(outcome.runId).isCurrentNotification(outcome.runId, verification)) {
+        this.database.exec("COMMIT");
+        return;
+      }
       enqueueInboundCard(this.database, {
         sourceEventId,
         aggregateType: "plan",
@@ -1433,7 +1457,7 @@ export class CollaborationHeadlessRuntime {
         card: renderPlanStatusCard({
           workItemId: outcome.workItemId,
           planRevision: outcome.planRevision,
-          status: "execution_failed",
+          status: pending ? "verification_pending" : "verification_blocked",
           failures: [verificationFailureMessage(verification)],
         }),
         supersessionKey: `work-item:${outcome.workItemId}:execution-status`,
@@ -1442,6 +1466,7 @@ export class CollaborationHeadlessRuntime {
       this.database.exec("COMMIT");
     } catch (error) {
       this.database.exec("ROLLBACK");
+      if (error instanceof StaleFenceError) return;
       throw error;
     }
   }

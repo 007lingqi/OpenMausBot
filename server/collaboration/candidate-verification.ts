@@ -357,6 +357,18 @@ export class CandidateVerificationCoordinator {
     }
   }
 
+  /** Called inside the runtime's notification transaction; never trusts a cached outcome alone. */
+  isCurrentNotification(candidateRunId: string, outcome: CandidateVerificationOutcome): boolean {
+    if (outcome.passed || outcome.status === "stale") return false;
+    const row = readRow(this.database, candidateRunId);
+    if (!row || verificationContractHash(row, this.options.commands, this.options.acceptanceMapping?.policyId) !== outcome.specHash) return false;
+    const verifier = latestReview(this.database, candidateRunId, "verifier");
+    if ((verifier?.attempt ?? 0) !== outcome.verifierAttempt) return false;
+    if (latestPassedReviewPair(this.database, row, outcome.specHash)) return false;
+    if (outcome.metaAttempt !== null && latestReview(this.database, candidateRunId, "meta")?.attempt !== outcome.metaAttempt) return false;
+    return true;
+  }
+
   verify(input: {
     candidateRunId: string;
     worktreePath: string;

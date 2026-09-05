@@ -214,6 +214,8 @@ export function renderDingTalkSessionMessage(payload: unknown): Record<string, u
         "- 当前状态：已完成，无需再次确认",
         `- 任务编号：${text(card?.workItemId, "unavailable", 128)}`,
       );
+    } else if (["execution_failed", "verification_pending", "verification_blocked"].includes(status)) {
+      lines.push("", ...failureGuidance(card?.failures).map(message => text(message, "本次修改尚未通过验证。", 1_000)));
     } else if (status === "owner_accepted") {
       lines.push(
         "",
@@ -236,7 +238,8 @@ export function renderDingTalkSessionMessage(payload: unknown): Record<string, u
       `- Work Item: \`${text(card?.workItemId, "unavailable", 128)}\``,
       `- 状态: ${text(card?.status, "planning", 80)}`,
     );
-    if (!["ready_for_execution", "candidate_ready", "completed", "owner_accepted", "owner_rejected"].includes(status)) {
+    if (!["ready_for_execution", "candidate_ready", "completed", "owner_accepted", "owner_rejected",
+      "execution_failed", "verification_pending", "verification_blocked"].includes(status)) {
       if (typeof card?.summary === "string" && card.summary.trim()) lines.push(`- 摘要: ${text(card.summary, "", 1_000)}`);
       if (typeof card?.candidateSha === "string" && card.candidateSha.trim()) {
         lines.push(`- Candidate: \`${text(card.candidateSha, "unavailable", 128)}\``);

@@ -50,6 +50,8 @@ export interface PlanStatusCard {
     | "修改完成，需要负责人确认"
     | "修改已完成"
     | "执行未完成"
+    | "正在核对修改结果"
+    | "修改结果尚未通过复核"
     | "候选已接受"
     | "候选已拒绝"
     | "验收操作未执行";
@@ -63,6 +65,8 @@ export interface PlanStatusCard {
     | "candidate_ready"
     | "completed"
     | "execution_failed"
+    | "verification_pending"
+    | "verification_blocked"
     | "owner_accepted"
     | "owner_rejected"
     | "owner_action_denied";
@@ -186,6 +190,8 @@ export function renderPlanStatusCard(input: {
     | "candidate_ready"
     | "completed"
     | "execution_failed"
+    | "verification_pending"
+    | "verification_blocked"
     | "owner_accepted"
     | "owner_rejected"
     | "owner_action_denied";
@@ -260,14 +266,17 @@ export function renderPlanStatusCard(input: {
       approvalRequired: false,
     };
   }
-  if (input.status === "execution_failed") {
+  if (input.status === "execution_failed" || input.status === "verification_pending" || input.status === "verification_blocked") {
     return {
       type: "plan_status_card",
-      headline: "执行未完成",
+      headline: input.status === "verification_pending" ? "正在核对修改结果"
+        : input.status === "verification_blocked" ? "修改结果尚未通过复核" : "执行未完成",
       workItemId: input.workItemId,
       planRevision: input.planRevision,
       status: input.status,
-      failures: input.failures ?? ["执行未产生可验收候选"],
+      failures: input.failures ?? [input.status === "verification_pending"
+        ? "正在核对验收要求与测试的对应关系，尚未确认修改完成。"
+        : "本次修改尚未通过验证。"],
     };
   }
   return {

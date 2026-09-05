@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { FetchDingTalkSessionSender } from "./sender.ts";
+import { renderPlanStatusCard } from "../../collaboration/message-renderer.ts";
 
 const primaryStatus = {
   type: "primary_status_card",
@@ -11,6 +12,29 @@ const primaryStatus = {
 };
 
 describe("DingTalk session sender", () => {
+  it.each([
+    ["verification_pending", "正在核对修改结果", "正在核对验收要求与测试的对应关系，尚未确认修改完成。"],
+    ["verification_blocked", "修改结果尚未通过复核", "还有验收要求缺少对应测试，本次修改不会标记完成。"],
+    ["execution_failed", "执行未完成", "执行环境暂不可用，请负责人检查。"],
+  ] as const)("renders %s without internal status, candidate code or identifiers", async (status, headline, message) => {
+    let body: unknown;
+    const sender = new FetchDingTalkSessionSender(async (_url, init) => {
+      body = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({ errcode: 0 }), { status: 200 });
+    });
+    const card = renderPlanStatusCard({ workItemId: "WI-INTERNAL", status, failures: [message] });
+    expect(card.headline).toBe(headline);
+    await sender.send("https://api.dingtalk.com/session-webhook", {
+      ...card, candidateSha: "secret-sha", candidatePreview: "+internal-code", changedPaths: ["internal.ts"],
+      testStates: ["target_passed"], summary: "internal-summary",
+    });
+    const markdown = (body as { markdown: { text: string } }).markdown.text;
+    expect(markdown).toContain(message);
+    for (const internal of ["WI", "Work Item", "secret", "internal", "target", "状态:", status]) {
+      expect(markdown).not.toContain(internal);
+    }
+    if (status === "verification_pending") expect(markdown).not.toContain("失败");
+  });
   it("puts each question next to its actual recipient and sends only those notification IDs", async () => {
     let body: unknown;
     const sender = new FetchDingTalkSessionSender(async (_url, init) => {
