@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { DingTalkInboundMessage } from "./types.ts";
-import { parseDingTalkOwnerTextAction, parseDingTalkOwnerTextCommand, parseDingTalkProjectionRecoveryRequest } from "./text-actions.ts";
+import { parseDingTalkOwnerTextAction, parseDingTalkOwnerTextCommand, parseDingTalkProjectionRecoveryRequest, parseDingTalkRequirementRecoveryRequest } from "./text-actions.ts";
 
 const token = "accept_code_12345678901234567890123456789012";
 
@@ -23,6 +23,14 @@ function message(text: string): DingTalkInboundMessage {
 }
 
 describe("DingTalk Owner text actions", () => {
+  it("does not turn quoted, negated, attachment-bearing or unaddressed text into requirement recovery", () => {
+    expect(parseDingTalkRequirementRecoveryRequest(message("请继续整理需求。"))).toBe(true);
+    for (const text of ["不要继续整理需求", "“继续整理需求”", "文档说继续整理需求", "是否继续整理需求？", "继续整理需求\n并部署生产"]) {
+      expect(parseDingTalkRequirementRecoveryRequest(message(text))).toBe(false);
+    }
+    expect(parseDingTalkRequirementRecoveryRequest({ ...message("继续整理需求"), addressedToBot: false })).toBe(false);
+    expect(parseDingTalkRequirementRecoveryRequest({ ...message("继续整理需求"), resources: [{ capabilityRef: "a".repeat(64), kind: "file" }] })).toBe(false);
+  });
   it("only accepts directly addressed explicit attachment recovery, not quoted instructions or documents", () => {
     expect(parseDingTalkProjectionRecoveryRequest(message("继续整理附件"))).toEqual({});
     expect(parseDingTalkProjectionRecoveryRequest(message("请重新整理第二份附件。"))).toEqual({ ordinal: 2 });

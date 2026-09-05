@@ -47,6 +47,7 @@ import type { PlannerPort } from "../planner.ts";
 import type { NaturalIntakeInterpreter } from "../natural-intake.ts";
 import type { AcceptedAttachmentEvidence } from "../plan-reviser.ts";
 import { recoverAttachmentProjection } from "../attachment-projection-recovery.ts";
+import { recoverNaturalIntake } from "../natural-intake-recovery.ts";
 import type { AcceptanceCondition } from "../snapshot.ts";
 import { renderCandidateDiffPreview } from "../candidate-preview.ts";
 import type { AgentRunPort } from "../provider-runner.ts";
@@ -97,6 +98,7 @@ export interface RuntimeStream {
 }
 
 export interface RuntimeDingTalkSinks {
+  recoverRequirements(message: DingTalkInboundMessage): ReturnType<typeof recoverNaturalIntake>;
   recoverProjection(message: DingTalkInboundMessage): ReturnType<typeof recoverAttachmentProjection>;
   ingest(message: DingTalkInboundMessage): InboundMessageOutcome;
   ingestAttachments?(capabilities: readonly DingTalkPrivateResourceCapability[]): Promise<void>;
@@ -938,9 +940,21 @@ export class CollaborationHeadlessRuntime {
     });
   }
 
+  recoverDingTalkRequirements(message: DingTalkInboundMessage): ReturnType<typeof recoverNaturalIntake> {
+    this.assertOperational();
+    const database = this.database!, lease = this.lease!;
+    return recoverNaturalIntake(database, message, this.clock.now(), () => {
+      this.assertOperational();
+      assertCurrentInstanceLease(database, lease, this.clock.now());
+    });
+  }
+
   private performDingTalkOwnerTextCommandInternal(command: DingTalkOwnerTextCommand): DingTalkOwnerTextCommandOutcome {
     this.assertOperational();
     const database = this.database!;
+    if (database.prepare("SELECT 1 FROM collaboration_natural_intake_recovery_requests WHERE source_event_id=?").get(command.transportEventId)) {
+      throw new Error("natural_intake_recovery_event_conflict");
+    }
     if (database.prepare("SELECT 1 FROM collaboration_attachment_recovery_requests WHERE source_event_id=?").get(command.transportEventId)) {
       throw new Error("attachment_recovery_event_conflict");
     }
@@ -1821,6 +1835,7 @@ export class CollaborationHeadlessRuntime {
           perform: (action) => this.performDingTalkOwnerAction(action),
           performCommand: (command) => this.performDingTalkOwnerTextCommand(command),
           recoverProjection: (message) => this.recoverDingTalkAttachmentProjection(message),
+          recoverRequirements: (message) => this.recoverDingTalkRequirements(message),
         },
         this.logger,
       );

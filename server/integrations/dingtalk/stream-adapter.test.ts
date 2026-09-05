@@ -114,6 +114,38 @@ class FakeSdk implements DingTalkStreamSdkPort {
 }
 
 describe("DingTalk Stream adapter", () => {
+  it("does not ACK requirement recovery until its durable sink succeeds", async () => {
+    const sdk = new FakeSdk();
+    const ingest = vi.fn((message: DingTalkInboundMessage) => inboundOutcome(message));
+    const recoverRequirements = vi.fn().mockRejectedValueOnce(new Error("fixture_storage_failed"))
+      .mockResolvedValue({ allowed: true, duplicate: false, workItemId: "WI-1", reason: "natural_intake_recovered", recoveredInputs: 1 });
+    const adapter = new DingTalkStreamAdapter(sdk, { ingest }, { perform: () => ownerOutcome(), recoverRequirements }, new DingTalkSessionReplyRegistry());
+    await adapter.start();
+    const packet = envelope("bot-message-text.json", "recovery-persist");
+    const payload = JSON.parse(packet.data) as Record<string, unknown>; payload.text = { content: "继续整理需求" };
+    const request = { ...packet, data: JSON.stringify(payload) };
+    await sdk.emit("robot", request);
+    expect(sdk.acknowledgements).toEqual([]);
+    await sdk.emit("robot", request);
+    expect(sdk.acknowledgements).toEqual(["recovery-persist"]);
+    expect(ingest).not.toHaveBeenCalled();
+    adapter.stop();
+  });
+  it.each(["继续整理需求", "请继续整理需求", "重新整理需求。"])("routes %s to durable Owner recovery without creating another task", async text => {
+    const sdk = new FakeSdk();
+    const ingest = vi.fn((message: DingTalkInboundMessage) => inboundOutcome(message));
+    const recoverRequirements = vi.fn(() => ({ allowed: true, duplicate: false, workItemId: "WI-1", reason: "natural_intake_recovered", recoveredInputs: 1 }));
+    const adapter = new DingTalkStreamAdapter(sdk, { ingest }, { perform: () => ownerOutcome(), recoverRequirements }, new DingTalkSessionReplyRegistry());
+    await adapter.start();
+    const packet = envelope("bot-message-text.json", "requirement-recovery");
+    const payload = JSON.parse(packet.data) as Record<string, unknown>;
+    payload.text = { content: text };
+    await sdk.emit("robot", { ...packet, data: JSON.stringify(payload) });
+    expect(recoverRequirements).toHaveBeenCalledTimes(1);
+    expect(ingest).not.toHaveBeenCalled();
+    expect(sdk.acknowledgements).toEqual(["requirement-recovery"]);
+    adapter.stop();
+  });
   it.each(["继续整理附件", "请重新整理附件", "继续整理第2份附件"])("routes the explicit recovery request %s to Owner control, never ordinary task creation", async text => {
     const sdk = new FakeSdk();
     const ingest = vi.fn((message: DingTalkInboundMessage) => inboundOutcome(message));

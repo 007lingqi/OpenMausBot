@@ -106,6 +106,10 @@ export interface DingTalkStreamEnvelope {
   data: string;
 }
 
+export interface DingTalkRequirementRecoveryOutcome extends DingTalkProjectionRecoveryOutcome {
+  recoveredInputs: number;
+}
+
 export interface NormalizedDingTalkMessage {
   message: DingTalkInboundMessage;
   replyChannel?: DingTalkSessionReplyChannel;

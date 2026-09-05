@@ -17,6 +17,9 @@ export function recoverAttachmentProjection(db: DatabaseSync, message: DingTalkI
   try {
     assertActive();
     assertLedgerArmed(db);
+    if (db.prepare("SELECT 1 FROM collaboration_natural_intake_recovery_requests WHERE source_event_id=?").get(message.sourceEventId)) {
+      throw new Error("natural_intake_recovery_event_conflict");
+    }
     const previous = db.prepare("SELECT payload_hash,outcome_json FROM collaboration_attachment_recovery_requests WHERE source_event_id=?")
       .get(message.sourceEventId) as { payload_hash: string; outcome_json: string } | undefined;
     if (previous) {

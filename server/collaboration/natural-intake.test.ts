@@ -112,7 +112,7 @@ describe("durable source-bound natural requirement intake", () => {
       for (let i = 0; i < 5; i++) await h.service.processNaturalIntake();
       expect(h.db.prepare("SELECT status,attempts FROM collaboration_natural_intake_jobs WHERE source_event_id='failed-earlier'").get()).toEqual({ status: "failed", attempts: 3 });
       expect(readLatestWorkItemSnapshot(h.db, first.workItemId!)!.blockingAmbiguities.map(q => q.id)).toContain("natural-input-pending");
-      expect(h.service.pendingOutbox().filter(row => row.sourceEventId === "natural-intake-failed:failed-earlier")).toHaveLength(1);
+      expect(h.service.pendingOutbox().filter(row => row.sourceEventId.startsWith("natural-intake-failed:failed-earlier:snapshot:"))).toHaveLength(1);
     } finally { h.service.close(); h.db.close(); }
   });
   it("serializes interpretation within an item and resumes its remaining queue after restart", async () => {
@@ -231,7 +231,7 @@ describe("durable source-bound natural requirement intake", () => {
       await restarted.processNaturalIntake(); await restarted.processNaturalIntake();
       expect(calls).toBe(0);
       expect(h.db.prepare("SELECT status FROM collaboration_natural_intake_jobs").get()).toEqual({ status: "failed" });
-      expect(restarted.pendingOutbox().filter(row => row.sourceEventId === "natural-intake-failed:crashed")).toHaveLength(1);
+      expect(restarted.pendingOutbox().filter(row => row.sourceEventId.startsWith("natural-intake-failed:crashed:snapshot:"))).toHaveLength(1);
     } finally { restarted.close(); h.db.close(); }
   });
   it("keeps model instructions separate from untrusted conversation and exposes no tools", async () => {

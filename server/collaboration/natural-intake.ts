@@ -11,6 +11,7 @@ import { interpretNaturalAssociation, type NaturalAssociationRequest, type Natur
 import { readNaturalAttachmentContext, attachmentReceipt } from "./attachment-completeness.ts";
 import type { AttachmentEvidenceNotification } from "./attachment-ingestion.ts";
 import { readNaturalIntakeContext } from "./natural-intake-context.ts";
+import { naturalIntakeFailureEventId } from "./natural-intake-recovery.ts";
 
 export interface NaturalIntakeEvent { sourceEventId: string; principalId: string; text: string }
 export interface NaturalIntakeRequest {
@@ -230,20 +231,21 @@ export class NaturalIntakeCoordinator {
       const jobs = this.db.prepare("SELECT j.source_event_id,j.work_item_id FROM collaboration_natural_intake_jobs j " +
         "JOIN collaboration_work_items w ON w.id=j.work_item_id WHERE j.status='failed' AND w.status NOT IN ('cancelled','accepted') " +
         "AND j.source_event_id=(SELECT failed.source_event_id FROM collaboration_natural_intake_jobs failed WHERE failed.work_item_id=j.work_item_id AND failed.status='failed' ORDER BY failed.created_at DESC,failed.rowid DESC LIMIT 1) " +
-        "AND NOT EXISTS (SELECT 1 FROM collaboration_outbox o WHERE o.source_event_id='natural-intake-failed:'||j.source_event_id) " +
+        "AND NOT EXISTS (SELECT 1 FROM collaboration_outbox o WHERE o.source_event_id='natural-intake-failed:'||j.source_event_id||" +
+        "CASE WHEN EXISTS(SELECT 1 FROM collaboration_natural_intake_recoveries r WHERE r.input_source_event_id=j.source_event_id) THEN ':recovery:'||(SELECT max(generation) FROM collaboration_natural_intake_recoveries r WHERE r.input_source_event_id=j.source_event_id) ELSE '' END||':snapshot:'||(SELECT max(revision) FROM collaboration_work_item_snapshots WHERE work_item_id=j.work_item_id)) " +
         "ORDER BY j.created_at DESC LIMIT 20").all() as unknown as Array<{ source_event_id: string; work_item_id: string }>;
       for (const job of jobs) {
         const latest = readLatestWorkItemSnapshot(this.db, job.work_item_id);
         const newer = this.db.prepare("SELECT 1 FROM collaboration_natural_intake_jobs WHERE work_item_id=? AND source_event_id<>? AND status IN ('pending','running')")
           .get(job.work_item_id, job.source_event_id);
         if (latest && !newer && latest.blockingAmbiguities.some(q => q.id === "natural-input-pending")) {
-          enqueueInboundCard(this.db, { sourceEventId: `natural-intake-failed:${job.source_event_id}`, aggregateType: "plan",
+          enqueueInboundCard(this.db, { sourceEventId: naturalIntakeFailureEventId(this.db, job.source_event_id, latest.revision), aggregateType: "plan",
             aggregateId: job.work_item_id, aggregateVersion: latest.revision,
             supersessionKey: `work-item:${job.work_item_id}:planning-status`, now,
             card: renderClarificationCard({ workItemId: job.work_item_id, snapshotRevision: latest.revision,
               contextSummary: "暂时没能可靠地整理这条需求，已停止自动重试，还没有开始修改。",
               questions: [{ id: "natural-rephrase", title: "需要处理", question: "有补充信息尚未整理成功，请负责人检查后再继续。",
-                recommendedAnswer: "原消息仍保留；重复发送不会解除这次停止。" }] }) });
+                recommendedAnswer: "原消息仍保留；负责人检查后可回复原消息说“继续整理需求”。重复发送原消息不会解除停止。" }] }) });
         }
       }
       this.db.exec("COMMIT");

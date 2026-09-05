@@ -18,6 +18,11 @@ const COMMANDS: Readonly<Record<string, DingTalkOwnerTextCommandName>> = {
 };
 
 /** Only explicit direct text is control intent; quoted/document content is not. */
+export function parseDingTalkRequirementRecoveryRequest(message: DingTalkInboundMessage): boolean {
+  return message.addressedToBot && !message.resources?.length && /^(?:请)?(?:继续|重新)整理需求[。！!]?$/u.test(message.text.trim());
+}
+
+/** Only explicit direct text is control intent; quoted/document content is not. */
 export function parseDingTalkProjectionRecoveryRequest(message: DingTalkInboundMessage): { ordinal?: number } | null {
   if (!message.addressedToBot || message.resources?.length) return null;
   const matched = /^(?:请)?(?:继续|重新)整理(?:第([1-9][0-9]?|[一二三四五六七八九十])份)?附件[。！!]?$/u.exec(message.text.trim());

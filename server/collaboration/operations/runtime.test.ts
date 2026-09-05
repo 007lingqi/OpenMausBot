@@ -575,6 +575,12 @@ describe("production-isomorphic collaboration runtime", () => {
     });
     await runtime.start();
     if (!sinks?.ingestAttachments) throw new Error("Expected attachment sink");
+    const requirementRecovery = { ...message("requirement-recovery"), text: "继续整理需求" };
+    expect(sinks.recoverRequirements(requirementRecovery)).toMatchObject({ allowed: false, duplicate: false, recoveredInputs: 0, reason: "owner_not_configured" });
+    expect(sinks.recoverRequirements(requirementRecovery)).toMatchObject({ duplicate: true });
+    expect(() => sinks!.ingest({ ...requirementRecovery, text: "新建任务" })).toThrow("natural_intake_recovery_event_conflict");
+    expect(() => sinks!.performCommand({ transportEventId: requirementRecovery.sourceEventId, transportMessageId: requirementRecovery.transportMessageId,
+      command: "retry", workItemId: "WI-000000000001", sender: requirementRecovery.sender, receivedAt: requirementRecovery.receivedAt })).toThrow("natural_intake_recovery_event_conflict");
     const recovery = { ...message("attachment-recovery"), text: "继续整理附件" };
     expect(sinks.recoverProjection(recovery)).toMatchObject({ allowed: false, duplicate: false, reason: "owner_not_configured" });
     expect(sinks.recoverProjection(recovery)).toMatchObject({ duplicate: true });

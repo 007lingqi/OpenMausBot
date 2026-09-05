@@ -606,6 +606,7 @@ function productionRuntimeOptions(
             perform: (action) => sinks.perform(action),
             performCommand: (command) => sinks.performCommand(command),
             recoverProjection: (message) => sinks.recoverProjection(message),
+            recoverRequirements: (message) => sinks.recoverRequirements(message),
           },
           sessions,
           { write: (event) => logger.write({ event: event.event, ...(event.code ? { code: event.code } : {}) }) },

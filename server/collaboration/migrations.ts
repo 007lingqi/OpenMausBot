@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { OPENMAUSBOT_SOURCE_BASELINE } from "./config.ts";
 
-export const COLLABORATION_SCHEMA_VERSION = 24;
+export const COLLABORATION_SCHEMA_VERSION = 25;
 
 interface Migration {
   version: number;
@@ -1240,6 +1240,41 @@ const migrations: readonly Migration[] = [
       for (const table of ["projection_recoveries", "recovery_requests"]) for (const operation of ["UPDATE", "DELETE"]) {
         database.exec(`CREATE TRIGGER attachment_${table}_no_${operation.toLowerCase()} BEFORE ${operation} ON collaboration_attachment_${table}
           BEGIN SELECT RAISE(ABORT,'attachment recovery is immutable'); END;`);
+      }
+    },
+  },
+  {
+    version: 25, name: "owner-natural-intake-recovery", checksum: "v25:immutable-owner-bound-intake-recovery",
+    apply(database) {
+      database.exec(`
+        CREATE TABLE collaboration_natural_intake_recovery_requests (
+          source_event_id TEXT PRIMARY KEY,
+          payload_hash TEXT NOT NULL,
+          outcome_json TEXT NOT NULL,
+          created_at INTEGER NOT NULL
+        ) STRICT;
+        CREATE TABLE collaboration_natural_intake_recoveries (
+          id TEXT PRIMARY KEY,
+          request_source_event_id TEXT NOT NULL REFERENCES collaboration_natural_intake_recovery_requests(source_event_id) DEFERRABLE INITIALLY DEFERRED,
+          input_source_event_id TEXT NOT NULL REFERENCES collaboration_natural_intake_jobs(source_event_id),
+          work_item_id TEXT NOT NULL REFERENCES collaboration_work_items(id),
+          generation INTEGER NOT NULL CHECK(generation>0),
+          prior_attempts INTEGER NOT NULL CHECK(prior_attempts=3),
+          prior_error_code TEXT NOT NULL,
+          input_hash TEXT NOT NULL,
+          actor_principal_id TEXT NOT NULL REFERENCES collaboration_principals(id),
+          owner_generation INTEGER NOT NULL CHECK(owner_generation>0),
+          created_at INTEGER NOT NULL,
+          UNIQUE(input_source_event_id,generation),
+          UNIQUE(request_source_event_id,input_source_event_id)
+        ) STRICT;
+        CREATE TRIGGER natural_intake_recovery_matches_source BEFORE INSERT ON collaboration_natural_intake_recoveries
+          WHEN NOT EXISTS(SELECT 1 FROM collaboration_natural_intake_jobs j WHERE j.source_event_id=NEW.input_source_event_id AND j.work_item_id=NEW.work_item_id AND j.status='failed' AND j.attempts=NEW.prior_attempts)
+          BEGIN SELECT RAISE(ABORT,'natural intake recovery source mismatch'); END;
+      `);
+      for (const table of ["recoveries", "recovery_requests"]) for (const operation of ["UPDATE", "DELETE"]) {
+        database.exec(`CREATE TRIGGER natural_intake_${table}_no_${operation.toLowerCase()} BEFORE ${operation} ON collaboration_natural_intake_${table}
+          BEGIN SELECT RAISE(ABORT,'natural intake recovery is immutable'); END;`);
       }
     },
   },

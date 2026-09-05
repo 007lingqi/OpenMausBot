@@ -1,5 +1,13 @@
 # Meta 协作验证记录
 
+## 2026-09-06 Owner 需求解释恢复（当前批）
+
+- Stream TDD 首先 3 失败 / 17 通过；恢复实现后 90146 exit 0（53 项/typecheck）。后续新增通知版本漂移回归 84808 exit 1（1 失败 / 13 通过），并被运行中的旧整组 5918 捕获（1 失败 / 642 通过）；均为修复前红灯，不能当作当前未修复失败。
+- 通知加入 Spec 修订后 60081 exit 0（40 项/typecheck）。最终加入实际 dispatcher 旧提醒抑制、失租回滚和 ACK 持久化顺序后，20188 exit 0：`pnpm vitest run server/collaboration/natural-intake-recovery.test.ts server/collaboration/natural-intake.test.ts server/integrations/dingtalk/text-actions.test.ts server/integrations/dingtalk/stream-adapter.test.ts && pnpm typecheck && git diff --check`，4 文件 / 62 项。
+- 无排除完整验证 29394 exit 0（最终输出 e71072）：`pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-server-typecheck && git diff --check`。当前 schema 25：主集 265 文件通过 / 1 跳过，2,638 项通过 / 18 条件跳过，注册数 2,656 达到测试数量底线；本机 HTTP 模型适配测试实际运行。broker 7、updater 15、desktop-viewer 5、package-link 2、save-file 10 项均通过。打包服务在无 node_modules 可达条件下启动，9 个子进程代理入口验证通过；随后类型/独立服务端编译/diff 检查均成功。没有运行中验证句柄。
+- Docker 当前源码/schema 25 复测：`OMB_INTAKE_SMOKE_CONTEXT=colima-openmausbot-pilot OMB_INTAKE_SMOKE_IMAGE=sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e node --experimental-strip-types server/collaboration/operations/natural-intake-recovery.smoke.ts`，aec269 exit 0。输出 linux_process_sqlite/controlled、15 条全部恢复、重放防重、权限不变和隔离检查通过；只清理本次临时容器。不证明真实 Owner 恢复短句投递、在线模型/文档、完整主机重启。
+- Docker 前后清单 9c0623/4c3c45 exit 0：原试点 healthy、历史容器保持退出状态、无本批临时容器残留。未部署当前恢复入口，不能宣称真实群已生效。
+
 ## 2026-09-06 全仓与实际 Docker 进程恢复（最新）
 
 - 当前 030f09c 业务版本：`pnpm vitest run server/collaboration/operations/natural-intake-model.test.ts` 实际监听本机临时 HTTP，9 项通过（496a0a exit 0）。不使用真实模型凭据。
