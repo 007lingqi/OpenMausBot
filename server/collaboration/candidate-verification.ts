@@ -374,7 +374,9 @@ export class CandidateVerificationCoordinator {
     worktreePath: string;
     instance: Pick<InstanceLease, "ownerId" | "fence">;
     now: number;
+    signal?: AbortSignal;
   }): Promise<CandidateVerificationOutcome> {
+    if (input.signal?.aborted) return Promise.reject(new Error("candidate_verification_cancelled"));
     let inFlight = IN_FLIGHT.get(this.database);
     if (!inFlight) {
       inFlight = new Map();
@@ -395,7 +397,9 @@ export class CandidateVerificationCoordinator {
     worktreePath: string;
     instance: Pick<InstanceLease, "ownerId" | "fence">;
     now: number;
+    signal?: AbortSignal;
   }): Promise<CandidateVerificationOutcome> {
+    input.signal?.throwIfAborted();
     assertLedgerArmed(this.database);
     const row = readRow(this.database, input.candidateRunId);
     if (!row) throw new Error("candidate_verification_target_unavailable");
@@ -453,7 +457,7 @@ export class CandidateVerificationCoordinator {
       try {
         const request = collectAcceptanceMappingRequest({ worktree: worktreePath, candidateSha: row.result_sha, specHash: currentSpecHash,
           conditions, commandIds, commands });
-        const result = await new AcceptanceMappingCoordinator(this.database, this.options.acceptanceMapping).map(request, input.now);
+        const result = await new AcceptanceMappingCoordinator(this.database, this.options.acceptanceMapping).map(request, input.now, input.signal);
         if (result.status === "pending") return { passed: false, status: "needs_configuration", reasons: ["acceptance_mapping_pending"],
           specHash: currentSpecHash, verifierAttempt: previous?.attempt ?? 0, metaAttempt: null };
         if (result.status !== "approved" || !result.contracts) reasons.push("acceptance_mapping_incomplete");
@@ -461,7 +465,8 @@ export class CandidateVerificationCoordinator {
           commands = Object.fromEntries(commandIds.map(id => [id, { ...commands[id], assertionContract: result.contracts![id] ?? commands[id].assertionContract }]));
           mapping = { requestHash: result.requestHash, policyId: this.options.acceptanceMapping.policyId };
         }
-      } catch { reasons.push("acceptance_mapping_unavailable"); }
+      } catch (error) { if (input.signal?.aborted) throw error; reasons.push("acceptance_mapping_unavailable"); }
+      input.signal?.throwIfAborted();
       const current = readRow(this.database, input.candidateRunId);
       const state = gitState(worktreePath);
       if (!current || verificationContractHash(current, this.options.commands, this.options.acceptanceMapping.policyId) !== currentSpecHash ||
@@ -476,6 +481,7 @@ export class CandidateVerificationCoordinator {
         commandIds,
         commands,
         runner: this.options.commandRunner,
+        signal: input.signal,
         deniedPaths: [realpathSync(row.repository_path), realpathSync(join(this.options.dataDirectory, "collaboration"))],
         containment: this.options.containment,
         containmentContext: {
@@ -485,6 +491,7 @@ export class CandidateVerificationCoordinator {
           instanceFence: input.instance.fence,
         },
       });
+      input.signal?.throwIfAborted();
       evidence = verification.evidence;
       reasons.push(...verification.configurationProblems);
       if (evidence.length !== commandIds.length || evidence.some((item) => item.state !== "target_passed")) {
@@ -494,6 +501,7 @@ export class CandidateVerificationCoordinator {
       if (after.head !== before.head || after.status !== before.status) reasons.push("verifier_modified_candidate");
     }
 
+    input.signal?.throwIfAborted();
     const refreshed = readRow(this.database, input.candidateRunId);
     const stale = !refreshed ||
       verificationContractHash(refreshed, this.options.commands, this.options.acceptanceMapping?.policyId) !== currentSpecHash ||

@@ -157,13 +157,16 @@ export async function runTargetTests(input: {
   deniedPaths: readonly string[];
   containment: ContainmentPort;
   containmentContext: Omit<ContainmentBinding, "commandId" | "nonce">;
+  signal?: AbortSignal;
 }): Promise<{ evidence: TestEvidence[]; configurationProblems: string[] }> {
+  input.signal?.throwIfAborted();
   const root = realpathSync(input.worktree);
   const results: TestEvidence[] = [];
   const configurationProblems: string[] = [];
   if (!input.runner) return { evidence: [], configurationProblems: ["sandboxed command runner unavailable"] };
   const deniedPaths = [...new Set(input.deniedPaths.map((path) => realpathSync(path)))].sort();
   for (const commandId of input.commandIds) {
+    input.signal?.throwIfAborted();
     const spec = input.commands[commandId];
     if (!spec) {
       configurationProblems.push(`missing command: ${commandId}`);
@@ -192,6 +195,7 @@ export async function runTargetTests(input: {
       sandbox: { writableRoot: root, deniedPaths, network: "deny" },
       containmentBinding,
       registerContainment: async (proof) => {
+        // An entered runner still owns process cleanup. Do not abandon its containment handshake.
         const verified = await verifyContainmentProof(input.containment, proof, containmentBinding);
         if (!verified.verified) throw new Error(`containment registration rejected for command: ${commandId}`);
         if (registeredFingerprint !== null && registeredFingerprint !== verified.fingerprint) {
@@ -200,6 +204,7 @@ export async function runTargetTests(input: {
         registeredFingerprint = verified.fingerprint;
       },
     });
+    input.signal?.throwIfAborted();
     const attestedDenied = [...new Set(result.attestation.deniedPaths.map((path) => realpathSync(path)))].sort();
     if (
       (spec.assertionReporter !== undefined && result.attestation.assertionReporter !== spec.assertionReporter) ||

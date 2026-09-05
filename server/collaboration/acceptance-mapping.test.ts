@@ -32,6 +32,51 @@ function models(options: { reject?: boolean; malformed?: boolean } = {}) {
 function ledger() { const root = mkdtempSync(join(tmpdir(), "omb-mapping-")); roots.push(root); const store = openCollaborationLedger(root); store.close(); const database = new DatabaseSync(store.filePath); database.exec("PRAGMA foreign_keys=ON"); resources.push(database); return { database, filePath: store.filePath }; }
 
 describe("source-grounded acceptance mapping", () => {
+  it.each(["proposer", "verifier"] as const)("cancels a waiting %s without writing a late receipt or starting another model", async stage => {
+    const store = ledger(); const model = models(); const controller = new AbortController();
+    let release!: (value: unknown) => void;
+    let captured: AbortSignal | undefined;
+    const original = model[stage].complete.bind(model[stage]);
+    let value: unknown;
+    model[stage].complete = async input => {
+      captured = input.signal;
+      value = await original(input);
+      return new Promise(resolve => { release = resolve; });
+    };
+    const pending = new AcceptanceMappingCoordinator(store.database, model).map(request, 1000, controller.signal);
+    const settled = expect(pending).rejects.toThrow("acceptance_mapping_cancelled");
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    controller.abort();
+    await settled;
+    expect(captured?.aborted).toBe(true);
+    const calls = model.calls.length;
+    release(value);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(model.calls).toHaveLength(calls);
+    expect(store.database.prepare("SELECT count(*) AS count FROM collaboration_acceptance_mapping_attempts").get()).toEqual({ count: 1 });
+    expect(store.database.prepare("SELECT count(*) AS count FROM collaboration_acceptance_mapping_results").get()).toEqual({ count: 0 });
+  });
+  it("does not reserve an attempt or call a model when already cancelled", async () => {
+    const store = ledger(); const model = models();
+    await expect(new AcceptanceMappingCoordinator(store.database, model).map(request, 1000, AbortSignal.abort()))
+      .rejects.toThrow("acceptance_mapping_cancelled");
+    expect(model.calls).toHaveLength(0);
+    expect(store.database.prepare("SELECT count(*) AS count FROM collaboration_acceptance_mapping_attempts").get()).toEqual({ count: 0 });
+  });
+  it("never starts the independent model after a timed-out proposer eventually returns", async () => {
+    const store = ledger(); const model = models();
+    let release!: (value: unknown) => void;
+    model.proposer.complete = () => new Promise(resolve => { release = resolve; });
+    vi.useFakeTimers();
+    try {
+      const pending = new AcceptanceMappingCoordinator(store.database, model).map(request, 1000);
+      await vi.advanceTimersByTimeAsync(90001);
+      expect((await pending).status).toBe("failed");
+      release(proposal());
+      await vi.advanceTimersByTimeAsync(1);
+      expect(model.calls).toHaveLength(0);
+    } finally { vi.useRealTimers(); }
+  });
   it("requires independent review and persists a reproducible binding without user hashes", async () => {
     const store = ledger(); const model = models();
     const result = await new AcceptanceMappingCoordinator(store.database, model).map(request, 1000);

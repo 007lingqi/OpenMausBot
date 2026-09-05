@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { FakeDingTalkAdapter } from "../integrations/dingtalk/fake-adapter.ts";
 import type { DingTalkInboundMessage } from "../integrations/dingtalk/types.ts";
@@ -266,6 +266,28 @@ function mappingHarness(item: Fixture) {
 }
 
 describe("independent candidate verification", () => {
+  it("does not record test results when cancelled by a late runner response", async () => {
+    const item=fixture(); const controller=new AbortController();
+    const runner=new FakeRunner(() => { controller.abort(); return {}; });
+    await expect(coordinator(item,runner).verify({candidateRunId:item.runId,worktreePath:item.worktree,
+      instance:{ownerId:"instance-1",fence:1},now:4000,signal:controller.signal})).rejects.toThrow();
+    expect(item.database.prepare("SELECT count(*) AS count FROM collaboration_candidate_reviews").get()).toEqual({count:0});
+  });
+  it("stops a pending mapping without test starts or review writes, even when the model ignores abort", async () => {
+    const item=fixture(undefined,true,true); const h=mappingHarness(item); const controller=new AbortController();
+    const original=h.proposer.complete.bind(h.proposer);
+    let release!: () => void;
+    h.proposer.complete=async input => { await new Promise<void>(resolve => { release=resolve; }); return original(input); };
+    const pending=h.coordinator.verify({candidateRunId:item.runId,worktreePath:item.worktree,instance:{ownerId:"instance-1",fence:1},now:4000,signal:controller.signal});
+    const settled=expect(pending).rejects.toThrow("acceptance_mapping_cancelled");
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    controller.abort();
+    await settled;
+    release();
+    await new Promise(resolve => setTimeout(resolve,0));
+    expect(h.runner.requests).toHaveLength(0);
+    expect(item.database.prepare("SELECT count(*) AS count FROM collaboration_candidate_reviews").get()).toEqual({count:0});
+  });
   it("rejects a completed-looking review pair that references a nonexistent mapping receipt", async () => {
     const item=fixture();
     expect((await verify(item,new FakeRunner())).passed).toBe(true);

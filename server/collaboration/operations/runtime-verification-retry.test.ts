@@ -67,13 +67,13 @@ class FakeContainment implements ContainmentPort {
 
 class FailingVerifierRunner implements SandboxedCommandRunner {
   readonly requests: SandboxedCommandRequest[] = [];
-  onRun?: () => void;
+  onRun?: () => void | Promise<void>;
 
   async run(request: SandboxedCommandRequest): Promise<SandboxedCommandResult> {
     this.requests.push(request);
     const containmentProof = proof(request.containmentBinding);
     await request.registerContainment(containmentProof);
-    this.onRun?.();
+    await this.onRun?.();
     return {
       exitCode: 7,
       stdout: Buffer.alloc(0),
@@ -242,7 +242,7 @@ function runCount(item: RetryFixture): number {
   return row.count;
 }
 
-async function runningRuntime(item: RetryFixture, runner: FailingVerifierRunner) {
+async function runningRuntime(item: RetryFixture, runner: FailingVerifierRunner, shutdownTimeoutMs = 10_000) {
   const agent: AgentRunPort = {
     run: vi.fn(async () => { throw new Error("modify_must_not_run_for_verification_retry"); }),
     interrupt: vi.fn(async () => undefined),
@@ -250,6 +250,7 @@ async function runningRuntime(item: RetryFixture, runner: FailingVerifierRunner)
   const runtime = new CollaborationHeadlessRuntime({
     dataDirectory: item.dataDirectory,
     ownerId: `runtime-${sequence}`,
+    shutdownTimeoutMs,
     platform: "linux",
     clock: { now: () => 4_000 },
     agent,
@@ -269,6 +270,21 @@ async function runningRuntime(item: RetryFixture, runner: FailingVerifierRunner)
 }
 
 describe("runtime Owner verification retry", () => {
+  it("does not persist or notify a retry that finishes after shutdown", async () => {
+    const item = seedRetryableCandidate(); const runner = new FailingVerifierRunner();
+    const { runtime } = await runningRuntime(item, runner, 50);
+    let release!: () => void;
+    runner.onRun = () => new Promise<void>(resolve => { release = resolve; });
+    try {
+      expect(runtime.performDingTalkOwnerTextCommand(ownerRetry(item, "shutdown-retry", 4100)).allowed).toBe(true);
+      await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+      expect(await runtime.stop()).toMatchObject({ reason: "shutdown_verification_unsettled" });
+      await expect(runtime.start()).rejects.toThrow("collaboration_verification_still_settling");
+      release();
+      await vi.waitFor(() => expect(runtime["scheduledWorkItems"].size).toBe(0));
+      expect(reviewCount(item)).toBe(1);
+    } finally { release?.(); await runtime.stop(); }
+  });
   it.each(["pause", "cancel", "new_plan", "new_contribution"])("does not announce a late verification failure after %s", async (change) => {
     const item = seedRetryableCandidate();
     const runner = new FailingVerifierRunner();

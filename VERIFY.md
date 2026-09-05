@@ -1,5 +1,13 @@
 # Meta 协作验证记录
 
+## 2026-09-05 复核取消与关机后迟到结果（最新）
+
+- 最终 `pnpm vitest run server/collaboration server/integrations/dingtalk server/collaboration-headless.test.ts && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-verification-cancel-typecheck && git diff --check` 全链通过，89949 exit 0：67 文件 / 461 项，23:41:31 开始、49.87 秒。消息接收/归属/Owner/Ledger/Outbox/回复及 headless 在整组范围内。本批未运行全仓 pnpm test。
+- 新增 7 项：提议与独立模型等待期间取消；预先取消不预留不调用；超时提议迟到不调用独立模型；候选映射取消无后续测试/review；测试返回时取消不记验证结果；Owner retry 关机后返回不写库、不通知、无未处理 rejection，未收束时报告并拒绝同对象重启。
+- 先行失败：映射两项等待超时、预取消仍 approved、超时迟到仍调用独立模型；候选新测试曾漏导入 vi，补齐后通过。运行期先复现 database is not open 未处理异常；取消接入后 51 项和 typecheck 通过。补充未收束提示先失败，再跟踪复核/限时等待后整组通过。
+- 91443 首轮整组也为 461 项通过，但执行期间调整了隔离登记取消边界，因此不能用它替代最终固定代码的 89949 结果。最终无遗留测试失败。取消不打断已进入 runner 的登记握手，防止在其清理前放弃控制。
+- 所有新增验证为受控模型/runner 与真实临时 Git/SQLite，不是 Linux 进程终止或真实群聊证据。尚缺 verifier 持久运行与 containment 记录、跨进程恢复、已启动测试可验证终止、启动后台化、pending 自动续办和六类真实试点。无 Docker 部署、真实模型/钉钉/在线文档调用或凭据变更；Goal 保持 active。
+
 ## 2026-09-05 复核反馈与过期通知（最新）
 
 - 最终 `pnpm vitest run server/collaboration server/integrations/dingtalk server/collaboration-headless.test.ts && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-verification-notices-typecheck && git diff --check` 全链通过，92132 exit 0；67 文件 / 454 项，23:17:04 开始、48.87 秒。覆盖接收、归属、Owner 权限、Ledger、Outbox、session 回复和 headless。没有运行本批全仓 pnpm test，不借用上批全仓证据。

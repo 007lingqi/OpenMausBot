@@ -643,9 +643,11 @@ export class CollaborationHeadlessRuntime {
   private stream: RuntimeStream | null = null;
   private dingTalkState: CollaborationRuntimeHealth["dingtalk"]["state"];
   private naturalIntakeTask: Promise<void> | null = null;
+  private verificationAbort = new AbortController();
   private drainPromise: Promise<DrainOutcome> | null = null;
   private stopPromise: Promise<CollaborationRuntimeHealth> | null = null;
   private readonly activeExecutions = new Set<Promise<unknown>>();
+  private readonly activeVerifications = new Set<Promise<CandidateVerificationOutcome>>();
   private readonly scheduledWorkItems = new Set<string>();
   private readonly activeRepositoryExecutions = new Set<string>();
   private readonly queuedWorkItems = new Set<string>();
@@ -676,10 +678,12 @@ export class CollaborationHeadlessRuntime {
   }
 
   async start(): Promise<CollaborationRuntimeHealth> {
+    if (this.activeVerifications.size) throw new Error("collaboration_verification_still_settling");
     if (this.currentState !== "stopped" || this.service || this.database) {
       throw new Error("collaboration_runtime_already_started");
     }
     this.currentState = "starting";
+    this.verificationAbort = new AbortController();
     this.reason = null;
     this.logger.write({ event: "collaboration.runtime.starting", state: this.currentState });
     try {
@@ -1147,6 +1151,7 @@ export class CollaborationHeadlessRuntime {
   private async performStop(): Promise<CollaborationRuntimeHealth> {
     const deadline = Date.now() + this.shutdownTimeoutMs;
     this.currentState = "draining";
+    this.verificationAbort.abort();
     this.logger.write({ event: "collaboration.runtime.draining", state: this.currentState });
     let releaseLease = false;
     try {
@@ -1159,6 +1164,10 @@ export class CollaborationHeadlessRuntime {
       }
       releaseLease = await this.interruptAndSettleRuns(Math.max(1, deadline - Date.now()));
       if (!releaseLease) this.reason = "shutdown_containment_unverified";
+      if (!(await waitBounded(Promise.allSettled([...this.activeVerifications]), Math.max(1, deadline - Date.now())))) {
+        releaseLease = false;
+        this.reason = "shutdown_verification_unsettled";
+      }
     } catch {
       this.reason = "shutdown_failed";
       releaseLease = false;
@@ -1226,8 +1235,10 @@ export class CollaborationHeadlessRuntime {
     if (pendingVerification) {
       if (pendingVerification.verifierContractAttempts >= CANDIDATE_VERIFICATION_MAX_ATTEMPTS) return;
       this.scheduledWorkItems.add(workItemId);
+      const lifetime = this.verificationAbort;
       void this.verifyCandidate(pendingVerification.runId, pendingVerification.worktreePath)
         .then((verification) => {
+          if (lifetime.signal.aborted || lifetime !== this.verificationAbort) return;
           if (verification.passed) {
             enqueuePendingOwnerDecisionCards(
               this.database!,
@@ -1242,7 +1253,13 @@ export class CollaborationHeadlessRuntime {
             }, verification);
           }
         })
+        .catch(() => {
+          if (!lifetime.signal.aborted && lifetime === this.verificationAbort) {
+            this.logger.write({ event: "collaboration.verification.interrupted", code: "verification_unavailable", workItemId });
+          }
+        })
         .finally(() => {
+          if (lifetime !== this.verificationAbort) return;
           this.syncMetaBundleBestEffort(workItemId, true);
           this.scheduledWorkItems.delete(workItemId);
         });
@@ -1390,12 +1407,16 @@ export class CollaborationHeadlessRuntime {
   }
 
   private async verifyCandidate(candidateRunId: string, worktreePath: string): Promise<CandidateVerificationOutcome> {
-    return await this.verificationCoordinator(candidateRunId).verify({
+    const verification = this.verificationCoordinator(candidateRunId).verify({
       candidateRunId,
       worktreePath,
       instance: this.lease!,
       now: this.clock.now(),
+      signal: this.verificationAbort.signal,
     });
+    this.activeVerifications.add(verification);
+    try { return await verification; }
+    finally { this.activeVerifications.delete(verification); }
   }
 
   private async verifyPendingCandidatesAtStartup(): Promise<void> {
@@ -1818,6 +1839,7 @@ export class CollaborationHeadlessRuntime {
   }
 
   private async closeResources(releaseLease = true): Promise<void> {
+    this.verificationAbort.abort();
     if (releaseLease && this.leaseCoordinator && this.lease) {
       try {
         this.leaseCoordinator.release(this.lease, this.clock.now());
