@@ -1,14 +1,14 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { hasUnsettledVerification } from "./verification-lifecycle.ts";
+import { hasUnsettledVerification, reserveVerification, recordVerificationCommand, recordVerificationProof, settleVerification } from "./verification-lifecycle.ts";
 import { mkdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 
 import { appendExecutionAudit } from "./audit.ts";
 import type { ContainmentPort } from "./containment.ts";
-import { isolatedExecutionEnvironment } from "./execution-limits.ts";
-import type { InstanceLease } from "./leases.ts";
+import { CommandCleanupError, isolatedExecutionEnvironment } from "./execution-limits.ts";
+import { assertCurrentInstanceLease, type InstanceLease } from "./leases.ts";
 import {
   runTargetTests,
   type SandboxedCommandRunner,
@@ -79,6 +79,7 @@ export interface CandidateVerificationOptions {
   dataDirectory: string;
   maxAttempts?: number;
   acceptanceMapping?: AcceptanceMappingModels;
+  clock?: () => number;
 }
 
 interface AcceptanceCondition {
@@ -378,19 +379,53 @@ export class CandidateVerificationCoordinator {
     signal?: AbortSignal;
   }): Promise<CandidateVerificationOutcome> {
     if (input.signal?.aborted) return Promise.reject(new Error("candidate_verification_cancelled"));
+    try {
+      assertLedgerArmed(this.database);
+      assertCurrentInstanceLease(this.database, input.instance, this.options.clock?.() ?? Date.now());
+    }
+    catch (error) { return Promise.reject(error); }
     let inFlight = IN_FLIGHT.get(this.database);
     if (!inFlight) {
       inFlight = new Map();
       IN_FLIGHT.set(this.database, inFlight);
     }
-    const current = inFlight.get(input.candidateRunId);
+    const key = JSON.stringify([input.candidateRunId, input.instance.ownerId, input.instance.fence]);
+    const current = inFlight.get(key);
     if (current) return current;
     let tracked!: Promise<CandidateVerificationOutcome>;
-    tracked = this.verifyOnce(input).finally(() => {
-      if (inFlight!.get(input.candidateRunId) === tracked) inFlight!.delete(input.candidateRunId);
+    tracked = this.verifyWithLifecycle(input).finally(() => {
+      if (inFlight!.get(key) === tracked) inFlight!.delete(key);
     });
-    inFlight.set(input.candidateRunId, tracked);
+    inFlight.set(key, tracked);
     return tracked;
+  }
+
+  private async verifyWithLifecycle(input: Parameters<CandidateVerificationCoordinator["verify"]>[0]): Promise<CandidateVerificationOutcome> {
+    const now = this.options.clock ?? Date.now;
+    const sessionId = reserveVerification(this.database, input.candidateRunId, input.instance, now());
+    let ordinal = 0;
+    let cleanupUnknown = false;
+    const runner: SandboxedCommandRunner = { run: async request => {
+      input.signal?.throwIfAborted();
+      const command = ++ordinal;
+      recordVerificationCommand(this.database, sessionId, command, request.containmentBinding, input.instance, now());
+      return this.options.commandRunner.run({ ...request, registerContainment: async proof => {
+        await request.registerContainment(proof);
+        input.signal?.throwIfAborted();
+        recordVerificationProof(this.database, sessionId, command, proof, input.instance, now());
+      } });
+    } };
+    try {
+      return await this.verifyOnce(input, this.options.commandRunner ? runner : this.options.commandRunner);
+    } catch (error) { cleanupUnknown = error instanceof CommandCleanupError; throw error; }
+    finally {
+      let settled = false;
+      if (!cleanupUnknown) {
+        try { settled = await settleVerification(this.database, sessionId, input.instance, this.options.containment, now, () => true); }
+        catch { /* Closed database, lost lease or unknown containment retains the durable reservation. */ }
+      }
+      if (!settled) throw new CommandCleanupError(new Error("verification_session_unsettled"));
+    }
   }
 
   private async verifyOnce(input: {
@@ -399,7 +434,7 @@ export class CandidateVerificationCoordinator {
     instance: Pick<InstanceLease, "ownerId" | "fence">;
     now: number;
     signal?: AbortSignal;
-  }): Promise<CandidateVerificationOutcome> {
+  }, runner: SandboxedCommandRunner): Promise<CandidateVerificationOutcome> {
     input.signal?.throwIfAborted();
     assertLedgerArmed(this.database);
     const row = readRow(this.database, input.candidateRunId);
@@ -432,6 +467,7 @@ export class CandidateVerificationCoordinator {
         "needs_configuration",
         ["verifier_identity_not_independent"],
         input.now,
+        input.instance,
       );
     }
     const commandIds = strings(row.commands_json);
@@ -444,6 +480,7 @@ export class CandidateVerificationCoordinator {
         "needs_configuration",
         ["verification_contract_incomplete"],
         input.now,
+        input.instance,
       );
     }
 
@@ -481,7 +518,7 @@ export class CandidateVerificationCoordinator {
         environment: isolatedExecutionEnvironment(process.env, home),
         commandIds,
         commands,
-        runner: this.options.commandRunner,
+        runner,
         signal: input.signal,
         deniedPaths: [realpathSync(row.repository_path), realpathSync(join(this.options.dataDirectory, "collaboration"))],
         containment: this.options.containment,
@@ -517,6 +554,7 @@ export class CandidateVerificationCoordinator {
           : "passed";
     this.database.exec("BEGIN IMMEDIATE");
     try {
+      assertCurrentInstanceLease(this.database, input.instance, this.options.clock?.() ?? Date.now());
       insertReview(this.database, {
         row,
         stage: "verifier",
@@ -559,7 +597,7 @@ export class CandidateVerificationCoordinator {
         metaAttempt: null,
       };
     }
-    return this.metaReview(row, currentSpecHash, commandIds, conditions, evidence, attempt, input.now, commands);
+    return this.metaReview(row, currentSpecHash, commandIds, conditions, evidence, attempt, input.now, commands, input.instance);
   }
 
   private metaReview(
@@ -571,6 +609,7 @@ export class CandidateVerificationCoordinator {
     verifierAttempt: number,
     now: number,
     commands: Readonly<Record<string, TargetCommandSpec>>,
+    instance: Pick<InstanceLease, "ownerId" | "fence">,
   ): CandidateVerificationOutcome {
     const selfEvidence = this.database.prepare(
       "SELECT command_id,state,stdout,containment_binding_json FROM collaboration_test_evidence WHERE run_id = ?",
@@ -630,6 +669,7 @@ export class CandidateVerificationCoordinator {
     }
     this.database.exec("BEGIN IMMEDIATE");
     try {
+      assertCurrentInstanceLease(this.database, instance, this.options.clock?.() ?? Date.now());
       insertReview(this.database, {
         row,
         stage: "meta",
@@ -681,9 +721,11 @@ export class CandidateVerificationCoordinator {
     status: CandidateReviewStatus,
     reasons: string[],
     now: number,
+    instance: Pick<InstanceLease, "ownerId" | "fence">,
   ): CandidateVerificationOutcome {
     this.database.exec("BEGIN IMMEDIATE");
     try {
+      assertCurrentInstanceLease(this.database, instance, this.options.clock?.() ?? Date.now());
       insertReview(this.database, {
         row,
         stage: "verifier",

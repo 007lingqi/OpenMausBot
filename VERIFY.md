@@ -1,5 +1,13 @@
 # Meta 协作验证记录
 
+## 2026-09-06 底层复核持久占用与迟到结果（最新）
+
+- 最终 `pnpm vitest run server/collaboration server/integrations/dingtalk server/collaboration-headless.test.ts && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-direct-verifier-typecheck && git diff --check` 全链通过（62528 exit 0）：68 文件 / 485 项，01:02:16 开始、68.67 秒。本批未运行全仓 pnpm test，不复用上一批全仓通过作为本批证据。
+- 新增三项：第二 SQLite 连接和真实 Node 子进程对同一候选、同一有效实例身份再次复核时被持久占用拒绝，命令启动次数不增加；缺失进程证明的直接复核在租约接管后仍锁定；runner 返回前 lease fence 改变，Verifier/Meta 表零新增、占用保持未结算。
+- 先行两项复现无持久记录。迁移到复核器后 50 项通过 / 1 项失败，原 runner 未配置夹具被包装成一个缺证明命令；保留原“不调用 runner 的配置失败”路径后通过。迟到结果测试先误断言内层错误消息，改为断言 CommandCleanupError 后复现旧实例写入两条记录，加入三处事务租约检查后 52 项和类型检查通过。独立子进程用例另行通过，之后最终整组通过，无遗留失败。
+- 原候选测试夹具现在真实持有实例租约；时钟为复核器的可信运行配置，headless 传入其既有时钟，独立默认使用当前时间。未弱化原验收断言或跳过用例。
+- 子进程竞争证据覆盖底层复核器持久互斥，不证明所有代码执行入口互斥或 Linux 主机重启恢复。没有部署或调用真实模型/群聊/在线文档，未修改凭据和 Owner；执行准备、自测清理、遗留恢复及六类真实试点仍需完成，Goal active。
+
 ## 2026-09-06 混合队列与直接执行入口（最新）
 
 - 最终 `pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-mixed-repository-typecheck && git diff --check` 全链通过（83130 exit 0）。主 Vitest 261 文件通过 / 1 文件跳过，2475 项通过 / 18 项跳过（2493，总数门禁通过），00:48:27 开始、401.25 秒。broker 7 项、Electron 独立套件 32 项、无 node_modules 的打包服务启动和 9 个代理路径均通过。类型检查和服务端编译通过。

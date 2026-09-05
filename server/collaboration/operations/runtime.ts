@@ -33,7 +33,7 @@ import {
 import type { CandidateExecutorOptions, CandidateExecutionOutcome } from "../executor.ts";
 import { authorizedPreparationRetrySql, preparationDispatchAllowed, recordPreparationResult } from "../execution-preparation.ts";
 import { CommandCleanupError } from "../execution-limits.ts";
-import { hasUnsettledVerification, reserveVerification, recordVerificationCommand, recordVerificationProof, settleVerification } from "../verification-lifecycle.ts";
+import { hasUnsettledVerification } from "../verification-lifecycle.ts";
 import type { PlanningPolicy } from "../graph.ts";
 import type { InboundMessageOutcome } from "../inbound.ts";
 import { assertCurrentInstanceLease, InstanceLeaseCoordinator, StaleFenceError, type InstanceLease } from "../leases.ts";
@@ -1476,39 +1476,14 @@ export class CollaborationHeadlessRuntime {
       dataDirectory: this.options.dataDirectory,
       maxAttempts: CANDIDATE_VERIFICATION_MAX_ATTEMPTS,
       acceptanceMapping: this.options.acceptanceMapping,
+      clock: () => this.clock.now(),
     });
   }
 
   private async verifyCandidate(candidateRunId: string, worktreePath: string): Promise<CandidateVerificationOutcome> {
-    const db=this.database!;
     const lease=this.lease!;
     const lifetime=this.verificationAbort;
-    const verification=(async () => {
-      const sessionId=reserveVerification(db,candidateRunId,lease,this.clock.now());
-      let ordinal=0;
-      let cleanupUnknown=false;
-      const runner: SandboxedCommandRunner={run:async request=>{
-        lifetime.signal.throwIfAborted();
-        const command=++ordinal;
-        recordVerificationCommand(db,sessionId,command,request.containmentBinding,lease,this.clock.now());
-        return this.options.commandRunner!.run({...request,registerContainment:async proof=>{
-          await request.registerContainment(proof);
-          lifetime.signal.throwIfAborted();
-          recordVerificationProof(db,sessionId,command,proof,lease,this.clock.now());
-        }});
-      }};
-      try {
-        return await this.verificationCoordinator(candidateRunId,runner).verify({candidateRunId,worktreePath,instance:lease,now:this.clock.now(),signal:lifetime.signal});
-      } catch(error) { cleanupUnknown=error instanceof CommandCleanupError; throw error; }
-      finally {
-        let settled=false;
-        if(!cleanupUnknown) {
-          try { settled=await settleVerification(db,sessionId,lease,this.options.containment!,()=>this.clock.now(),()=>this.database===db); }
-          catch { /* Lease loss or unavailable containment leaves a durable unresolved session. */ }
-        }
-        if(!settled) throw new CommandCleanupError(new Error("verification_session_unsettled"));
-      }
-    })();
+    const verification=this.verificationCoordinator(candidateRunId).verify({candidateRunId,worktreePath,instance:lease,now:this.clock.now(),signal:lifetime.signal});
     this.activeVerifications.add(verification);
     try { return await verification; }
     catch (error) {

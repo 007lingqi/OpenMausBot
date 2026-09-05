@@ -29,6 +29,9 @@ import { startCollaborationService, type CollaborationService } from "./service.
 import { acceptanceConditionHash } from "./acceptance-assertions.ts";
 import { nodeTestAssertionId } from "./node-test-reporter.ts";
 import type { NaturalIntakeModelPort } from "./natural-intake.ts";
+import { InstanceLeaseCoordinator } from "./leases.ts";
+import { hasUnsettledVerification } from "./verification-lifecycle.ts";
+import { CommandCleanupError } from "./execution-limits.ts";
 
 const scratch: string[] = [];
 const resources: Array<{ close(): void }> = [];
@@ -178,6 +181,7 @@ function fixture(observation = "pnpm test target 验证候选结果", selfReport
   const database = new DatabaseSync(join(dataDirectory, "collaboration", "collaboration.sqlite"));
   database.exec("PRAGMA foreign_keys = ON");
   resources.push(database);
+  new InstanceLeaseCoordinator(database, "instance-1").acquire(Date.now(), 600_000);
   // SAFETY: The published sequential plan always contains exactly one active modify node with these selected fields.
   const modify = database.prepare(
     "SELECT node_id,assigned_agent_id FROM collaboration_work_nodes " +
@@ -266,6 +270,81 @@ function mappingHarness(item: Fixture) {
 }
 
 describe("independent candidate verification", () => {
+  it("reserves direct verification before commands and rejects a second connection and independent process", async () => {
+    const item = fixture();
+    const other = new DatabaseSync(join(item.dataDirectory, "collaboration", "collaboration.sqlite"));
+    resources.push(other);
+    const runner = new FakeRunner();
+    let release!: () => void;
+    const original = runner.run.bind(runner);
+    runner.run = async request => {
+      await new Promise<void>(resolve => { release = resolve; });
+      return original(request);
+    };
+    const running = verify(item, runner);
+    void running.catch(() => undefined);
+    try {
+      await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+      expect(hasUnsettledVerification(other, item.repository)).toBe(true);
+      expect(other.prepare("SELECT count(*) AS n FROM collaboration_verification_commands").get()).toEqual({ n: 1 });
+      const secondRunner = new FakeRunner();
+      await expect(coordinator({ ...item, database: other }, secondRunner).verify({
+        candidateRunId: item.runId, worktreePath: item.worktree,
+        instance: { ownerId: "instance-1", fence: 1 }, now: 4000,
+      })).rejects.toThrow("verification_repository_unsettled");
+      expect(secondRunner.requests).toHaveLength(0);
+      const childResult = execFileSync(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", `
+        import { DatabaseSync } from 'node:sqlite';
+        const { CandidateVerificationCoordinator } = await import(process.argv[1]);
+        const db = new DatabaseSync(process.argv[2]);
+        try {
+          const fail = () => { throw new Error('child_must_not_run'); };
+          const verifier = new CandidateVerificationCoordinator(db, {
+            commandRunner: { run: fail }, containment: { verifyProof: fail, inspect: fail, terminateAndWaitEmpty: fail },
+            commands: {}, dataDirectory: process.argv[3],
+          });
+          try {
+            await verifier.verify({ candidateRunId: process.argv[4], worktreePath: process.argv[5],
+              instance: { ownerId: 'instance-1', fence: 1 }, now: Date.now() });
+            throw new Error('child_verification_was_not_blocked');
+          } catch (error) {
+            if (error.message !== 'verification_repository_unsettled') throw error;
+            console.log('repository_blocked');
+          }
+        } finally { db.close(); }
+      `, new URL("./candidate-verification.ts", import.meta.url).href,
+      join(item.dataDirectory, "collaboration", "collaboration.sqlite"), item.dataDirectory, item.runId, item.worktree], {
+        encoding: "utf8", timeout: 10_000, env: { ...process.env, NODE_NO_WARNINGS: "1" },
+      });
+      expect(childResult.trim()).toBe("repository_blocked");
+      release();
+      expect((await running).passed).toBe(true);
+      expect(hasUnsettledVerification(other, item.repository)).toBe(false);
+    } finally { release?.(); await running.catch(() => undefined); }
+  });
+
+  it("retains direct verification with missing process proof even after lease takeover", async () => {
+    const item = fixture();
+    const runner: SandboxedCommandRunner = { async run() { throw new CommandCleanupError(new Error("unknown cleanup")); } };
+    await expect(verify(item, runner)).rejects.toThrow();
+    expect(hasUnsettledVerification(item.database, item.repository)).toBe(true);
+    const replacement = new InstanceLeaseCoordinator(item.database, "replacement").acquire(Date.now() + 700_000, 600_000)!;
+    const retry = new FakeRunner();
+    await expect(coordinator(item, retry).verify({ candidateRunId: item.runId, worktreePath: item.worktree,
+      instance: replacement, now: Date.now() + 700_000 })).rejects.toThrow("verification_repository_unsettled");
+    expect(retry.requests).toHaveLength(0);
+  });
+
+  it("does not write a direct verifier result after its lease has been replaced", async () => {
+    const item = fixture();
+    const runner = new FakeRunner(() => {
+      item.database.exec("UPDATE collaboration_instance_lease SET fencing_token=fencing_token+1, version=version+1");
+    });
+    await expect(verify(item, runner)).rejects.toThrow(CommandCleanupError);
+    expect(item.database.prepare("SELECT count(*) AS n FROM collaboration_candidate_reviews").get()).toEqual({ n: 0 });
+    expect(hasUnsettledVerification(item.database, item.repository)).toBe(true);
+  });
+
   it("does not record test results when cancelled by a late runner response", async () => {
     const item=fixture(); const controller=new AbortController();
     const runner=new FakeRunner(request => { expect(request.signal).toBe(controller.signal); controller.abort(); return {}; });
