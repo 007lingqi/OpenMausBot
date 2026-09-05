@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { OPENMAUSBOT_SOURCE_BASELINE } from "./config.ts";
 
-export const COLLABORATION_SCHEMA_VERSION = 13;
+export const COLLABORATION_SCHEMA_VERSION = 14;
 
 interface Migration {
   version: number;
@@ -994,6 +994,13 @@ const migrations: readonly Migration[] = [
       CREATE TRIGGER collaboration_natural_association_result_immutable BEFORE UPDATE ON collaboration_natural_association_jobs
         WHEN OLD.status='projected' OR NEW.event_id<>OLD.event_id
         BEGIN SELECT RAISE(ABORT,'natural association result is immutable'); END;
+    `); },
+  },
+  {
+    version: 14, name: "bounded-natural-projection", checksum: "v14:durable-projection-attempts",
+    apply(database) { database.exec(`
+      ALTER TABLE collaboration_natural_association_jobs ADD COLUMN projection_attempts INTEGER NOT NULL DEFAULT 0
+        CHECK(projection_attempts BETWEEN 0 AND 3);
     `); },
   },
 ];

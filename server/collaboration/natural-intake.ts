@@ -127,6 +127,7 @@ export class NaturalIntakeCoordinator {
     assertLedgerArmed(this.db);
     this.db.prepare("UPDATE collaboration_natural_intake_jobs SET status='failed', error_code='natural_intake_unavailable', claim_token=NULL, lease_until=NULL " +
       "WHERE status='running' AND lease_until <= ? AND attempts >= 3").run(now);
+    this.recoverFailureNotices(now);
     const job = this.db.prepare(
       "SELECT source_event_id, work_item_id, attempts, base_revision FROM collaboration_natural_intake_jobs " +
       "WHERE (status = 'pending' OR (status = 'running' AND lease_until <= ?)) AND attempts < 3 ORDER BY created_at, source_event_id LIMIT 1",
@@ -188,13 +189,32 @@ export class NaturalIntakeCoordinator {
       // Never retain raw provider errors or proposals, which can contain secrets or injected control text.
       this.db.exec("BEGIN IMMEDIATE");
       try {
-        const updated = this.db.prepare("UPDATE collaboration_natural_intake_jobs SET status=CASE WHEN attempts >= 3 THEN 'failed' ELSE 'pending' END, " +
+        this.db.prepare("UPDATE collaboration_natural_intake_jobs SET status=CASE WHEN attempts >= 3 THEN 'failed' ELSE 'pending' END, " +
           "error_code='natural_intake_unavailable', claim_token=NULL, lease_until=NULL WHERE source_event_id=? AND claim_token=?")
           .run(job.source_event_id, claimToken);
+        this.db.exec("COMMIT");
+      } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+      this.recoverFailureNotices(now);
+      return null;
+    } finally { if (timer) clearTimeout(timer); this.controllers.delete(controller); }
+  }
+
+  private recoverFailureNotices(now: number): void {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      assertLedgerArmed(this.db);
+      const jobs = this.db.prepare("SELECT j.source_event_id,j.work_item_id FROM collaboration_natural_intake_jobs j " +
+        "JOIN collaboration_work_items w ON w.id=j.work_item_id WHERE j.status='failed' AND w.status NOT IN ('cancelled','accepted') " +
+        "AND j.source_event_id=(SELECT e.source_event_id FROM collaboration_external_events e WHERE e.work_item_id=j.work_item_id ORDER BY e.received_at DESC,e.rowid DESC LIMIT 1) " +
+        "AND NOT EXISTS (SELECT 1 FROM collaboration_outbox o WHERE o.source_event_id='natural-intake-failed:'||j.source_event_id) " +
+        "ORDER BY j.created_at DESC LIMIT 20").all() as unknown as Array<{ source_event_id: string; work_item_id: string }>;
+      for (const job of jobs) {
         const latest = readLatestWorkItemSnapshot(this.db, job.work_item_id);
         const newer = this.db.prepare("SELECT 1 FROM collaboration_natural_intake_jobs WHERE work_item_id=? AND source_event_id<>? AND status IN ('pending','running')")
           .get(job.work_item_id, job.source_event_id);
-        if (updated.changes && job.attempts >= 2 && latest && !newer && latest.blockingAmbiguities.some(q => q.id === "natural-input-pending")) {
+        const sourceIsCurrent = this.db.prepare("SELECT source_event_id FROM collaboration_external_events WHERE work_item_id=? " +
+          "ORDER BY received_at DESC,rowid DESC LIMIT 1").get(job.work_item_id) as { source_event_id: string } | undefined;
+        if (latest && !newer && sourceIsCurrent?.source_event_id === job.source_event_id && latest.blockingAmbiguities.some(q => q.id === "natural-input-pending")) {
           enqueueInboundCard(this.db, { sourceEventId: `natural-intake-failed:${job.source_event_id}`, aggregateType: "plan",
             aggregateId: job.work_item_id, aggregateVersion: latest.revision,
             supersessionKey: `work-item:${job.work_item_id}:planning-status`, now,
@@ -203,9 +223,8 @@ export class NaturalIntakeCoordinator {
               questions: [{ id: "natural-rephrase", title: "补充说明", question: "请换一种说法描述现在的问题和你希望看到的结果。",
                 recommendedAnswer: "直接用平时沟通的方式说明即可，不需要编号或技术格式。" }] }) });
         }
-        this.db.exec("COMMIT");
-      } catch (error) { this.db.exec("ROLLBACK"); throw error; }
-      return null;
-    } finally { if (timer) clearTimeout(timer); this.controllers.delete(controller); }
+      }
+      this.db.exec("COMMIT");
+    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
   }
 }

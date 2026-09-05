@@ -6,7 +6,7 @@ import { readLatestWorkItemSnapshot } from "./snapshot.ts";
 import { redactSensitiveText } from "./sensitive-text.ts";
 import { assertLedgerArmed } from "./restore-guard.ts";
 import { enqueueInboundCard } from "./outbox.ts";
-import { renderPrimaryStatusCard } from "./message-renderer.ts";
+import { renderPrimaryStatusCard, renderClarificationCard } from "./message-renderer.ts";
 
 export interface NaturalAssociationRequest {
   sourceEventId: string;
@@ -52,8 +52,12 @@ export class NaturalAssociationCoordinator {
     if (this.stopped) return;
     assertLedgerArmed(this.db);
     this.db.prepare("UPDATE collaboration_natural_association_jobs SET status='failed', claim_token=NULL WHERE status='running' AND lease_until<=? AND attempts>=3").run(now);
+    this.db.prepare("UPDATE collaboration_natural_association_jobs SET status='failed', claim_token=NULL, lease_until=NULL " +
+      "WHERE status='routed' AND projection_attempts>=3 AND (lease_until IS NULL OR lease_until<=?)").run(now);
+    this.recoverProjectionNotices(now);
     const job = this.db.prepare("SELECT e.*, j.attempts, j.status FROM collaboration_natural_association_jobs j JOIN collaboration_external_events e ON e.id=j.event_id " +
-      "WHERE j.status IN ('pending','routed') OR (j.status='running' AND j.lease_until<=? AND j.attempts<3) ORDER BY e.received_at,e.rowid LIMIT 1").get(now) as Job | undefined;
+      "WHERE j.status='pending' OR (j.status='routed' AND (j.lease_until IS NULL OR j.lease_until<=?)) " +
+      "OR (j.status='running' AND j.lease_until<=? AND j.attempts<3) ORDER BY e.received_at,e.rowid LIMIT 1").get(now, now) as Job | undefined;
     if (!job) return;
     if (job.status === "routed" && job.work_item_id) { this.finishProjection(job, now); return; }
     const token = randomUUID();
@@ -131,8 +135,42 @@ export class NaturalAssociationCoordinator {
     } finally { clearTimeout(timer); this.controllers.delete(controller); }
   }
   private finishProjection(job: Job, now: number): void {
-    this.project(job.work_item_id!, job.source_event_id, now);
-    this.db.prepare("UPDATE collaboration_natural_association_jobs SET status='projected' WHERE event_id=? AND status='routed'").run(job.id);
+    const token = randomUUID();
+    const claimed = this.db.prepare("UPDATE collaboration_natural_association_jobs SET projection_attempts=projection_attempts+1,claim_token=?,lease_until=? " +
+      "WHERE event_id=? AND status='routed' AND projection_attempts<3 AND (lease_until IS NULL OR lease_until<=?)")
+      .run(token, now + 120_000, job.id, now);
+    if (!claimed.changes) return;
+    try {
+      this.project(job.work_item_id!, job.source_event_id, now);
+      this.db.prepare("UPDATE collaboration_natural_association_jobs SET status='projected',claim_token=NULL,lease_until=NULL " +
+        "WHERE event_id=? AND status='routed' AND claim_token=?").run(job.id, token);
+    } catch {
+      // Persist only the failure state, never provider exception text. The original event stays available.
+      this.db.prepare("UPDATE collaboration_natural_association_jobs SET status=CASE WHEN projection_attempts>=3 THEN 'failed' ELSE 'routed' END, " +
+        "claim_token=NULL,lease_until=NULL WHERE event_id=? AND status='routed' AND claim_token=?").run(job.id, token);
+      this.recoverProjectionNotices(now);
+    }
+  }
+  private recoverProjectionNotices(now: number): void {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      assertLedgerArmed(this.db);
+      const rows = this.db.prepare("SELECT e.source_event_id,e.work_item_id,w.version FROM collaboration_natural_association_jobs j " +
+        "JOIN collaboration_external_events e ON e.id=j.event_id JOIN collaboration_work_items w ON w.id=e.work_item_id " +
+        "WHERE j.status='failed' AND j.projection_attempts>=3 AND w.status NOT IN ('cancelled','accepted') " +
+        "AND NOT EXISTS (SELECT 1 FROM collaboration_natural_intake_jobs n WHERE n.source_event_id=e.source_event_id) " +
+        "AND NOT EXISTS (SELECT 1 FROM collaboration_outbox o WHERE o.source_event_id='natural-projection-failed:'||e.source_event_id) LIMIT 20")
+        .all() as unknown as Array<{ source_event_id: string; work_item_id: string; version: number }>;
+      for (const row of rows) enqueueInboundCard(this.db, {
+        sourceEventId: `natural-projection-failed:${row.source_event_id}`, aggregateType: "plan", aggregateId: row.work_item_id,
+        aggregateVersion: row.version, now,
+        card: renderClarificationCard({ workItemId: row.work_item_id,
+          snapshotRevision: readLatestWorkItemSnapshot(this.db, row.work_item_id)?.revision ?? 0,
+          contextSummary: "这条补充已保存，但后续整理中断，已停止自动重试，不能确认它已用于修改。请负责人检查服务恢复情况；原消息仍保留，无需重复发送。",
+          questions: [] }),
+      });
+      this.db.exec("COMMIT");
+    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
   }
   private questions(workItemId: string): string[] {
     const row = this.db.prepare("SELECT questions_json FROM collaboration_clarification_rounds WHERE work_item_id=? ORDER BY snapshot_revision DESC LIMIT 1")

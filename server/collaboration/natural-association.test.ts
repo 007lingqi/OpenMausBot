@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { startCollaborationService } from "./service.ts";
 import { policy, validProposal } from "./planner.test-fixtures.ts";
-import type { NaturalAssociationRequest } from "./natural-association.ts";
+import { NaturalAssociationCoordinator, type NaturalAssociationRequest } from "./natural-association.ts";
 const paths: string[] = [];
 afterEach(() => { for (const path of paths.splice(0)) rmSync(path, { force: true, recursive: true }); });
 function message(id: string, text: string) { return { sourceEventId: id, transportMessageId: id, conversationId: "group", addressedToBot: true,
@@ -21,6 +21,67 @@ function setup(associate: (request: NaturalAssociationRequest) => Promise<unknow
     db: new DatabaseSync(join(directory, "collaboration", "collaboration.sqlite")) };
 }
 describe("natural group association before requirement interpretation", () => {
+  it("bounds projection failures across restarts and durably reports the interruption once", async () => {
+    const associate = async (request: NaturalAssociationRequest) => ({ version: 1, sourceEventId: request.sourceEventId,
+      decision: "associate", workItemId: request.candidates[0].id, quote: request.text, confidence: "high" });
+    const h = setup(associate);
+    let calls = 0;
+    try {
+      h.service.ingestDingTalkMessage(message("first", "登录失败时说明原因"));
+      h.service.ingestDingTalkMessage(message("answer", "就是这个意思"));
+      for (let i = 0; i < 5; i++) {
+        const coordinator = new NaturalAssociationCoordinator(h.db, associate, () => { calls++; throw new Error("secret-provider-detail"); });
+        await expect(coordinator.processOne()).resolves.toBeUndefined();
+        coordinator.close();
+      }
+      expect(calls).toBe(3);
+      expect(h.db.prepare("SELECT status FROM collaboration_natural_association_jobs").get()).toEqual({ status: "failed" });
+      const notices = h.service.pendingOutbox().filter(row => row.sourceEventId === "natural-projection-failed:answer");
+      expect(notices).toHaveLength(1);
+      expect(JSON.stringify(notices[0].card)).toContain("这条补充已保存");
+      expect(JSON.stringify(notices)).not.toContain("secret-provider-detail");
+      expect(h.db.prepare("SELECT count(*) n FROM collaboration_work_item_events").get()).toEqual({ n: 2 });
+    } finally { h.service.close(); h.db.close(); }
+  });
+
+  it("resumes a routed projection without repeating the association or contribution", async () => {
+    let modelCalls = 0;
+    const associate = async (request: NaturalAssociationRequest) => { modelCalls++; return { version: 1, sourceEventId: request.sourceEventId,
+      decision: "associate", workItemId: request.candidates[0].id, quote: request.text, confidence: "high" }; };
+    const h = setup(associate);
+    try {
+      h.service.ingestDingTalkMessage(message("first", "登录失败时说明原因"));
+      h.service.ingestDingTalkMessage(message("answer", "就是这个意思"));
+      const broken = new NaturalAssociationCoordinator(h.db, associate, () => { throw new Error("temporary"); });
+      await broken.processOne(); broken.close();
+      const recovered = new NaturalAssociationCoordinator(h.db, associate, () => {});
+      await recovered.processOne(); await recovered.processOne(); recovered.close();
+      expect(modelCalls).toBe(1);
+      expect(h.db.prepare("SELECT status FROM collaboration_natural_association_jobs").get()).toEqual({ status: "projected" });
+      expect(h.db.prepare("SELECT count(*) n FROM collaboration_work_item_events").get()).toEqual({ n: 2 });
+    } finally { h.service.close(); h.db.close(); }
+  });
+
+  it("waits for a live projection lease and recovers the final crashed attempt without executing again", async () => {
+    const associate = async (request: NaturalAssociationRequest) => ({ version: 1, sourceEventId: request.sourceEventId,
+      decision: "associate", workItemId: request.candidates[0].id, quote: request.text, confidence: "high" });
+    const h = setup(associate);
+    let calls = 0;
+    try {
+      h.service.ingestDingTalkMessage(message("first", "登录失败时说明原因"));
+      h.service.ingestDingTalkMessage(message("answer", "就是这个意思"));
+      const coordinator = new NaturalAssociationCoordinator(h.db, associate, () => { calls++; throw new Error("temporary"); });
+      await coordinator.processOne(1000);
+      h.db.prepare("UPDATE collaboration_natural_association_jobs SET projection_attempts=3,claim_token='crashed',lease_until=2000").run();
+      await coordinator.processOne(1999);
+      expect(h.db.prepare("SELECT status FROM collaboration_natural_association_jobs").get()).toEqual({ status: "routed" });
+      await coordinator.processOne(2000); await coordinator.processOne(2001);
+      expect(calls).toBe(1);
+      expect(h.db.prepare("SELECT status FROM collaboration_natural_association_jobs").get()).toEqual({ status: "failed" });
+      expect(h.service.pendingOutbox().filter(row => row.sourceEventId === "natural-projection-failed:answer")).toHaveLength(1);
+      coordinator.close();
+    } finally { h.service.close(); h.db.close(); }
+  });
   it("links an ordinary contextual answer without WI or reply metadata and preserves the original contribution", async () => {
     let calls = 0;
     const h = setup(async request => { calls++; expect(request.candidates[0].questions).not.toHaveLength(0); return { version: 1, sourceEventId: request.sourceEventId,
