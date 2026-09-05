@@ -103,12 +103,15 @@ export interface RuntimeDingTalkSinks {
 }
 
 export interface RuntimeAttachmentIngestionPort {
+  persist(capabilities: readonly DingTalkPrivateResourceCapability[], now: number): void | Promise<void>;
   process(capabilities: readonly DingTalkPrivateResourceCapability[], now: number): Promise<unknown>;
 }
 
 export interface RuntimeAttachmentIngestionContext {
   databaseFile: string;
   dataDirectory: string;
+  signal: AbortSignal;
+  assertActive(): void;
   onEvidence(workItemId: string, evidence: AcceptedAttachmentEvidence): void;
 }
 
@@ -645,6 +648,8 @@ export class CollaborationHeadlessRuntime {
   private dispatcher: OutboxDispatcher | null = null;
   private maintenance: RuntimeMaintenancePort | null = null;
   private attachmentIngestion: RuntimeAttachmentIngestionPort | null = null;
+  private attachmentTask: Promise<void> | null = null;
+  private attachmentAbort = new AbortController();
   private stream: RuntimeStream | null = null;
   private dingTalkState: CollaborationRuntimeHealth["dingtalk"]["state"];
   private naturalIntakeTask: Promise<void> | null = null;
@@ -687,6 +692,7 @@ export class CollaborationHeadlessRuntime {
   }
 
   async start(): Promise<CollaborationRuntimeHealth> {
+    if (this.attachmentTask) throw new Error("collaboration_attachments_still_settling");
     if (this.lifecycleRecoveryTask) throw new Error("collaboration_recovery_still_settling");
     if (this.verificationCleanupUnconfirmed) throw new Error("verification_containment_unconfirmed");
     if (this.activeVerifications.size) throw new Error("collaboration_verification_still_settling");
@@ -695,6 +701,7 @@ export class CollaborationHeadlessRuntime {
     }
     this.currentState = "starting";
     this.verificationAbort = new AbortController();
+    this.attachmentAbort = new AbortController();
     this.queuedVerifications.clear();
     this.reason = null;
     this.logger.write({ event: "collaboration.runtime.starting", state: this.currentState });
@@ -748,10 +755,17 @@ export class CollaborationHeadlessRuntime {
         ? this.options.maintenanceFactory({ database: this.database, dataDirectory: this.options.dataDirectory })
         : (this.options.maintenance ?? null);
       if (this.options.attachmentIngestionFactory) {
+        const database = this.database, lease = this.lease, signal = this.attachmentAbort.signal;
+        const assertActive = () => {
+          if (signal.aborted || this.database !== database || this.currentState !== "running" || this.reason) throw new Error("attachment_ingestion_inactive");
+          assertCurrentInstanceLease(database, lease, this.clock.now());
+        };
         this.attachmentIngestion = this.options.attachmentIngestionFactory({
           databaseFile: join(this.options.dataDirectory, "collaboration", "collaboration.sqlite"),
           dataDirectory: this.options.dataDirectory,
+          signal, assertActive,
           onEvidence: (workItemId, evidence) => {
+            assertActive();
             this.service!.observeAttachmentEvidence(workItemId, evidence, this.clock.now());
             this.syncMetaBundleBestEffort(workItemId, true);
             if (this.options.autoExecuteReady) this.scheduleReadyExecution(workItemId);
@@ -1196,6 +1210,7 @@ export class CollaborationHeadlessRuntime {
   private async performStop(): Promise<CollaborationRuntimeHealth> {
     const deadline = Date.now() + this.shutdownTimeoutMs;
     this.currentState = "draining";
+    this.attachmentAbort.abort();
     this.verificationAbort.abort();
     this.logger.write({ event: "collaboration.runtime.draining", state: this.currentState });
     let releaseLease = false;
@@ -1209,6 +1224,10 @@ export class CollaborationHeadlessRuntime {
       }
       releaseLease = await this.interruptAndSettleRuns(Math.max(1, deadline - Date.now()));
       if (!releaseLease) this.reason = "shutdown_containment_unverified";
+      if (this.attachmentTask && !(await waitBounded(this.attachmentTask, Math.max(1, deadline - Date.now())))) {
+        releaseLease = false;
+        this.reason = "shutdown_attachments_unsettled";
+      }
       if (!(await waitBounded(Promise.allSettled([...this.activeVerifications]), Math.max(1, deadline - Date.now())))) {
         releaseLease = false;
         this.reason = "shutdown_verification_unsettled";
@@ -1806,7 +1825,22 @@ export class CollaborationHeadlessRuntime {
   ): Promise<void> {
     this.assertOperational();
     if (!this.attachmentIngestion) throw new Error("dingtalk_attachment_ingestion_not_configured");
-    await this.attachmentIngestion.process(capabilities, this.clock.now());
+    const signal = this.attachmentAbort.signal;
+    await this.attachmentIngestion.persist(capabilities, this.clock.now());
+    signal.throwIfAborted();
+    this.assertOperational();
+    // The maintenance loop starts downloads, never the Stream ACK path.
+  }
+
+  private startAttachmentProcessing(): void {
+    if (this.attachmentTask || !this.attachmentIngestion || this.currentState !== "running" || this.reason) return;
+    const ingestion = this.attachmentIngestion, signal = this.attachmentAbort.signal;
+    this.attachmentTask = Promise.resolve().then(async () => {
+      signal.throwIfAborted();
+      await ingestion.process([], this.clock.now());
+    }).catch(() => {
+      if (!signal.aborted) this.logger.write({ event: "collaboration.attachment.processing_failed", code: "attachment_processing_failed" });
+    }).finally(() => { this.attachmentTask = null; });
   }
 
   private async probeDingTalk(): Promise<void> {
@@ -1889,6 +1923,7 @@ export class CollaborationHeadlessRuntime {
       this.lease = this.leaseCoordinator!.renew(this.lease!, now, this.leaseTtlMs);
     } catch {
       this.reason = "lease_failed";
+      this.attachmentAbort.abort();
       this.currentState = "degraded";
       this.lease = null;
       return { dispatched: null, maintained: false };
@@ -1910,7 +1945,7 @@ export class CollaborationHeadlessRuntime {
       maintained = true;
     }
     if (serviceReady && this.attachmentIngestion) {
-      await this.attachmentIngestion.process([], now);
+      this.startAttachmentProcessing();
       maintained = true;
     }
     if (serviceReady) this.retryDirtyMetaBundles();
@@ -2039,6 +2074,7 @@ export class CollaborationHeadlessRuntime {
   }
 
   private async closeResources(releaseLease = true): Promise<void> {
+    this.attachmentAbort.abort();
     this.verificationAbort.abort();
     if (releaseLease && this.leaseCoordinator && this.lease) {
       try {

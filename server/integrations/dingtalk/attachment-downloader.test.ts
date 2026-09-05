@@ -17,6 +17,62 @@ function safeResult(value: DingTalkAttachmentDownloadResult): string {
 }
 
 describe("DingTalk attachment downloader", () => {
+  it.each(["token-fetch", "token-body", "resolve-fetch", "resolve-body", "file-fetch", "file-body"])("bounds total download time at %s even when the transport ignores abort", async (stage) => {
+    let cancelled = false;
+    const body = () => new ReadableStream<Uint8Array>({ cancel() { cancelled = true; return new Promise(() => {}); } });
+    const calls: string[] = [];
+    const downloader = new FetchDingTalkAttachmentDownloader(credentials(), async (url) => {
+      const step = String(url) === TOKEN_URL ? "token" : String(url) === RESOLVE_URL ? "resolve" : "file";
+      calls.push(step);
+      if (stage === `${step}-fetch`) return new Promise(() => {});
+      if (stage === `${step}-body`) return new Response(body());
+      return new Response(step === "token" ? JSON.stringify({ accessToken: "token", expireIn: 7200 })
+        : step === "resolve" ? JSON.stringify({ downloadUrl: "https://files.dingtalk.com/file" }) : "ok");
+    }, Date.now, { timeoutMs: 20 });
+    const result = await Promise.race([downloader.download({ capabilityRef: "ref", downloadCode: "private" }),
+      new Promise(resolve => setTimeout(() => resolve("hung"), 500))]);
+    expect(result).toEqual({ ok: false, kind: "retryable", code: "dingtalk_attachment_timeout" });
+    expect(calls.at(-1)).toBe(stage.split("-")[0]);
+    if (stage.endsWith("body")) expect(cancelled).toBe(true);
+  });
+
+  it("discards late token responses without caching or advancing a cancelled request", async () => {
+    let release!: (value: Response) => void;
+    let calls = 0;
+    let cancelled = false;
+    const controller = new AbortController();
+    const downloader = new FetchDingTalkAttachmentDownloader(credentials(), async () => {
+      calls++;
+      if (calls === 1) return new Promise(resolve => { release = resolve; });
+      return new Response("", { status: 503 });
+    });
+    const pending = downloader.download({ capabilityRef: "ref", downloadCode: "private" }, controller.signal);
+    controller.abort();
+    await pending;
+    release(new Response(new ReadableStream({
+      start(c) { c.enqueue(new TextEncoder().encode(JSON.stringify({ accessToken: "late-token", expireIn: 7200 }))); },
+      cancel() { cancelled = true; },
+    })));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(cancelled).toBe(true);
+    expect(calls).toBe(1);
+    expect(await downloader.download({ capabilityRef: "ref", downloadCode: "private" })).toMatchObject({ code: "dingtalk_attachment_token_http" });
+    expect(calls).toBe(2);
+  });
+
+  it("cancels a hanging token request without leaking errors or continuing to resolve a file", async () => {
+    const controller = new AbortController();
+    let signal: AbortSignal | undefined;
+    let calls = 0;
+    const downloader = new FetchDingTalkAttachmentDownloader(credentials(), async (_url, init) => {
+      calls++; signal = init?.signal ?? undefined; return new Promise(() => {});
+    });
+    const pending = downloader.download({ capabilityRef: "ref", downloadCode: "private-code" }, controller.signal);
+    controller.abort();
+    expect(await Promise.race([pending, new Promise(resolve => setTimeout(() => resolve("hung"), 50))])).toEqual({ ok: false, kind: "retryable", code: "dingtalk_attachment_cancelled" });
+    expect(signal?.aborted).toBe(true);
+    expect(calls).toBe(1);
+  });
   it("resolves and streams an attachment while caching the access token", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     let fileNumber = 0;

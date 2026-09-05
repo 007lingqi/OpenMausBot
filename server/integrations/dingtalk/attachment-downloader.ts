@@ -77,13 +77,36 @@ function businessRejected(value: Record<string, unknown>): boolean {
   return value.code !== 0 && value.code !== "0";
 }
 
-async function readBounded(response: Response, maximum: number): Promise<BoundedReadResult> {
+function cancelBody(response: Response): void {
+  void response.body?.cancel().catch(() => {});
+}
+
+// Bound the caller even for transports which do not implement AbortSignal.
+function abortable<T>(operation: Promise<T>, signal: AbortSignal, discard?: (value: T) => void): Promise<T> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const abort = () => { settled = true; reject(new Error("dingtalk_attachment_aborted")); };
+    if (signal.aborted) abort();
+    else signal.addEventListener("abort", abort, { once: true });
+    operation.then(value => {
+      signal.removeEventListener("abort", abort);
+      if (settled) { discard?.(value); return; }
+      settled = true;
+      resolve(value);
+    }, error => {
+      signal.removeEventListener("abort", abort);
+      if (!settled) { settled = true; reject(error); }
+    });
+  });
+}
+
+async function readBounded(response: Response, maximum: number, signal: AbortSignal): Promise<BoundedReadResult> {
   const contentLength = response.headers.get("content-length");
   if (contentLength !== null) {
-    if (!/^\d+$/u.test(contentLength)) return { ok: false, oversized: false };
+    if (!/^\d+$/u.test(contentLength)) { cancelBody(response); return { ok: false, oversized: false }; }
     const announced = Number(contentLength);
-    if (!Number.isSafeInteger(announced)) return { ok: false, oversized: false };
-    if (announced > maximum) return { ok: false, oversized: true };
+    if (!Number.isSafeInteger(announced)) { cancelBody(response); return { ok: false, oversized: false }; }
+    if (announced > maximum) { cancelBody(response); return { ok: false, oversized: true }; }
   }
 
   if (!response.body) return { ok: true, bytes: new Uint8Array() };
@@ -93,15 +116,17 @@ async function readBounded(response: Response, maximum: number): Promise<Bounded
   for (;;) {
     let chunk: { done: boolean; value?: Uint8Array };
     try {
-      chunk = await reader.read();
+      signal.throwIfAborted();
+      chunk = await abortable(reader.read(), signal);
     } catch {
+      void reader.cancel().catch(() => {});
       return { ok: false, oversized: false };
     }
     if (chunk.done) break;
-    if (!chunk.value) return { ok: false, oversized: false };
+    if (!chunk.value) { void reader.cancel().catch(() => {}); return { ok: false, oversized: false }; }
     total += chunk.value.byteLength;
     if (total > maximum) {
-      await reader.cancel().catch(() => {});
+      void reader.cancel().catch(() => {});
       return { ok: false, oversized: true };
     }
     chunks.push(chunk.value);
@@ -109,8 +134,8 @@ async function readBounded(response: Response, maximum: number): Promise<Bounded
   return { ok: true, bytes: Buffer.concat(chunks, total) };
 }
 
-async function responseRecord(response: Response): Promise<Record<string, unknown> | null> {
-  const bounded = await readBounded(response, MAX_JSON_BYTES);
+async function responseRecord(response: Response, signal: AbortSignal): Promise<Record<string, unknown> | null> {
+  const bounded = await readBounded(response, MAX_JSON_BYTES, signal);
   if (!bounded.ok) return null;
   try {
     return record(JSON.parse(Buffer.from(bounded.bytes).toString("utf8")) as unknown);
@@ -153,15 +178,42 @@ export class FetchDingTalkAttachmentDownloader {
   private readonly credentials: DingTalkCredentialProvider;
   private readonly fetcher: FetchLike;
   private readonly now: () => number;
+  private readonly timeoutMs: number;
   private cached: { accessToken: string; expiresAt: number; clientId: string } | null = null;
 
-  constructor(credentials: DingTalkCredentialProvider, fetcher: FetchLike = fetch, now: () => number = Date.now) {
+  constructor(credentials: DingTalkCredentialProvider, fetcher: FetchLike = fetch, now: () => number = Date.now, options: { timeoutMs?: number } = {}) {
     this.credentials = credentials;
     this.fetcher = fetcher;
     this.now = now;
+    this.timeoutMs = options.timeoutMs ?? 15_000;
+    if (!Number.isSafeInteger(this.timeoutMs) || this.timeoutMs < 1 || this.timeoutMs > 120_000) throw new Error("dingtalk_attachment_timeout_invalid");
   }
 
-  async download(capability: DingTalkPrivateResourceCapability): Promise<DingTalkAttachmentDownloadResult> {
+  async download(capability: DingTalkPrivateResourceCapability, signal?: AbortSignal): Promise<DingTalkAttachmentDownloadResult> {
+    const controller = new AbortController();
+    let code = "dingtalk_attachment_cancelled";
+    const abort = () => controller.abort();
+    if (signal?.aborted) abort();
+    else signal?.addEventListener("abort", abort, { once: true });
+    const timer = setTimeout(() => { if (!controller.signal.aborted) { code = "dingtalk_attachment_timeout"; controller.abort(); } }, this.timeoutMs);
+    try {
+      const result = await this.downloadActive(capability, controller.signal);
+      return controller.signal.aborted ? failure("retryable", code) : result;
+    } catch {
+      return failure("retryable", controller.signal.aborted ? code : "dingtalk_attachment_download_transport");
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+    }
+  }
+
+  private request(input: string | URL, init: RequestInit, signal: AbortSignal): Promise<Response> {
+    signal.throwIfAborted();
+    return abortable(this.fetcher(input, { ...init, signal }), signal, cancelBody);
+  }
+
+  private async downloadActive(capability: DingTalkPrivateResourceCapability, signal: AbortSignal): Promise<DingTalkAttachmentDownloadResult> {
+    signal.throwIfAborted();
     const downloadCode = exactOpaque(capability.downloadCode, 8_192);
     if (!downloadCode) return failure("permanent", "dingtalk_attachment_capability_invalid");
 
@@ -175,12 +227,13 @@ export class FetchDingTalkAttachmentDownloader {
     const robotCode = exactOpaque(capability.robotCode ?? credentials.clientId, 512);
     if (!robotCode) return failure("permanent", "dingtalk_attachment_capability_invalid");
 
-    const token = await this.accessToken(credentials);
+    const token = await this.accessToken(credentials, signal);
+    signal.throwIfAborted();
     if (!token.ok) return token;
 
     let resolveResponse: Response;
     try {
-      resolveResponse = await this.fetcher(RESOLVE_DOWNLOAD_URL, {
+      resolveResponse = await this.request(RESOLVE_DOWNLOAD_URL, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -188,14 +241,16 @@ export class FetchDingTalkAttachmentDownloader {
         },
         body: JSON.stringify({ downloadCode, robotCode }),
         redirect: "error",
-      });
+      }, signal);
     } catch {
       return failure("retryable", "dingtalk_attachment_resolve_transport");
     }
     if (!resolveResponse.ok) {
+      cancelBody(resolveResponse);
       return failure(retryKind(resolveResponse.status), "dingtalk_attachment_resolve_http", resolveResponse.status);
     }
-    const resolved = await responseRecord(resolveResponse);
+    const resolved = await responseRecord(resolveResponse, signal);
+    signal.throwIfAborted();
     if (!resolved) return failure("retryable", "dingtalk_attachment_resolve_response_invalid");
     if (businessRejected(resolved)) return failure("permanent", "dingtalk_attachment_resolve_rejected");
     const downloadUrl = safeDownloadUrl(resolved.downloadUrl);
@@ -203,15 +258,17 @@ export class FetchDingTalkAttachmentDownloader {
 
     let contentResponse: Response;
     try {
-      contentResponse = await this.fetcher(downloadUrl, { method: "GET", redirect: "error" });
+      contentResponse = await this.request(downloadUrl, { method: "GET", redirect: "error" }, signal);
     } catch {
       return failure("retryable", "dingtalk_attachment_download_transport");
     }
     if (!contentResponse.ok) {
+      cancelBody(contentResponse);
       return failure(retryKind(contentResponse.status), "dingtalk_attachment_download_http", contentResponse.status);
     }
     const announced = contentResponse.headers.get("content-length");
-    const content = await readBounded(contentResponse, MAX_DINGTALK_ATTACHMENT_BYTES);
+    const content = await readBounded(contentResponse, MAX_DINGTALK_ATTACHMENT_BYTES, signal);
+    signal.throwIfAborted();
     if (!content.ok) {
       return failure(
         content.oversized ? "permanent" : "retryable",
@@ -231,7 +288,8 @@ export class FetchDingTalkAttachmentDownloader {
     return result;
   }
 
-  private async accessToken(credentials: DingTalkCredentials): Promise<AccessTokenResult> {
+  private async accessToken(credentials: DingTalkCredentials, signal: AbortSignal): Promise<AccessTokenResult> {
+    signal.throwIfAborted();
     if (
       this.cached &&
       this.cached.clientId === credentials.clientId &&
@@ -240,19 +298,21 @@ export class FetchDingTalkAttachmentDownloader {
 
     let response: Response;
     try {
-      response = await this.fetcher(ACCESS_TOKEN_URL, {
+      response = await this.request(ACCESS_TOKEN_URL, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ appKey: credentials.clientId, appSecret: credentials.clientSecret }),
         redirect: "error",
-      });
+      }, signal);
     } catch {
       return failure("retryable", "dingtalk_attachment_token_transport");
     }
     if (!response.ok) {
+      cancelBody(response);
       return failure(retryKind(response.status), "dingtalk_attachment_token_http", response.status);
     }
-    const result = await responseRecord(response);
+    const result = await responseRecord(response, signal);
+    signal.throwIfAborted();
     if (!result) return failure("retryable", "dingtalk_attachment_token_response_invalid");
     if (businessRejected(result)) return failure("permanent", "dingtalk_attachment_token_rejected");
     const accessToken = exactOpaque(typeof result.accessToken === "string" ? result.accessToken : undefined, 8_192);

@@ -46,7 +46,7 @@ const UNSUPPORTED_EXTRACTION_ERRORS = new Set([
 ]);
 
 interface AttachmentDownloader {
-  download(capability: DingTalkPrivateResourceCapability): Promise<DingTalkAttachmentDownloadResult>;
+  download(capability: DingTalkPrivateResourceCapability, signal?: AbortSignal): Promise<DingTalkAttachmentDownloadResult>;
 }
 
 export interface AttachmentEvidenceSource {
@@ -67,6 +67,8 @@ export interface AttachmentEvidenceNotification {
 }
 
 export interface AttachmentIngestionCoordinatorInput {
+  signal?: AbortSignal;
+  assertActive?: () => void;
   databaseFile: string;
   dataDirectory: string;
   vault: DingTalkAttachmentCapabilityVault;
@@ -359,6 +361,7 @@ function workItemContext(
 }
 
 function commitSuccessfulExtraction(input: {
+  assertActive: () => void;
   database: DatabaseSync;
   attachment: StoredAttachment;
   attempt: number;
@@ -372,10 +375,12 @@ function commitSuccessfulExtraction(input: {
   const context = workItemContext(input.database, input.attachment);
   input.database.exec("BEGIN IMMEDIATE");
   try {
-    input.database.prepare(
+    input.assertActive();
+    const claimed = input.database.prepare(
       "UPDATE collaboration_attachments SET ingest_state = 'extracting', content_hash = ?, managed_storage_key = ?, " +
         "error_code = NULL, updated_at = ? WHERE id = ? AND ingest_state = 'downloading' AND attempt_count = ?",
     ).run(input.contentHash, input.storageKey, input.now, input.attachment.id, input.attempt);
+    if (claimed.changes !== 1) throw new Error("attachment_claim_superseded");
     input.database.prepare(
       "INSERT INTO collaboration_attachment_extractions " +
         "(id, attachment_id, attempt, extractor, extractor_version, source_hash, status, extracted_characters, " +
@@ -436,6 +441,7 @@ function commitSuccessfulExtraction(input: {
 }
 
 function commitExtractionFailure(input: {
+  assertActive: () => void;
   database: DatabaseSync;
   attachment: StoredAttachment;
   attempt: number;
@@ -448,6 +454,9 @@ function commitExtractionFailure(input: {
 }): void {
   input.database.exec("BEGIN IMMEDIATE");
   try {
+    input.assertActive();
+    if (!input.database.prepare("SELECT 1 FROM collaboration_attachments WHERE id=? AND ingest_state='downloading' AND attempt_count=?")
+      .get(input.attachment.id, input.attempt)) throw new Error("attachment_claim_superseded");
     input.database.prepare(
       "INSERT INTO collaboration_attachment_extractions " +
         "(id, attachment_id, attempt, extractor, extractor_version, source_hash, status, extracted_characters, " +
@@ -606,6 +615,8 @@ export function readAttachmentEvidenceNotification(database: DatabaseSync, attac
 }
 
 export class AttachmentIngestionCoordinator {
+  private readonly signal: AbortSignal | undefined;
+  private readonly activeGuard: (() => void) | undefined;
   private readonly databaseFile: string;
   private readonly attachmentDirectory: string;
   private readonly vault: DingTalkAttachmentCapabilityVault;
@@ -615,6 +626,8 @@ export class AttachmentIngestionCoordinator {
   private readonly projectionOwner = randomUUID();
 
   constructor(input: AttachmentIngestionCoordinatorInput) {
+    this.signal = input.signal;
+    this.activeGuard = input.assertActive;
     this.databaseFile = input.databaseFile;
     this.vault = input.vault;
     this.downloader = input.downloader;
@@ -630,6 +643,19 @@ export class AttachmentIngestionCoordinator {
     }
   }
 
+  private assertActive(): void {
+    if (this.signal?.aborted) throw new Error("attachment_ingestion_inactive");
+    this.activeGuard?.();
+  }
+
+  persist(privateCapabilities: readonly DingTalkPrivateResourceCapability[], now: number): void {
+    this.assertActive();
+    if (!Number.isSafeInteger(now) || now < 0) throw new Error("attachment_timestamp_invalid");
+    const database = new DatabaseSync(this.databaseFile);
+    try { this.persistActiveCapabilities(database, privateCapabilities); }
+    finally { database.close(); }
+  }
+
   async process(
     privateCapabilities: readonly DingTalkPrivateResourceCapability[],
     now: number,
@@ -639,8 +665,10 @@ export class AttachmentIngestionCoordinator {
     database.exec("PRAGMA foreign_keys = ON");
     database.exec("PRAGMA busy_timeout = 5000");
     try {
+      this.assertActive();
       this.persistActiveCapabilities(database, privateCapabilities);
       await this.projectUnprojectedEvidence(database, now);
+      this.assertActive();
       const pending = new AttachmentStore(database).readPending({ now, limit: PROCESS_LIMIT });
       const stale = staleAttachments(database, now);
       const candidates = [...stale, ...pending]
@@ -649,12 +677,14 @@ export class AttachmentIngestionCoordinator {
       const counts = emptyCounts();
       let processed = 0;
       for (const attachment of candidates) {
+        this.assertActive();
         const attempt = claim(database, attachment, now);
         if (attempt === null) continue;
         processed += 1;
         await this.processClaimed(database, attachment, attempt, now, counts);
       }
       await this.projectUnprojectedEvidence(database, now);
+      this.assertActive();
       return { processed, ...counts };
     } finally {
       database.close();
@@ -694,6 +724,7 @@ export class AttachmentIngestionCoordinator {
         "ORDER BY updated_at, created_at, external_event_id, ordinal LIMIT ?",
     ).all(PROCESS_LIMIT) as unknown as ProjectionRow[];
     for (const row of rows) {
+      this.assertActive();
       const claimed = database.prepare(
         "UPDATE collaboration_attachments SET evidence_projection_owner = ?, " +
           "evidence_projection_expires_at = ? WHERE id = ? AND ingest_state = 'ready' " +
@@ -702,13 +733,16 @@ export class AttachmentIngestionCoordinator {
       if (claimed.changes !== 1) continue;
       const notification = readAttachmentEvidenceNotification(database, row.id);
       try {
+        this.assertActive();
         await this.onEvidence(notification);
+        this.assertActive();
         database.prepare(
           "UPDATE collaboration_attachments SET evidence_projected_at = ?, evidence_projection_owner = NULL, " +
             "evidence_projection_expires_at = NULL WHERE id = ? AND ingest_state = 'ready' " +
             "AND evidence_projected_at IS NULL AND evidence_projection_owner = ?",
         ).run(now, row.id, this.projectionOwner);
       } catch (error) {
+        this.assertActive();
         database.prepare(
           "UPDATE collaboration_attachments SET evidence_projection_owner = NULL, evidence_projection_expires_at = NULL " +
             "WHERE id = ? AND evidence_projected_at IS NULL AND evidence_projection_owner = ?",
@@ -725,6 +759,12 @@ export class AttachmentIngestionCoordinator {
     now: number,
     counts: TerminalCounts,
   ): Promise<void> {
+    const assertClaim = () => {
+      this.assertActive();
+      if (!database.prepare("SELECT 1 FROM collaboration_attachments WHERE id=? AND ingest_state='downloading' AND attempt_count=?")
+        .get(attachment.id, attempt)) throw new Error("attachment_claim_superseded");
+    };
+    assertClaim();
     let capability: DingTalkPrivateResourceCapability;
     try {
       capability = this.vault.read(attachment.capabilityRef);
@@ -744,7 +784,8 @@ export class AttachmentIngestionCoordinator {
       return;
     }
 
-    const downloaded = await this.downloader.download(capability);
+    const downloaded = await this.downloader.download(capability, this.signal);
+    assertClaim();
     if (!downloaded.ok) {
       const state = setDownloadFailure(database, attachment.id, attempt, now, downloaded);
       counts[state] += 1;
@@ -781,9 +822,11 @@ export class AttachmentIngestionCoordinator {
     try {
       extraction = await this.extract({ bytes: downloaded.bytes, mediaType, displayName });
     } catch (error) {
+      assertClaim();
       const errorCode = extractionErrorCode(error);
       const unsupported = UNSUPPORTED_EXTRACTION_ERRORS.has(errorCode);
       commitExtractionFailure({
+        assertActive: () => this.assertActive(),
         database,
         attachment,
         attempt,
@@ -799,7 +842,9 @@ export class AttachmentIngestionCoordinator {
       return;
     }
 
+    assertClaim();
     commitSuccessfulExtraction({
+      assertActive: () => this.assertActive(),
       database,
       attachment,
       attempt,

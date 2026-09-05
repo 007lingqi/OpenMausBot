@@ -1,5 +1,13 @@
 # Meta 协作验证记录
 
+## 2026-09-06 附件非阻塞生命周期（最新）
+
+- 下载器先行测试：`pnpm vitest run server/integrations/dingtalk/attachment-downloader.test.ts`，8 失败 / 13 通过（15722 exit 1）。六个网络/流阶段无超时、取消无法结束、迟到 token 测试挂起均被复现，未以测试超时冒充成功。
+- 实现后首次三文件 48 通过 / 1 失败（83718 exit 1）：原同步测试期待第二次 process，但后台首批还没结算；入站进一步改为仅持久化，明确由维护启动，测试等待批次结束后验证第二次维护。52 项/typecheck 通过（87757 exit 0）；增加停止/失租/退出未收束后 54 项/typecheck 通过（16278 exit 0）。
+- 最终相关链：`pnpm vitest run server/collaboration server/integrations/dingtalk server/collaboration-headless.test.ts && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-attachment-background-typecheck && git diff --check`（36561 exit 0），71 文件 / 586 项，03:51:49 开始、Vitest 67.25 秒。覆盖入站、关联、Owner、Ledger、Outbox、回复格式和当前附件生产装配；网络输入为受控夹具。
+- 最后仅增加挂起附件时实际 Outbox deliver 断言：`pnpm vitest run server/collaboration/operations/runtime.test.ts && pnpm typecheck && git diff --check`，20 项通过（72400 exit 0）。其他源码未再变化；相关整组包含新事务内 fence，最后测试补充有独立终态证据。本批未重新执行完整 pnpm test；上一批完整绿灯不能自动当作本版本全仓证明。
+- 明确未验收：真实 token/下载/群回复组合、真实 Office 解析容器及进程终止、线上文档和模型、主机重启、六类真实试点。可重试附件失败目前仍按既有退避再次处理，三次停止及用户反馈尚需实现。取消只确保等待有界和旧结果拒绝，不证明忽略信号的外部工作已停止。
+
 ## 2026-09-06 同轮输入夹具与全仓回归恢复（最新）
 
 - 原源码完整 `pnpm vitest run server/index.test.ts server/steer-e2e.test.ts` 通过（5769 exit 0）：2 文件 / 90 项，03:22:11 开始、37.89 秒。这不证明历史 20 秒超时的原因，只排除稳定必现的两文件原顺序失败。

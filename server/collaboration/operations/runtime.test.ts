@@ -24,6 +24,7 @@ import {
   enqueuePendingOwnerDecisionCards,
   type RuntimeStream,
   type RuntimeDingTalkSinks,
+  type RuntimeAttachmentIngestionContext,
 } from "./runtime.ts";
 
 const scratch: string[] = [];
@@ -554,10 +555,11 @@ describe("production-isomorphic collaboration runtime", () => {
   it("routes attachment capabilities to durable ingestion and resumes pending work during maintenance", async () => {
     let sinks: RuntimeDingTalkSinks | undefined;
     const process = vi.fn(async () => undefined);
+    const persist = vi.fn(() => undefined);
     const runtime = new CollaborationHeadlessRuntime({
       dataDirectory: temporaryDirectory(),
       platform: "linux",
-      attachmentIngestionFactory: () => ({ process }),
+      attachmentIngestionFactory: () => ({ persist, process }),
       dingTalk: {
         enabled: true,
         credentials: { load: () => ({ clientId: "id", clientSecret: "secret" }) },
@@ -574,12 +576,104 @@ describe("production-isomorphic collaboration runtime", () => {
     await runtime.start();
     if (!sinks?.ingestAttachments) throw new Error("Expected attachment sink");
     await sinks.ingestAttachments([{ capabilityRef: "a".repeat(64), downloadCode: "private-code" }]);
-    expect(process).toHaveBeenNthCalledWith(1, [
+    expect(persist).toHaveBeenNthCalledWith(1, [
       { capabilityRef: "a".repeat(64), downloadCode: "private-code" },
     ], expect.any(Number));
+    expect(process).not.toHaveBeenCalled();
+    await runtime.drainOnce();
+    await new Promise(resolve => setTimeout(resolve, 0));
     await runtime.drainOnce();
     expect(process).toHaveBeenNthCalledWith(2, [], expect.any(Number));
     await runtime.stop();
+  });
+
+  it("acknowledges durable capabilities and keeps renewing while one background attachment batch waits", async () => {
+    let sinks!: RuntimeDingTalkSinks;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let context!: Parameters<NonNullable<ConstructorParameters<typeof CollaborationHeadlessRuntime>[0]["attachmentIngestionFactory"]>>[0];
+    const process = vi.fn(() => gate);
+    const persist = vi.fn(() => undefined);
+    const delivered: string[] = [];
+    let now = 1000;
+    const runtime = new CollaborationHeadlessRuntime({ dataDirectory: temporaryDirectory(), platform: "linux", clock: { now: () => now },
+      outboxDelivery: { async deliver(item) { delivered.push(item.id); return { outcome: "sent" }; } },
+      attachmentIngestionFactory(value) { context = value; return { persist, process }; },
+      dingTalk: { enabled: true, credentials: { load: () => ({ clientId: "id", clientSecret: "secret" }) },
+        createStream(_credentials, value) { sinks = value; return { start: async () => "connected", stop() {}, state: () => "connected" }; } },
+    });
+    await runtime.start();
+    try {
+      const intake = sinks.ingestAttachments!([{ capabilityRef: "a".repeat(64), downloadCode: "fixture-code" }]);
+      expect(await Promise.race([intake.then(() => true), new Promise(resolve => setTimeout(() => resolve(false), 50))])).toBe(true);
+      expect(persist).toHaveBeenCalledTimes(1);
+      expect(process).not.toHaveBeenCalled();
+      await runtime.drainOnce();
+      await vi.waitFor(() => expect(process).toHaveBeenCalledTimes(1));
+      for (let index = 0; index < 3; index++) { now += 20000; await runtime.drainOnce(); }
+      expect(runtime.ingestDingTalkMessage(message("while-downloading", now)).accepted).toBe(true);
+      expect((await runtime.drainOnce()).dispatched?.state).toBe("sent");
+      expect(delivered).toHaveLength(1);
+      expect(process).toHaveBeenCalledTimes(1);
+      expect(() => context.assertActive()).not.toThrow();
+      release();
+      await runtime.stop();
+      expect(context.signal.aborted).toBe(true);
+      expect(() => context.assertActive()).toThrow();
+    } finally { release(); await runtime.stop(); }
+  });
+
+  it.each(["stop", "lease-loss"])("rejects late attachment projection after %s and never reports unsettled processing as stopped safely", async (mode) => {
+    const dataDirectory = temporaryDirectory();
+    let context!: RuntimeAttachmentIngestionContext;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const process = vi.fn(() => gate);
+    const runtime = new CollaborationHeadlessRuntime({ dataDirectory, platform: "linux", shutdownTimeoutMs: 20,
+      clock: { now: () => 1000 },
+      attachmentIngestionFactory(value) { context = value; return { persist() {}, process }; },
+    });
+    await runtime.start();
+    try {
+      await runtime.drainOnce();
+      await vi.waitFor(() => expect(process).toHaveBeenCalledTimes(1));
+      if (mode === "lease-loss") {
+        const db = new DatabaseSync(context.databaseFile);
+        db.prepare("UPDATE collaboration_instance_lease SET owner_id='replacement',fencing_token=fencing_token+1").run();
+        db.close();
+        expect(() => context.assertActive()).toThrow();
+        await runtime.drainOnce();
+      }
+      const stopped = await runtime.stop();
+      expect(stopped.reason).toBe("shutdown_attachments_unsettled");
+      expect(context.signal.aborted).toBe(true);
+      expect(() => context.assertActive()).toThrow("attachment_ingestion_inactive");
+      expect(() => context.onEvidence("WI-late", {
+        attachmentId: "late", sourceEventId: "late", contentHash: "a".repeat(64),
+        displayName: "late.txt", format: "text", chunks: [], truncated: false, warnings: [],
+      })).toThrow("attachment_ingestion_inactive");
+      await expect(runtime.start()).rejects.toThrow("collaboration_attachments_still_settling");
+      const db = new DatabaseSync(context.databaseFile);
+      expect(db.prepare("SELECT expires_at FROM collaboration_instance_lease").get()).toEqual({ expires_at: 31000 });
+      db.close();
+      release();
+      await new Promise(resolve => setTimeout(resolve, 0));
+    } finally { release(); await runtime.stop(); }
+  });
+
+  it("does not acknowledge or start downloads when capability persistence fails", async () => {
+    let sinks!: RuntimeDingTalkSinks;
+    const process = vi.fn(async () => undefined);
+    const runtime = new CollaborationHeadlessRuntime({ dataDirectory: temporaryDirectory(), platform: "linux",
+      attachmentIngestionFactory: () => ({ persist() { throw new Error("fixture_storage_failed"); }, process }),
+      dingTalk: { enabled: true, credentials: { load: () => ({ clientId: "id", clientSecret: "secret" }) },
+        createStream(_credentials, value) { sinks = value; return { start: async () => "connected", stop() {}, state: () => "connected" }; } },
+    });
+    await runtime.start();
+    try {
+      await expect(sinks.ingestAttachments!([{ capabilityRef: "a".repeat(64), downloadCode: "fixture-code" }])).rejects.toThrow("fixture_storage_failed");
+      expect(process).not.toHaveBeenCalled();
+    } finally { await runtime.stop(); }
   });
 
   it("keeps restored ledgers in review and does not dispatch or maintain them", async () => {

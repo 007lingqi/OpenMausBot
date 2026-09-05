@@ -89,6 +89,63 @@ function row(databaseFile: string, ref = REF_A): Record<string, unknown> {
 }
 
 describe("AttachmentIngestionCoordinator", () => {
+  it.each(["download", "extract-success", "extract-failure"])("fences a superseded attempt after delayed %s without changing evidence or removing capabilities", async (stage) => {
+    const setup = context([resource()]);
+    const bytes = Buffer.from("delayed content");
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let waiting = false;
+    const onEvidence = vi.fn();
+    const coordinator = new AttachmentIngestionCoordinator({ ...setup, onEvidence,
+      downloader: { async download() {
+        if (stage === "download") { waiting = true; await gate; }
+        return { ok: true, bytes, sha256: hash(bytes), mediaType: "text/plain" };
+      } },
+      async extract(input) {
+        if (stage !== "download") { waiting = true; await gate; }
+        if (stage === "extract-failure") throw new Error("attachment_fixture_failure");
+        return extractAttachmentText(input);
+      },
+    });
+    const pending = coordinator.process([capability()], 1000);
+    const rejected = expect(pending).rejects.toThrow("attachment_claim_superseded");
+    await vi.waitFor(() => expect(waiting).toBe(true));
+    const db = new DatabaseSync(setup.databaseFile);
+    db.prepare("UPDATE collaboration_attachments SET attempt_count=attempt_count+1,updated_at=2000").run();
+    const before = row(setup.databaseFile);
+    release();
+    await rejected;
+    expect(row(setup.databaseFile)).toEqual(before);
+    expect(db.prepare("SELECT count(*) AS n FROM collaboration_attachment_extractions").get()).toEqual({ n: 0 });
+    expect(db.prepare("SELECT count(*) AS n FROM collaboration_work_item_evidence").get()).toEqual({ n: 0 });
+    expect(setup.vault.read(REF_A)).toEqual(capability());
+    expect(onEvidence).not.toHaveBeenCalled();
+    db.close();
+  });
+
+  it("persists a capability without downloading and refuses a late result after cancellation", async () => {
+    const setup = context([resource()]);
+    const controller = new AbortController();
+    let release!: (value: DingTalkAttachmentDownloadResult) => void;
+    const download = vi.fn(() => new Promise<DingTalkAttachmentDownloadResult>(resolve => { release = resolve; }));
+    const onEvidence = vi.fn();
+    const coordinator = new AttachmentIngestionCoordinator({ ...setup, signal: controller.signal, downloader: { download }, onEvidence });
+    coordinator.persist([capability()], 1000);
+    expect(download).not.toHaveBeenCalled();
+    expect(setup.vault.read(REF_A).downloadCode).toBe("private-download-code");
+    const pending = coordinator.process([], 1000);
+    const rejected = expect(pending).rejects.toThrow("attachment_ingestion_inactive");
+    await vi.waitFor(() => expect(download).toHaveBeenCalledTimes(1));
+    controller.abort();
+    const bytes = Buffer.from("late source");
+    release({ ok: true, bytes, sha256: hash(bytes), mediaType: "text/plain" });
+    await rejected;
+    expect(onEvidence).not.toHaveBeenCalled();
+    expect(row(setup.databaseFile).ingest_state).toBe("downloading");
+    const db = new DatabaseSync(setup.databaseFile);
+    expect(db.prepare("SELECT count(*) AS n FROM collaboration_attachment_extractions").get()).toEqual({ n: 0 });
+    db.close();
+  });
   it("does not attribute a configured document parser failure to bounded-text", async () => {
     const source = Buffer.from("fake document");
     const setup = context([resource({ name: "bug.pdf", mimeType: "application/pdf" })]);

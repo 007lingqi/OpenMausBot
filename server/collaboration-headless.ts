@@ -545,7 +545,7 @@ function productionRuntimeOptions(
     },
     ...(dingTalkEnabled
       ? {
-          attachmentIngestionFactory: ({ databaseFile, dataDirectory, onEvidence }) => {
+          attachmentIngestionFactory: ({ databaseFile, dataDirectory, onEvidence, signal, assertActive }) => {
             const credentials = credentialProvider.load();
             if (!credentials) throw new Error("dingtalk_credentials_missing");
             const vault = new DingTalkAttachmentCapabilityVault(
@@ -553,6 +553,7 @@ function productionRuntimeOptions(
               credentials.clientSecret,
             );
             return new AttachmentIngestionCoordinator({
+              signal, assertActive,
               databaseFile,
               dataDirectory,
               vault,
