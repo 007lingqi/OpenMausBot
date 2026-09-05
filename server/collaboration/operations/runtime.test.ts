@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { assertionReviewFixture } from "../assertion-review.test-fixtures.ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -277,12 +278,12 @@ describe("production-isomorphic collaboration runtime", () => {
       "INSERT INTO collaboration_candidate_reviews " +
         "(id,candidate_run_id,stage,attempt,status,agent_id,snapshot_revision,spec_hash,candidate_sha,verdict_json,created_at) " +
         "VALUES ('verifier-review-existing','run-existing','verifier',1,'passed','deterministic-verifier-v1',1,'spec-hash',?,?,2)",
-    ).run(resultSha, JSON.stringify({ contractSchemaVersion: 1 }));
+    ).run(resultSha, JSON.stringify(assertionReviewFixture(database, workItemId, "pilot").verifier));
     database.prepare(
       "INSERT INTO collaboration_candidate_reviews " +
         "(id,candidate_run_id,stage,attempt,status,agent_id,snapshot_revision,spec_hash,candidate_sha,verdict_json,created_at) " +
         "VALUES ('meta-review-existing','run-existing','meta',1,'passed','meta-acceptance-gate-v1',1,'spec-hash',?,?,2)",
-    ).run(resultSha, JSON.stringify({ contractSchemaVersion: 1, verifierAttempt: 1 }));
+    ).run(resultSha, JSON.stringify(assertionReviewFixture(database, workItemId, "pilot").meta));
     expect(enqueuePendingOwnerDecisionCards(database, "template-1", 1_000)).toBe(1);
     expect(enqueuePendingOwnerDecisionCards(database, "template-1", 2_000)).toBe(0);
     const row = database.prepare(

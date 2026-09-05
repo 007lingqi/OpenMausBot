@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
+import { assertionContractSchema, readAssertionReport, type AssertionContract, type AssertionResult } from "./acceptance-assertions.ts";
 
 import {
   type ContainmentPort,
@@ -14,6 +15,7 @@ export interface TargetCommandSpec {
   cwd?: string;
   timeoutMs: number;
   maxOutputBytes: number;
+  assertionContract?: AssertionContract;
 }
 
 export interface SandboxCommandAttestation {
@@ -67,6 +69,7 @@ export interface TestEvidence {
   state: "target_passed" | "failed" | "timeout" | "output_limit";
   containmentFingerprint: string;
   containmentBinding: ContainmentBinding;
+  assertions?: AssertionResult[];
 }
 
 export type CandidateQualityState =
@@ -95,6 +98,7 @@ function contained(root: string, candidate: string): boolean {
 }
 
 export function validateTargetCommandSpec(commandId: string, spec: TargetCommandSpec): void {
+  if (spec.assertionContract !== undefined && !assertionContractSchema.safeParse(spec.assertionContract).success) throw new Error("Target command assertion contract is invalid");
   if (!commandId.trim()) throw new Error("Target command ID is required");
   const executable = spec.argv[0].split(/[\\/]/u).at(-1)?.toLowerCase() ?? "";
   const args = spec.argv.slice(1).map((value) => value.toLowerCase());
@@ -114,6 +118,7 @@ function evidence(
   containmentFingerprint: string,
   containmentBinding: ContainmentBinding,
 ): TestEvidence {
+  const assertions = spec.assertionContract ? readAssertionReport(result.stdout.toString("utf8"), containmentBinding) : undefined;
   return {
     commandId,
     argv: [...spec.argv],
@@ -131,6 +136,7 @@ function evidence(
           : "failed",
     containmentFingerprint,
     containmentBinding,
+    ...(assertions ? { assertions } : {}),
   };
 }
 
@@ -169,7 +175,8 @@ export async function runTargetTests(input: {
       commandId,
       argv: spec.argv,
       cwd,
-      environment: input.environment,
+      environment: spec.assertionContract ? { ...input.environment,
+        OMB_ASSERTION_RUN_ID: containmentBinding.runId, OMB_ASSERTION_NONCE: containmentBinding.nonce } : input.environment,
       timeoutMs: spec.timeoutMs,
       maxOutputBytes: spec.maxOutputBytes,
       sandbox: { writableRoot: root, deniedPaths, network: "deny" },

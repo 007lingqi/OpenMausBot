@@ -15,11 +15,12 @@ import {
   type TestEvidence,
 } from "./quality-gate.ts";
 import { assertLedgerArmed } from "./restore-guard.ts";
+import { assertionCoverage, readAssertionReport, type CoverageCommand, type CoverageItem } from "./acceptance-assertions.ts";
 
 const VERIFIER_AGENT_ID = "deterministic-verifier-v1";
 const META_AGENT_ID = "meta-acceptance-gate-v1";
 export const CANDIDATE_VERIFICATION_MAX_ATTEMPTS = 3;
-const VERIFICATION_CONTRACT_SCHEMA_VERSION = 1 as const;
+const VERIFICATION_CONTRACT_SCHEMA_VERSION = 2 as const;
 const FULL_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
 const IN_FLIGHT = new WeakMap<DatabaseSync, Map<string, Promise<CandidateVerificationOutcome>>>();
 
@@ -79,13 +80,6 @@ export interface CandidateVerificationOptions {
 interface AcceptanceCondition {
   description: string;
   observation: string;
-}
-
-interface CoverageItem {
-  conditionIndex: number;
-  state: "passed" | "missing";
-  evidenceRefs: string[];
-  reason: string;
 }
 
 function strings(value: string): string[] | null {
@@ -154,6 +148,7 @@ function verificationContractHash(
                   cwd: command.cwd ?? null,
                   timeoutMs: command.timeoutMs,
                   maxOutputBytes: command.maxOutputBytes,
+                  assertionContract: command.assertionContract ?? null,
                 }
               : null,
           };
@@ -171,44 +166,21 @@ function gitState(worktreePath: string): { head: string; status: string } {
   return { head, status };
 }
 
-function commandMatchesObservation(commandId: string, spec: TargetCommandSpec, observation: string): boolean {
-  const normalized = observation.toLowerCase();
-  const argv = spec.argv.join(" ").toLowerCase();
-  const lastArgument = spec.argv.at(-1)?.toLowerCase() ?? "";
-  return normalized.includes(commandId.toLowerCase()) || normalized.includes(argv) ||
-    (lastArgument.length >= 4 && normalized.includes(lastArgument));
-}
-
 export function mapAcceptanceCoverage(input: {
   acceptanceConditions: readonly AcceptanceCondition[];
   commandIds: readonly string[];
   commands: Readonly<Record<string, TargetCommandSpec>>;
-  evidence: readonly Pick<TestEvidence, "commandId" | "state">[];
+  evidence: readonly Pick<TestEvidence, "commandId" | "state" | "assertions">[];
 }): CoverageItem[] {
-  const passed = new Set(input.evidence.filter((item) => item.state === "target_passed").map((item) => item.commandId));
-  return input.acceptanceConditions.map((condition, conditionIndex) => {
-    const matched = input.commandIds.filter((commandId) => {
-      const spec = input.commands[commandId];
-      return spec ? commandMatchesObservation(commandId, spec, condition.observation) : false;
-    });
-    const evidenceRefs = matched.filter((commandId) => passed.has(commandId));
-    const complete = matched.length > 0 && evidenceRefs.length === matched.length;
-    return {
-      conditionIndex,
-      state: complete ? "passed" : "missing",
-      evidenceRefs,
-      reason: matched.length === 0
-        ? "acceptance_observation_not_mapped_to_trusted_command"
-        : complete
-          ? "trusted_command_passed"
-          : "trusted_command_not_passed",
-    };
-  });
+  return assertionCoverage(input.acceptanceConditions, input.commandIds.map(commandId => {
+    const evidence = input.evidence.filter(item => item.commandId === commandId);
+    return { commandId, state: evidence.length === 1 ? evidence[0].state : "missing",
+      assertions: evidence.length === 1 ? evidence[0].assertions : undefined,
+      assertionContract: input.commands[commandId]?.assertionContract };
+  }));
 }
 
-function publicEvidence(evidence: readonly TestEvidence[]): Array<{
-  commandId: string;
-  state: TestEvidence["state"];
+function publicEvidence(evidence: readonly TestEvidence[], commands: Readonly<Record<string, TargetCommandSpec>>): Array<CoverageCommand & {
   exitCode: number | null;
   durationMs: number;
 }> {
@@ -217,6 +189,8 @@ function publicEvidence(evidence: readonly TestEvidence[]): Array<{
     state: item.state,
     exitCode: item.exitCode,
     durationMs: item.durationMs,
+    assertions: item.assertions,
+    assertionContract: commands[item.commandId]?.assertionContract,
   }));
 }
 
@@ -299,6 +273,20 @@ function latestPassedReviewPair(
     (expectedSpecHash !== undefined && verifier.spec_hash !== expectedSpecHash) ||
     referencedVerifierAttempt(meta) !== verifier.attempt
   ) return null;
+  const conditions = acceptance(row.acceptance_json);
+  const commands = reviewVerdict(verifier)?.commands;
+  const savedCoverage = reviewVerdict(meta)?.coverage;
+  if (!conditions?.length || !Array.isArray(savedCoverage) || !Array.isArray(commands) || !commands.every(command => command && typeof command === "object" && typeof command.commandId === "string")) return null;
+  const coverage = assertionCoverage(conditions, commands as CoverageCommand[]);
+  if (coverage.some(item => item.state !== "passed") || hash(savedCoverage) !== hash(coverage)) return null;
+  const selectedIds = strings(row.commands_json);
+  if (!selectedIds || commands.length !== selectedIds.length || commands.some((command, index) => command.commandId !== selectedIds[index])) return null;
+  const selfCommands = reviewVerdict(meta)?.selfCommands;
+  const savedSelfCoverage = reviewVerdict(meta)?.selfCoverage;
+  if (!Array.isArray(selfCommands) || !Array.isArray(savedSelfCoverage) || selfCommands.length !== selectedIds.length ||
+    selfCommands.some((command, index) => !command || typeof command !== "object" || command.commandId !== selectedIds[index])) return null;
+  const selfCoverage = assertionCoverage(conditions, selfCommands as CoverageCommand[]);
+  if (selfCoverage.some(item => item.state !== "passed") || hash(savedSelfCoverage) !== hash(selfCoverage)) return null;
   return { verifier, meta };
 }
 
@@ -484,7 +472,7 @@ export class CandidateVerificationCoordinator {
           candidateRunId: input.candidateRunId,
           contractSchemaVersion: VERIFICATION_CONTRACT_SCHEMA_VERSION,
           reasons,
-          commands: publicEvidence(evidence),
+          commands: publicEvidence(evidence, this.options.commands),
         },
         now: input.now,
       });
@@ -527,12 +515,26 @@ export class CandidateVerificationCoordinator {
     now: number,
   ): CandidateVerificationOutcome {
     const selfEvidence = this.database.prepare(
-      "SELECT command_id,state FROM collaboration_test_evidence WHERE run_id = ?",
+      "SELECT command_id,state,stdout,containment_binding_json FROM collaboration_test_evidence WHERE run_id = ?",
     ).all(row.candidate_run_id) as unknown as Array<{
       command_id: string;
       state: string;
+      stdout: string;
+      containment_binding_json: string | null;
     }>;
-    const selfPassed = new Set(selfEvidence.filter((item) => item.state === "target_passed").map((item) => item.command_id));
+    const selfCommands: CoverageCommand[] = commandIds.map(commandId => {
+      const rows = selfEvidence.filter(item => item.command_id === commandId);
+      const item = rows.length === 1 ? rows[0] : null;
+      let assertions;
+      try {
+        const binding = item?.containment_binding_json ? JSON.parse(item.containment_binding_json) as Record<string, unknown> : null;
+        if (item && binding?.runId === row.candidate_run_id && binding.commandId === commandId && typeof binding.nonce === "string") {
+          assertions = readAssertionReport(item.stdout, { runId: row.candidate_run_id, nonce: binding.nonce });
+        }
+      } catch { /* Missing or malformed self-test provenance is not evidence. */ }
+      return { commandId, state: item?.state ?? "missing", assertions, assertionContract: this.options.commands[commandId]?.assertionContract };
+    });
+    const selfCoverage = assertionCoverage(conditions, selfCommands);
     const coverage = mapAcceptanceCoverage({
       acceptanceConditions: conditions,
       commandIds,
@@ -541,7 +543,7 @@ export class CandidateVerificationCoordinator {
     });
     const ambiguityCount = arrayLength(row.blocking_ambiguities_json);
     const reasons: string[] = [];
-    if (commandIds.some((commandId) => !selfPassed.has(commandId))) reasons.push("executor_self_test_incomplete");
+    if (selfCoverage.some(item => item.state !== "passed")) reasons.push("executor_self_test_incomplete");
     if (coverage.some((item) => item.state !== "passed")) reasons.push("acceptance_evidence_incomplete");
     if (ambiguityCount === null || ambiguityCount > 0) reasons.push("blocking_ambiguity_present");
     const refreshed = readRow(this.database, row.candidate_run_id);
@@ -583,6 +585,8 @@ export class CandidateVerificationCoordinator {
           reasons,
           verifierAttempt,
           coverage,
+          selfCommands,
+          selfCoverage,
         },
         now,
       });

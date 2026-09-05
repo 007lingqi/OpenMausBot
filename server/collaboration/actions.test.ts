@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { assertionReviewFixture } from "./assertion-review.test-fixtures.ts";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { DingTalkInboundMessage, DingTalkSender } from "../integrations/dingtalk/types.ts";
@@ -164,14 +165,14 @@ function seedExecution(
             "(id,candidate_run_id,stage,attempt,status,agent_id,snapshot_revision,spec_hash,candidate_sha,verdict_json,created_at) " +
             "VALUES (?,?,'verifier',1,'passed','deterministic-verifier-v1',1,'spec-hash',?,?,1100)",
         )
-        .run(randomUUID(), runId, CANDIDATE_SHA, JSON.stringify({ contractSchemaVersion: 1 }));
+        .run(randomUUID(), runId, CANDIDATE_SHA, JSON.stringify(assertionReviewFixture(database, workItemId, "target").verifier));
       database
         .prepare(
           "INSERT INTO collaboration_candidate_reviews " +
             "(id,candidate_run_id,stage,attempt,status,agent_id,snapshot_revision,spec_hash,candidate_sha,verdict_json,created_at) " +
             "VALUES (?,?,'meta',1,'passed','meta-acceptance-gate-v1',1,'spec-hash',?,?,1100)",
         )
-        .run(randomUUID(), runId, CANDIDATE_SHA, JSON.stringify({ contractSchemaVersion: 1, verifierAttempt: 1 }));
+        .run(randomUUID(), runId, CANDIDATE_SHA, JSON.stringify(assertionReviewFixture(database, workItemId, "target").meta));
     }
   }
   database.close();

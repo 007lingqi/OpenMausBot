@@ -1,5 +1,14 @@
 # Meta 协作验证记录
 
+## 2026-09-05 断言级业务验收（最新）
+
+- 最终命令：`pnpm vitest run server/collaboration server/integrations/dingtalk server/collaboration-headless.test.ts && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-assertion-acceptance-typecheck && git diff --check`。62 文件 / 414 项通过，21:43:16 开始、41.01 秒；句柄 73209 exit 0，类型检查、服务端编译及补丁检查全部通过。
+- 前一轮 62 文件 / 413 项及全链检查通过（93760）；最后新增回归先复现其他失败命令被局部通过忽略（1 failed / 8 passed），修复后由上述 414 项覆盖。针对性 55 项及类型检查也已通过（75035）。
+- 覆盖条件变动、缺少/失败/跳过/重复/无关断言、过期 run/nonce、超长/带指令报告、仅命令成功、旧 v1/裸 v2 review、自测缺证据、其他命令/未绑定断言失败。真实本地 Node 用例读取固定候选 value.txt 并断言 after，隔离证明仍为夹具，不是 Linux 实测。
+- 失败记录：初始红测确认旧命令名匹配误通过；两次开发自测夹具试图 UPDATE 不可变证据而失败，修正为首次 INSERT，保留不可变约束。没有删除断言或降低门禁以换取通过。
+- 未验证：本批全仓 pnpm test、真实 Docker 的报告变量传递、独立 headless 配置边界专测、可信 reporter/自动需求用例映射及语义核对、真实模型/在线文档/六类群聊场景。未更新容器、群消息或凭据。政策 review 合成夹具不作执行证明。
+
+
 ## 2026-09-05 已发送选项与迟到失败（最新）
 
 - 先行失败：取消/新计划之后旧失败通知两项均失败，修复后调度 19 项及类型检查通过。序号选择先复现仍调用模型且无法关联原消息；实现带真实送达收据的双消息关联后通过。

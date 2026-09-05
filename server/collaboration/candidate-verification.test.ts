@@ -26,6 +26,7 @@ import type {
   TargetCommandSpec,
 } from "./quality-gate.ts";
 import { startCollaborationService, type CollaborationService } from "./service.ts";
+import { acceptanceConditionHash } from "./acceptance-assertions.ts";
 
 const scratch: string[] = [];
 const resources: Array<{ close(): void }> = [];
@@ -99,7 +100,8 @@ class FakeRunner implements SandboxedCommandRunner {
     const override = this.operation(request) ?? {};
     return {
       exitCode: 0,
-      stdout: Buffer.from("verified\n"),
+      stdout: Buffer.from(JSON.stringify({ version: 1, runId: request.containmentBinding.runId,
+        nonce: request.containmentBinding.nonce, assertions: [{ id: "value-updated", state: "passed" }] })),
       stderr: Buffer.alloc(0),
       durationMs: 5,
       timedOut: false,
@@ -131,7 +133,7 @@ interface Fixture {
   commands: Record<string, TargetCommandSpec>;
 }
 
-function fixture(observation = "pnpm test target 验证候选结果"): Fixture {
+function fixture(observation = "pnpm test target 验证候选结果", selfReport = true): Fixture {
   const id = ++sequence;
   const root = mkdtempSync(join(tmpdir(), "openmausbot-verification-"));
   scratch.push(root);
@@ -197,11 +199,12 @@ function fixture(observation = "pnpm test target 验证候选结果"): Fixture {
   );
   database.prepare(
     "INSERT INTO collaboration_test_evidence " +
-      "(id,run_id,command_id,argv_json,cwd,exit_code,duration_ms,stdout,stderr,state,created_at) " +
-      "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+      "(id,run_id,command_id,argv_json,cwd,exit_code,duration_ms,stdout,stderr,state,created_at,containment_binding_json) " +
+      "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
   ).run(
     `evidence-${id}`, runId, "pnpm test target", JSON.stringify(["node", "test"]), worktree,
-    0, 5, "passed", "", "target_passed", 3_100,
+    0, 5, selfReport ? JSON.stringify({ version: 1, runId, nonce: "fixture-self-test-nonce", assertions: [{ id: "value-updated", state: "passed" }] }) : "command passed", "", "target_passed", 3_100,
+    JSON.stringify({ runId, nonce: "fixture-self-test-nonce", commandId: "pnpm test target" }),
   );
   return {
     root,
@@ -214,7 +217,8 @@ function fixture(observation = "pnpm test target 验证候选结果"): Fixture {
     database,
     service,
     commands: {
-      "pnpm test target": { argv: [process.execPath, "-e", "process.exit(0)"], timeoutMs: 5_000, maxOutputBytes: 32_000 },
+      "pnpm test target": { argv: [process.execPath, "-e", "process.exit(0)"], timeoutMs: 5_000, maxOutputBytes: 32_000,
+        assertionContract: { format: "omb-assertions-v1", bindings: [{ conditionHash: acceptanceConditionHash({ description: "候选值已经更新", observation: "pnpm test target 验证候选结果" }), assertionIds: ["value-updated"] }] } },
     },
   };
 }
@@ -239,6 +243,48 @@ function verify(item: Fixture, runner: SandboxedCommandRunner, now = 4_000, maxA
 }
 
 describe("independent candidate verification", () => {
+  it("requires assertion evidence from the developer self-test as well as the independent rerun", async () => {
+    const item = fixture(undefined, false);
+    const outcome = await verify(item, new FakeRunner());
+    expect(outcome.passed).toBe(false);
+    expect(outcome.reasons).toContain("executor_self_test_incomplete");
+  });
+  it.each([1, 2])("does not accept schema %s review rows without recomputable assertion coverage", version => {
+    const item = fixture();
+    const insert = item.database.prepare("INSERT INTO collaboration_candidate_reviews (id,candidate_run_id,stage,attempt,status,agent_id,snapshot_revision,spec_hash,candidate_sha,verdict_json,created_at) VALUES (?,?,?,1,'passed',?,1,?,?,?,4000)");
+    insert.run("legacy-verifier", item.runId, "verifier", "deterministic-verifier-v1", "a".repeat(64), item.candidateSha, JSON.stringify({ contractSchemaVersion: version }));
+    insert.run("legacy-meta", item.runId, "meta", "meta-acceptance-gate-v1", "a".repeat(64), item.candidateSha, JSON.stringify({ contractSchemaVersion: version, verifierAttempt: 1 }));
+    expect(candidateHasPassedMetaReview(item.database, item.runId, item.candidateSha)).toBe(false);
+  });
+  it("runs a real local assertion against the fixed candidate and binds its result to this verification", async () => {
+    const item = fixture();
+    const runner = new FakeRunner(request => ({ stdout: execFileSync(process.execPath, ["-e",
+      "require('node:assert/strict').equal(require('node:fs').readFileSync('src/value.txt','utf8'),'after\\n'); process.stdout.write(JSON.stringify({version:1,runId:process.env.OMB_ASSERTION_RUN_ID,nonce:process.env.OMB_ASSERTION_NONCE,assertions:[{id:'value-updated',state:'passed'}]}))"],
+      { cwd: request.cwd, env: request.environment }) }));
+    expect((await verify(item, runner)).passed).toBe(true);
+  });
+  it("cannot reuse a previously successful assertion report from another verifier attempt", async () => {
+    const item = fixture();
+    const outcome = await verify(item, new FakeRunner(() => ({ stdout: Buffer.from(JSON.stringify({ version: 1, runId: "old", nonce: "old", assertions: [{ id: "value-updated", state: "passed" }] })) })));
+    expect(outcome.passed).toBe(false);
+    expect(outcome.reasons).toContain("acceptance_evidence_incomplete");
+  });
+  it("invalidates a cached pass when the trusted assertion binding changes", async () => {
+    const item = fixture();
+    expect((await verify(item, new FakeRunner())).passed).toBe(true);
+    item.commands["pnpm test target"].assertionContract!.bindings[0].assertionIds = ["additional-required-case"];
+    const next = await verify(item, new FakeRunner(), 5000);
+    expect(next.passed).toBe(false);
+    expect(next.verifierAttempt).toBe(2);
+    expect(candidateHasPassedMetaReview(item.database, item.runId, item.candidateSha)).toBe(false);
+  });
+  it("cannot approve business acceptance from a zero-exit test with no assertion report", async () => {
+    const item = fixture();
+    const outcome = await verify(item, new FakeRunner(() => ({ stdout: Buffer.from("command succeeded\n") })));
+    expect(outcome.passed).toBe(false);
+    expect(outcome.reasons).toContain("acceptance_evidence_incomplete");
+    expect(candidateHasPassedMetaReview(item.database, item.runId, item.candidateSha)).toBe(false);
+  });
   it("does not produce Meta approval when no verifier runner is available", async () => {
     const item = fixture();
     // SAFETY: This deliberate contract violation exercises the runtime's unavailable-runner fail-closed path.
@@ -311,7 +357,7 @@ describe("independent candidate verification", () => {
     expect(outcome).toMatchObject({
       passed: false,
       status: "failed",
-      reasons: ["acceptance_evidence_incomplete"],
+      reasons: ["executor_self_test_incomplete", "acceptance_evidence_incomplete"],
       verifierAttempt: 1,
       metaAttempt: 1,
     });
