@@ -19,4 +19,8 @@ describe("sensitive requirement text redaction", () => {
   it("keeps ordinary product requirements readable", () => {
     expect(redactSensitiveText("筛选条件与搜索可以同时生效")).toBe("筛选条件与搜索可以同时生效");
   });
+  it("does not mistake a password error requirement for an actual password", () => {
+    const input = "密码错了就明确提示密码错误，空 token 时显示反馈";
+    expect(redactSensitiveText(input)).toBe(input);
+  });
 });

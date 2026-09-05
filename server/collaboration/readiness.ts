@@ -82,5 +82,6 @@ export function evaluateDefinitionReadiness(
     });
   });
 
-  return { ready: blockers.length === 0, blockers, frontier: candidates.slice(0, 3) };
+  const contextual = candidates.filter(q => q.id.startsWith("natural-") && q.id !== "natural-input-pending");
+  return { ready: blockers.length === 0, blockers, frontier: [...contextual, ...candidates.filter(q => !contextual.includes(q))].slice(0, 3) };
 }

@@ -15,6 +15,7 @@ import {
 import { openCollaborationLedger } from "../db.ts";
 import { markRestoredLedgerForReview } from "../restore-guard.ts";
 import { startCollaborationService } from "../service.ts";
+import { policy, validProposal } from "../planner.test-fixtures.ts";
 import {
   CollaborationHeadlessRuntime,
   enqueueExecutionOutcomeStatus,
@@ -466,6 +467,24 @@ describe("production-isomorphic collaboration runtime", () => {
     });
     expect(createStream).not.toHaveBeenCalled();
     await runtime.stop();
+  });
+
+  it("keeps draining while natural interpretation waits for a model and aborts it on stop", async () => {
+    let started = false;
+    let signal: AbortSignal | undefined;
+    const runtime = new CollaborationHeadlessRuntime({
+      dataDirectory: temporaryDirectory(), platform: "linux", planner: { propose: validProposal }, planningPolicy: policy,
+      naturalIntake: { interpret(_request, abortSignal) { started = true; signal = abortSignal; return new Promise(() => {}); } },
+    });
+    await runtime.start();
+    try {
+      runtime.ingestDingTalkMessage(message("natural-delay"));
+      await runtime.drainOnce();
+      expect(started).toBe(true);
+      await runtime.drainOnce();
+      expect(runtime.health().ready).toBe(true);
+    } finally { await runtime.stop(); }
+    expect(signal?.aborted).toBe(true);
   });
 
   it("recovers from initial registration delay without leaving intake and outbox gated", async () => {

@@ -42,6 +42,7 @@ export interface CollaborationHealth {
 export interface CollaborationService {
   health(): CollaborationHealth;
   ingestDingTalkMessage(message: DingTalkInboundMessage): InboundMessageOutcome;
+  processNaturalIntake(now?: number): Promise<string | null>;
   observeAttachmentEvidence(
     workItemId: string,
     evidence: AcceptedAttachmentEvidence,
@@ -156,13 +157,18 @@ export function startCollaborationService(options: CollaborationServiceOptions):
       try {
         const outcome = inbound.processDingTalkMessage(message);
         if (planning && outcome.workItemId) {
-          planning.observeAcceptedEvent(outcome.workItemId, message.text, message.receivedAt);
+          planning.observeAcceptedEvent(outcome.workItemId, message.text, message.receivedAt, outcome.sourceEventId);
         }
         return outcome;
       } catch (error) {
         if (isSqliteFailure(error)) serviceDegradedReason = "ledger_unwritable";
         throw error;
       }
+    },
+    async processNaturalIntake(now) {
+      if (closed) throw new Error("Collaboration service is closed");
+      assertServiceArmed();
+      return await planning?.processNaturalIntake(now) ?? null;
     },
     observeAttachmentEvidence(workItemId, evidence, now) {
       if (closed) throw new Error("Collaboration service is closed");

@@ -9,6 +9,7 @@ import { evaluateDefinitionReadiness, type ClarificationQuestion } from "./readi
 import { assertLedgerArmed } from "./restore-guard.ts";
 import { buildDefinitionPatchFromText } from "./spec-builder.ts";
 import { redactSensitiveText } from "./sensitive-text.ts";
+import { NaturalIntakeCoordinator, type NaturalIntakeInterpreter, type NaturalProjection } from "./natural-intake.ts";
 import {
   appendWorkItemSnapshot,
   readLatestWorkItemSnapshot,
@@ -48,14 +49,17 @@ export interface AcceptedAttachmentEvidence {
 }
 
 interface DefinitionProjectionInput {
-  attachmentId: string;
-  contentHash: string;
+  attachmentId?: string;
+  contentHash?: string;
   contextSummary?: string;
+  enqueueNaturalEvent?: string;
+  natural?: NaturalProjection;
 }
 
 export interface PlanningCoordinatorOptions {
   planner: PlannerPort;
   policy: PlanningPolicy;
+  naturalIntake?: NaturalIntakeInterpreter;
   defaultDefinition?: {
     repository: string;
     acceptanceConditions: WorkItemSnapshot["acceptanceConditions"];
@@ -163,6 +167,7 @@ export class PlanningCoordinator {
   private readonly database: DatabaseSync;
   private readonly options: PlanningCoordinatorOptions;
   private closed = false;
+  private readonly naturalIntake: NaturalIntakeCoordinator | null;
 
   constructor(databaseFile: string, options: PlanningCoordinatorOptions) {
     this.options = options;
@@ -171,6 +176,9 @@ export class PlanningCoordinator {
     this.database.exec("PRAGMA busy_timeout = 5000");
     const version = this.database.prepare("PRAGMA user_version").get() as { user_version: number };
     if (version.user_version < 3) throw new Error("Collaboration planning schema is not installed");
+    this.naturalIntake = options.naturalIntake ? new NaturalIntakeCoordinator(this.database, options.naturalIntake,
+      options.policy.allowedRepositories, (workItemId, patch, now, natural) =>
+        this.reviseDefinition(workItemId, patch, now, { natural }) !== null) : null;
   }
 
   reviseDefinition(
@@ -195,20 +203,48 @@ export class PlanningCoordinator {
     let snapshots: { previous: WorkItemSnapshot | null; current: WorkItemSnapshot };
     try {
       assertLedgerArmed(this.database);
-      if (projection && this.database.prepare(
+      if (projection?.enqueueNaturalEvent && this.database.prepare(
+        "SELECT 1 FROM collaboration_natural_intake_jobs WHERE source_event_id=?",
+      ).get(projection.enqueueNaturalEvent)) {
+        this.database.exec("COMMIT");
+        return null;
+      }
+      if (projection?.natural) {
+        const natural = projection.natural;
+        const current = readLatestWorkItemSnapshot(this.database, workItemId);
+        const claim = this.database.prepare("SELECT 1 FROM collaboration_natural_intake_jobs j " +
+          "JOIN collaboration_work_items w ON w.id=j.work_item_id WHERE j.source_event_id=? AND j.work_item_id=? " +
+          "AND j.claim_token=? AND j.status='running' AND j.lease_until > ? AND w.status NOT IN ('cancelled','accepted') AND w.version=?")
+          .get(natural.sourceEventId, workItemId, natural.claimToken, now, current?.sourceWorkItemVersion ?? -1);
+        if (!claim || current?.revision !== natural.expectedRevision) {
+          this.database.exec("COMMIT");
+          return null;
+        }
+      }
+      if (projection?.attachmentId && this.database.prepare(
         "SELECT 1 FROM collaboration_attachment_spec_projections WHERE attachment_id = ? AND content_hash = ?",
-      ).get(projection.attachmentId, projection.contentHash)) {
+        ).get(projection.attachmentId, projection.contentHash!)) {
         this.database.exec("COMMIT");
         return null;
       }
       snapshots = appendWorkItemSnapshot(this.database, workItemId, patch, now);
-      if (projection) {
+      if (projection?.enqueueNaturalEvent) {
+        this.database.prepare("UPDATE collaboration_natural_intake_jobs SET status='superseded' WHERE work_item_id=? AND status='pending'").run(workItemId);
+        this.database.prepare("INSERT INTO collaboration_natural_intake_jobs (source_event_id,work_item_id,status,base_revision,created_at) " +
+          "VALUES (?,?,'pending',?,?)").run(projection.enqueueNaturalEvent, workItemId, snapshots.current.revision, now);
+      }
+      if (projection?.natural) {
+        this.database.prepare("UPDATE collaboration_natural_intake_jobs SET status='applied', result_revision=?, proposal_json=?, claim_token=NULL, lease_until=NULL " +
+          "WHERE source_event_id=? AND claim_token=?").run(snapshots.current.revision,
+          projection.natural.proposalJson, projection.natural.sourceEventId, projection.natural.claimToken);
+      }
+      if (projection?.attachmentId) {
         this.database.prepare(
           "INSERT INTO collaboration_attachment_spec_projections " +
             "(attachment_id, content_hash, work_item_id, snapshot_revision, created_at) VALUES (?, ?, ?, ?, ?)",
         ).run(
           projection.attachmentId,
-          projection.contentHash,
+          projection.contentHash!,
           workItemId,
           snapshots.current.revision,
           now,
@@ -297,8 +333,37 @@ export class PlanningCoordinator {
     return this.persistPublishedPlan(workItemId, snapshots.current, plan, now);
   }
 
-  observeAcceptedEvent(workItemId: string, text: string, now = Date.now()): DefinitionRevisionOutcome | null {
+  processNaturalIntake(now = Date.now()): Promise<string | null> {
+    if (this.closed) throw new Error("Planning coordinator is closed");
+    return this.naturalIntake?.processOne(now) ?? Promise.resolve(null);
+  }
+
+  observeAcceptedEvent(workItemId: string, text: string, now = Date.now(), sourceEventId?: string): DefinitionRevisionOutcome | null {
     assertLedgerArmed(this.database);
+    if (this.naturalIntake && sourceEventId) {
+      // Only the durable source can feed the model; changed redeliveries cannot inject a new definition.
+      const event = this.database.prepare("SELECT normalized_json FROM collaboration_external_events WHERE source='dingtalk' AND source_event_id=? AND work_item_id=?")
+        .get(sourceEventId, workItemId) as { normalized_json: string } | undefined;
+      if (!event) throw new Error("natural_intake_event_missing");
+      const sourceText = redactSensitiveText(String(JSON.parse(event.normalized_json).text)).slice(0, 2_000);
+      const latest = readLatestWorkItemSnapshot(this.database, workItemId);
+      const facts = [...(latest?.facts ?? []).filter(fact => fact !== sourceText), sourceText].slice(-100);
+      const ambiguities = (latest?.blockingAmbiguities ?? []).filter(q => q.id !== "natural-input-pending");
+      const unread = this.database.prepare("SELECT 1 FROM collaboration_attachments a JOIN collaboration_external_events e ON e.id=a.external_event_id " +
+        "WHERE e.work_item_id=? AND a.ingest_state <> 'ready' LIMIT 1").get(workItemId);
+      if (unread && !ambiguities.some(q => q.id === "attachment-content-pending")) ambiguities.push({
+        id: "attachment-content-pending", question: "还有附件内容未读取完成，我会在读取后一起核对。", dependsOn: [],
+        recommendedAnswer: "暂时不用重复发送；如果读取失败，我会说明需要补充什么。",
+      });
+      return this.reviseDefinition(workItemId, {
+        ...(!latest ? { goal: sourceText, goalConfirmed: false, repository: this.options.defaultDefinition?.repository ?? null } : {}),
+        facts,
+        blockingAmbiguities: [...ambiguities, {
+          id: "natural-input-pending", question: "我正在结合前面的沟通整理这条补充。", dependsOn: [],
+          recommendedAnswer: "暂时不需要填写格式或编号；有新信息直接补充即可。",
+        }],
+      }, now, { enqueueNaturalEvent: sourceEventId });
+    }
     const latest = readLatestWorkItemSnapshot(this.database, workItemId);
     const normalized = text.trim();
     if (latest?.facts.includes(normalized)) return null;
@@ -422,6 +487,7 @@ export class PlanningCoordinator {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    this.naturalIntake?.close();
     this.database.close();
   }
 

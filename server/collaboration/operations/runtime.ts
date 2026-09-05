@@ -38,6 +38,7 @@ import { renderCommandStatusCard, renderPlanStatusCard } from "../message-render
 import { syncWorkItemMetaBundle } from "../meta-bundle.ts";
 import { evaluateOwnerPolicy } from "../policy.ts";
 import type { PlannerPort } from "../planner.ts";
+import type { NaturalIntakeInterpreter } from "../natural-intake.ts";
 import type { AcceptedAttachmentEvidence } from "../plan-reviser.ts";
 import type { AcceptanceCondition } from "../snapshot.ts";
 import { renderCandidateDiffPreview } from "../candidate-preview.ts";
@@ -127,6 +128,7 @@ export interface CollaborationHeadlessRuntimeOptions {
   /** Opens and validates configuration without leasing, recovering, streaming, dispatching, or maintaining. */
   probeOnly?: boolean;
   planner?: PlannerPort;
+  naturalIntake?: NaturalIntakeInterpreter;
   planningPolicy?: PlanningPolicy;
   planningDefaultDefinition?: { repository: string; acceptanceConditions: AcceptanceCondition[] };
   agent?: AgentRunPort;
@@ -615,6 +617,7 @@ export class CollaborationHeadlessRuntime {
   private attachmentIngestion: RuntimeAttachmentIngestionPort | null = null;
   private stream: RuntimeStream | null = null;
   private dingTalkState: CollaborationRuntimeHealth["dingtalk"]["state"];
+  private naturalIntakeTask: Promise<void> | null = null;
   private drainPromise: Promise<DrainOutcome> | null = null;
   private stopPromise: Promise<CollaborationRuntimeHealth> | null = null;
   private readonly activeExecutions = new Set<Promise<unknown>>();
@@ -662,6 +665,7 @@ export class CollaborationHeadlessRuntime {
               planning: {
                 planner: this.options.planner,
                 policy: this.options.planningPolicy,
+                ...(this.options.naturalIntake ? { naturalIntake: this.options.naturalIntake } : {}),
                 ...(this.options.planningDefaultDefinition
                   ? { defaultDefinition: this.options.planningDefaultDefinition }
                   : {}),
@@ -1569,6 +1573,14 @@ export class CollaborationHeadlessRuntime {
       maintained = true;
     }
     if (serviceReady) this.retryDirtyMetaBundles();
+    if (serviceReady && this.options.naturalIntake && !this.naturalIntakeTask) {
+      // Do not block lease renewal, Stream maintenance or other group messages on model latency.
+      this.naturalIntakeTask = this.service!.processNaturalIntake(now).then(workItemId => {
+        if (!workItemId || this.currentState !== "running") return;
+        this.syncMetaBundleBestEffort(workItemId, true);
+        if (this.options.autoExecuteReady) this.scheduleReadyExecution(workItemId);
+      }).catch(() => undefined).finally(() => { this.naturalIntakeTask = null; });
+    }
     return { dispatched, maintained };
   }
 

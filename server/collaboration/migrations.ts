@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { OPENMAUSBOT_SOURCE_BASELINE } from "./config.ts";
 
-export const COLLABORATION_SCHEMA_VERSION = 11;
+export const COLLABORATION_SCHEMA_VERSION = 12;
 
 interface Migration {
   version: number;
@@ -941,6 +941,44 @@ const migrations: readonly Migration[] = [
         CREATE TRIGGER collaboration_attachment_spec_projections_no_delete
           BEFORE DELETE ON collaboration_attachment_spec_projections
           BEGIN SELECT RAISE(ABORT, 'attachment spec projections are immutable'); END;
+      `);
+    },
+  },
+  {
+    version: 12,
+    name: "durable-natural-intake",
+    checksum: "v12:source-bound-natural-intake-claims",
+    apply(database) {
+      database.exec(`
+        CREATE TABLE collaboration_natural_intake_jobs (
+          source_event_id TEXT PRIMARY KEY,
+          work_item_id TEXT NOT NULL REFERENCES collaboration_work_items(id),
+          status TEXT NOT NULL CHECK(status IN ('pending','running','applied','failed','superseded')),
+          attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts BETWEEN 0 AND 3),
+          claim_token TEXT,
+          lease_until INTEGER,
+          base_revision INTEGER NOT NULL,
+          result_revision INTEGER,
+          proposal_json TEXT,
+          error_code TEXT,
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (work_item_id, base_revision) REFERENCES collaboration_work_item_snapshots(work_item_id, revision),
+          FOREIGN KEY (work_item_id, result_revision) REFERENCES collaboration_work_item_snapshots(work_item_id, revision)
+        ) STRICT;
+        CREATE INDEX collaboration_natural_intake_pending ON collaboration_natural_intake_jobs(status, created_at);
+        CREATE TRIGGER collaboration_natural_intake_source_matches
+          BEFORE INSERT ON collaboration_natural_intake_jobs
+          WHEN NOT EXISTS (SELECT 1 FROM collaboration_external_events e WHERE e.source='dingtalk'
+            AND e.source_event_id=NEW.source_event_id AND e.work_item_id=NEW.work_item_id)
+          BEGIN SELECT RAISE(ABORT, 'natural intake source mismatch'); END;
+        CREATE TRIGGER collaboration_natural_intake_provenance_immutable
+          BEFORE UPDATE ON collaboration_natural_intake_jobs
+          WHEN OLD.status='applied' OR NEW.source_event_id<>OLD.source_event_id OR NEW.work_item_id<>OLD.work_item_id
+            OR NEW.base_revision<>OLD.base_revision OR NEW.created_at<>OLD.created_at
+          BEGIN SELECT RAISE(ABORT, 'natural intake provenance is immutable'); END;
+        CREATE TRIGGER collaboration_natural_intake_no_delete
+          BEFORE DELETE ON collaboration_natural_intake_jobs
+          BEGIN SELECT RAISE(ABORT, 'natural intake provenance is immutable'); END;
       `);
     },
   },
