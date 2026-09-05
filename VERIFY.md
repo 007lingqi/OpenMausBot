@@ -1,5 +1,13 @@
 # Meta 协作验证记录
 
+## 2026-09-06 持久复核运行与仓库占用（最新）
+
+- 最终 `pnpm vitest run server/collaboration server/integrations/dingtalk server/collaboration-headless.test.ts && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-verifier-ledger-typecheck && git diff --check` 全链通过（53653 exit 0）：68 文件 / 473 项，00:16:39 开始、57.18 秒。覆盖协作/钉钉/headless；本批未运行全仓 pnpm test。
+- 新增两个 runtime 场景和 v18→v19 数据保留升级测试。确认租约过期后新 runtime 不重新验证未结算仓库、直接执行也被拒绝；第二 SQLite 连接抢占相同仓库失败；隔离证明不可变；正常测试失败但进程为空可结算并允许 Owner 显式重试。不相关仓库的占用查询为 false，未据此声称跨进程并发压力已通过。
+- 先行测试缺生命周期表导致两项失败；实现后新功能及候选复核测试通过，旧迁移条数断言漏改导致一项失败。整组先暴露 v15 夹具保留 v19 表，补齐移除后又暴露旧 user_version=18 断言；更新为 19 并检索其余 18 引用后最终全部通过。一次补丁因 hunk 顺序无法定位而未应用，重排后成功；第一次整组授权审查超时未启动，一次重试成功。
+- 验证使用真实临时 Git/SQLite、双连接及新 runtime 对象，containment/runner 是受控测试端口；不等于真实进程崩溃恢复、Docker schema 19 试点或 Owner 群操作。没有升级服务数据库、部署镜像、调用真实模型/群消息/在线文档或变更凭据。
+- 未完成：遗留 session 的受控解除与安全清理、无证明记录恢复、全入口统一仓库锁、跨进程压力及强制重启、启动后台化、六类真实群聊。当前证明持久阻止重复执行，不证明自动续跑成功；Goal active。
+
 ## 2026-09-05 Docker 取消与清理确认（最新）
 
 - 最终 `pnpm vitest run server/collaboration server/integrations/dingtalk server/collaboration-headless.test.ts && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-docker-cancel-typecheck && git diff --check` 全链通过（91577 exit 0）：68 文件 / 470 项，23:57:24 开始、50.56 秒。本批未运行全仓 pnpm test。

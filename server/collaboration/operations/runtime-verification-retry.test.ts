@@ -25,6 +25,8 @@ import type {
 } from "../quality-gate.ts";
 import { startCollaborationService } from "../service.ts";
 import { CommandCleanupError } from "../execution-limits.ts";
+import { currentInstanceLease } from "../leases.ts";
+import { reserveVerification, hasUnsettledVerification } from "../verification-lifecycle.ts";
 import { CollaborationHeadlessRuntime } from "./runtime.ts";
 
 const scratch: string[] = [];
@@ -243,7 +245,7 @@ function runCount(item: RetryFixture): number {
   return row.count;
 }
 
-async function runningRuntime(item: RetryFixture, runner: FailingVerifierRunner, shutdownTimeoutMs = 10_000) {
+async function runningRuntime(item: RetryFixture, runner: FailingVerifierRunner, shutdownTimeoutMs = 10_000, now = 4_000) {
   const agent: AgentRunPort = {
     run: vi.fn(async () => { throw new Error("modify_must_not_run_for_verification_retry"); }),
     interrupt: vi.fn(async () => undefined),
@@ -253,7 +255,7 @@ async function runningRuntime(item: RetryFixture, runner: FailingVerifierRunner,
     ownerId: `runtime-${sequence}`,
     shutdownTimeoutMs,
     platform: "linux",
-    clock: { now: () => 4_000 },
+    clock: { now: () => now },
     agent,
     containment: new FakeContainment(),
     commandRunner: runner,
@@ -271,6 +273,46 @@ async function runningRuntime(item: RetryFixture, runner: FailingVerifierRunner,
 }
 
 describe("runtime Owner verification retry", () => {
+  it("keeps an unconfirmed verifier and its proof across lease expiry and a replacement runtime", async () => {
+    const item=seedRetryableCandidate(); const runner=new FailingVerifierRunner();
+    const {runtime}=await runningRuntime(item,runner);
+    runner.onRun=()=>{
+      const competing=new DatabaseSync(join(item.dataDirectory,"collaboration","collaboration.sqlite"));
+      try {
+        expect(()=>reserveVerification(competing,item.runId,currentInstanceLease(competing)!,4000)).toThrow("verification_repository_unsettled");
+        expect(hasUnsettledVerification(competing,join(item.repository,"unrelated"))).toBe(false);
+      } finally {competing.close();}
+      throw new CommandCleanupError(new Error("cleanup unknown"));
+    };
+    try {
+      expect(runtime.performDingTalkOwnerTextCommand(ownerRetry(item,"durable-unknown",4100)).allowed).toBe(true);
+      await vi.waitFor(()=>expect(runtime.health().ready).toBe(false));
+    } finally { await runtime.stop(); }
+    const db=new DatabaseSync(join(item.dataDirectory,"collaboration","collaboration.sqlite"));
+    try {
+      expect(db.prepare("SELECT count(*) AS n FROM collaboration_verification_sessions s LEFT JOIN collaboration_verification_settlements f ON f.session_id=s.id WHERE f.session_id IS NULL").get()).toEqual({n:1});
+      expect(db.prepare("SELECT count(*) AS n FROM collaboration_verification_proofs").get()).toEqual({n:2});
+      expect(()=>db.exec("DELETE FROM collaboration_verification_proofs")).toThrow("immutable");
+    } finally { db.close(); }
+    const replacementRunner=new FailingVerifierRunner();
+    const replacement=await runningRuntime(item,replacementRunner,10000,100000);
+    try {
+      expect(replacementRunner.requests).toHaveLength(0);
+      await expect(replacement.runtime.executeCurrentPlan(item.workItemId)).rejects.toThrow("verification_repository_unsettled");
+    } finally { await replacement.runtime.stop(); }
+  });
+  it("settles ordinary failed tests with empty containment, allowing an explicitly requested retry", async () => {
+    const item=seedRetryableCandidate(); const {runtime}=await runningRuntime(item,new FailingVerifierRunner());
+    try {
+      expect(runtime.performDingTalkOwnerTextCommand(ownerRetry(item,"settled-retry",4100)).allowed).toBe(true);
+      await vi.waitFor(()=>expect(runtime["scheduledWorkItems"].size).toBe(0));
+      const db=new DatabaseSync(join(item.dataDirectory,"collaboration","collaboration.sqlite"));
+      try {
+        expect(db.prepare("SELECT count(*) AS n FROM collaboration_verification_sessions").get()).toEqual({n:2});
+        expect(db.prepare("SELECT count(*) AS n FROM collaboration_verification_settlements").get()).toEqual({n:2});
+      } finally {db.close();}
+    } finally { await runtime.stop(); }
+  });
   it("does not release or restart a runtime after verifier process cleanup is unconfirmed", async () => {
     const item=seedRetryableCandidate(); const runner=new FailingVerifierRunner();
     const {runtime}=await runningRuntime(item,runner);

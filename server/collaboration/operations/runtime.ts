@@ -33,6 +33,7 @@ import {
 import type { CandidateExecutorOptions, CandidateExecutionOutcome } from "../executor.ts";
 import { authorizedPreparationRetrySql, preparationDispatchAllowed, recordPreparationResult } from "../execution-preparation.ts";
 import { CommandCleanupError } from "../execution-limits.ts";
+import { hasUnsettledVerification, reserveVerification, recordVerificationCommand, recordVerificationProof, settleVerification } from "../verification-lifecycle.ts";
 import type { PlanningPolicy } from "../graph.ts";
 import type { InboundMessageOutcome } from "../inbound.ts";
 import { assertCurrentInstanceLease, InstanceLeaseCoordinator, StaleFenceError, type InstanceLease } from "../leases.ts";
@@ -1119,6 +1120,7 @@ export class CollaborationHeadlessRuntime {
   async executeCurrentPlan(workItemId: string, attempt?: number): Promise<CandidateExecutionOutcome> {
     this.assertAcceptingNewWork();
     if (!this.executionEnabled()) throw new Error("collaboration_execution_not_configured");
+    if (this.repositoryVerificationBlocked(workItemId)) throw new Error("verification_repository_unsettled");
     const execution = this.service!.executeCurrentPlan(workItemId, attempt, this.clock.now());
     this.activeExecutions.add(execution);
     try {
@@ -1237,6 +1239,7 @@ export class CollaborationHeadlessRuntime {
 
   private scheduleReadyExecution(workItemId: string): void {
     if (!this.executionEnabled() || this.options.probeOnly || !this.health().ready || this.scheduledWorkItems.has(workItemId) || !this.database) return;
+    if (this.repositoryVerificationBlocked(workItemId)) return;
     const pendingVerification = this.pendingCandidateVerification(workItemId);
     if (pendingVerification) {
       if (pendingVerification.verifierContractAttempts >= CANDIDATE_VERIFICATION_MAX_ATTEMPTS) return;
@@ -1395,7 +1398,14 @@ export class CollaborationHeadlessRuntime {
     }
   }
 
-  private verificationCoordinator(candidateRunId: string): CandidateVerificationCoordinator {
+  private repositoryVerificationBlocked(workItemId: string): boolean {
+    if (!this.database) return true;
+    const row=this.database.prepare("SELECT s.repository FROM collaboration_work_items w JOIN collaboration_plan_revisions p ON p.work_item_id=w.id AND p.revision=w.current_plan_revision JOIN collaboration_work_item_snapshots s ON s.work_item_id=w.id AND s.revision=p.snapshot_revision WHERE w.id=?")
+      .get(workItemId) as {repository:string}|undefined;
+    return !!row && hasUnsettledVerification(this.database,row.repository);
+  }
+
+  private verificationCoordinator(candidateRunId: string, runner = this.options.commandRunner!): CandidateVerificationCoordinator {
     const row = this.database!.prepare(
       "SELECT repository_path FROM collaboration_runs WHERE id = ?",
     ).get(candidateRunId) as { repository_path: string } | undefined;
@@ -1403,7 +1413,7 @@ export class CollaborationHeadlessRuntime {
     const configured = this.options.execution!.repositories[row.repository_path];
     if (!configured) throw new Error("candidate_verification_repository_not_configured");
     return new CandidateVerificationCoordinator(this.database!, {
-      commandRunner: this.options.commandRunner!,
+      commandRunner: runner,
       containment: this.options.containment!,
       commands: configured.targetCommands,
       dataDirectory: this.options.dataDirectory,
@@ -1413,13 +1423,35 @@ export class CollaborationHeadlessRuntime {
   }
 
   private async verifyCandidate(candidateRunId: string, worktreePath: string): Promise<CandidateVerificationOutcome> {
-    const verification = this.verificationCoordinator(candidateRunId).verify({
-      candidateRunId,
-      worktreePath,
-      instance: this.lease!,
-      now: this.clock.now(),
-      signal: this.verificationAbort.signal,
-    });
+    const db=this.database!;
+    const lease=this.lease!;
+    const lifetime=this.verificationAbort;
+    const verification=(async () => {
+      const sessionId=reserveVerification(db,candidateRunId,lease,this.clock.now());
+      let ordinal=0;
+      let cleanupUnknown=false;
+      const runner: SandboxedCommandRunner={run:async request=>{
+        lifetime.signal.throwIfAborted();
+        const command=++ordinal;
+        recordVerificationCommand(db,sessionId,command,request.containmentBinding,lease,this.clock.now());
+        return this.options.commandRunner!.run({...request,registerContainment:async proof=>{
+          await request.registerContainment(proof);
+          lifetime.signal.throwIfAborted();
+          recordVerificationProof(db,sessionId,command,proof,lease,this.clock.now());
+        }});
+      }};
+      try {
+        return await this.verificationCoordinator(candidateRunId,runner).verify({candidateRunId,worktreePath,instance:lease,now:this.clock.now(),signal:lifetime.signal});
+      } catch(error) { cleanupUnknown=error instanceof CommandCleanupError; throw error; }
+      finally {
+        let settled=false;
+        if(!cleanupUnknown) {
+          try { settled=await settleVerification(db,sessionId,lease,this.options.containment!,()=>this.clock.now(),()=>this.database===db); }
+          catch { /* Lease loss or unavailable containment leaves a durable unresolved session. */ }
+        }
+        if(!settled) throw new CommandCleanupError(new Error("verification_session_unsettled"));
+      }
+    })();
     this.activeVerifications.add(verification);
     try { return await verification; }
     catch (error) {
@@ -1447,6 +1479,7 @@ export class CollaborationHeadlessRuntime {
         "ORDER BY r.finished_at,r.id",
     ).all() as unknown as Array<{ run_id: string; worktree_path: string; work_item_id: string; plan_revision: number }>;
     for (const row of rows) {
+      if (this.repositoryVerificationBlocked(row.work_item_id)) continue;
       const verification = await this.verifyCandidate(row.run_id, row.worktree_path);
       if (!verification.passed) {
         this.enqueueVerificationFailure({

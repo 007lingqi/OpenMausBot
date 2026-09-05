@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { OPENMAUSBOT_SOURCE_BASELINE } from "./config.ts";
 
-export const COLLABORATION_SCHEMA_VERSION = 18;
+export const COLLABORATION_SCHEMA_VERSION = 19;
 
 interface Migration {
   version: number;
@@ -1075,6 +1075,42 @@ const migrations: readonly Migration[] = [
       CREATE TRIGGER collaboration_mapping_result_no_update BEFORE UPDATE ON collaboration_acceptance_mapping_results BEGIN SELECT RAISE(ABORT,'mapping result is immutable'); END;
       CREATE TRIGGER collaboration_mapping_result_no_delete BEFORE DELETE ON collaboration_acceptance_mapping_results BEGIN SELECT RAISE(ABORT,'mapping result is immutable'); END;
     `); },
+  },
+  {
+    version: 19, name: "durable-verification-lifecycle", checksum: "v19:verification-sessions-commands-proofs-settlements",
+    apply(database) {
+      database.exec(`
+        CREATE TABLE collaboration_verification_sessions (
+          id TEXT PRIMARY KEY, candidate_run_id TEXT NOT NULL REFERENCES collaboration_runs(id),
+          repository_path TEXT NOT NULL, plan_revision INTEGER NOT NULL, snapshot_revision INTEGER NOT NULL,
+          candidate_sha TEXT NOT NULL, instance_owner TEXT NOT NULL, instance_fence INTEGER NOT NULL, created_at INTEGER NOT NULL
+        ) STRICT;
+        CREATE INDEX verification_sessions_repository ON collaboration_verification_sessions(repository_path);
+        CREATE TABLE collaboration_verification_commands (
+          session_id TEXT NOT NULL REFERENCES collaboration_verification_sessions(id), ordinal INTEGER NOT NULL,
+          binding_json TEXT NOT NULL CHECK(json_valid(binding_json)), created_at INTEGER NOT NULL,
+          PRIMARY KEY(session_id,ordinal)
+        ) STRICT;
+        CREATE TABLE collaboration_verification_proofs (
+          session_id TEXT NOT NULL, ordinal INTEGER NOT NULL, proof_json TEXT NOT NULL CHECK(json_valid(proof_json)), created_at INTEGER NOT NULL,
+          PRIMARY KEY(session_id,ordinal), FOREIGN KEY(session_id,ordinal) REFERENCES collaboration_verification_commands(session_id,ordinal)
+        ) STRICT;
+        CREATE TABLE collaboration_verification_settlements (
+          session_id TEXT PRIMARY KEY REFERENCES collaboration_verification_sessions(id),
+          evidence_json TEXT NOT NULL CHECK(json_valid(evidence_json)), created_at INTEGER NOT NULL
+        ) STRICT;
+        CREATE TRIGGER verification_commands_open BEFORE INSERT ON collaboration_verification_commands
+          WHEN EXISTS(SELECT 1 FROM collaboration_verification_settlements WHERE session_id=NEW.session_id)
+          BEGIN SELECT RAISE(ABORT,'verification already settled'); END;
+        CREATE TRIGGER verification_proofs_open BEFORE INSERT ON collaboration_verification_proofs
+          WHEN EXISTS(SELECT 1 FROM collaboration_verification_settlements WHERE session_id=NEW.session_id)
+          BEGIN SELECT RAISE(ABORT,'verification already settled'); END;
+      `);
+      for(const table of ["sessions","commands","proofs","settlements"]) for(const operation of ["UPDATE","DELETE"]) {
+        database.exec(`CREATE TRIGGER verification_${table}_no_${operation.toLowerCase()} BEFORE ${operation} ON collaboration_verification_${table}
+          BEGIN SELECT RAISE(ABORT,'verification lifecycle is immutable'); END;`);
+      }
+    },
   },
 ];
 
