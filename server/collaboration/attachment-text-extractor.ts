@@ -11,7 +11,7 @@ export const MAX_CSV_CELLS = 200_000;
 
 const MAX_CHUNK_CHARACTERS = 8_000;
 
-export type AttachmentTextFormat = "text" | "markdown" | "csv";
+export type AttachmentTextFormat = "text" | "markdown" | "csv" | "docx" | "xlsx" | "pdf";
 
 export interface AttachmentTextExtractionInput {
   bytes: Uint8Array;
@@ -31,6 +31,7 @@ export interface AttachmentTextChunk {
 }
 
 export interface AttachmentTextExtraction {
+  extractor?: { name: string; version: string };
   format: AttachmentTextFormat;
   characterCount: number;
   lineCount: number;

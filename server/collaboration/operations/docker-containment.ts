@@ -61,6 +61,7 @@ export class NodeDockerCommandPort implements DockerCommandPort {
       let settled = false;
       let limited = false;
       let timedOut = false;
+      let inputFailed = false;
       const timer = setTimeout(() => {
         timedOut = true;
         child.kill("SIGKILL");
@@ -94,6 +95,10 @@ export class NodeDockerCommandPort implements DockerCommandPort {
           reject(new Error("docker_command_timed_out"));
           return;
         }
+        if (inputFailed) {
+          reject(new Error("docker_stdin_write_failed"));
+          return;
+        }
         resolve({ exitCode: code ?? 127, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr) });
       });
       if (options.input) {
@@ -102,6 +107,10 @@ export class NodeDockerCommandPort implements DockerCommandPort {
           reject(new Error("docker_stdin_unavailable"));
           return;
         }
+        child.stdin.once("error", () => {
+          inputFailed = true;
+          child.kill("SIGKILL");
+        });
         child.stdin.end(options.input);
       }
     });

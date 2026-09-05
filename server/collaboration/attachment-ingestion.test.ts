@@ -12,6 +12,7 @@ import type { DingTalkPrivateResourceCapability } from "../integrations/dingtalk
 import { AttachmentIngestionCoordinator, type AttachmentEvidenceNotification } from "./attachment-ingestion.ts";
 import { AttachmentStore, type PublicAttachmentResource } from "./attachment-store.ts";
 import { openCollaborationLedger } from "./db.ts";
+import { extractAttachmentText } from "./attachment-text-extractor.ts";
 
 const VAULT_SECRET = "attachment-ingestion-test-secret-at-least-32-bytes";
 const WORK_ITEM_ID = "WI-attachment-ingestion";
@@ -88,6 +89,36 @@ function row(databaseFile: string, ref = REF_A): Record<string, unknown> {
 }
 
 describe("AttachmentIngestionCoordinator", () => {
+  it("does not attribute a configured document parser failure to bounded-text", async () => {
+    const source = Buffer.from("fake document");
+    const setup = context([resource({ name: "bug.pdf", mimeType: "application/pdf" })]);
+    const result = await new AttachmentIngestionCoordinator({ ...setup,
+      downloader: { download: async () => ({ ok: true, bytes: source, sha256: hash(source), mediaType: "application/pdf" }) },
+      extract: async () => { throw new Error("attachment_document_extraction_failed"); },
+    }).process([capability()], 1000);
+    expect(result.failed).toBe(1);
+    const db = new DatabaseSync(setup.databaseFile);
+    expect(db.prepare("SELECT extractor FROM collaboration_attachment_extractions").get()).toEqual({ extractor: "configured-extractor" });
+    db.close();
+  });
+  it("persists async document parser provenance and replays partial source chunks after restart", async () => {
+    const source = Buffer.from("fake document bytes");
+    const setup = context([resource({ name: "bugs.pdf", mimeType: "application/pdf" })]);
+    const download = vi.fn(async (): Promise<DingTalkAttachmentDownloadResult> => ({ ok: true, bytes: source, sha256: hash(source), mediaType: "application/pdf" }));
+    const parsed = extractAttachmentText({ bytes: Buffer.from("page:1 登录失败"), displayName: "parsed.txt", mediaType: "text/plain" });
+    const extract = vi.fn(async () => ({ ...parsed, format: "pdf" as const, truncated: true,
+      extractor: { name: "docker-document", version: "1:sha256:test-fixture" },
+      chunks: parsed.chunks.map(chunk => ({ ...chunk, truncated: true, warnings: ["unread_images"] })) }));
+    await new AttachmentIngestionCoordinator({ ...setup, downloader: { download }, extract }).process([capability()], 1000);
+    const notifications: AttachmentEvidenceNotification[] = [];
+    await new AttachmentIngestionCoordinator({ ...setup, downloader: { download }, onEvidence: notice => { notifications.push(notice); } }).process([], 2000);
+    expect(download).toHaveBeenCalledTimes(1);
+    expect(extract).toHaveBeenCalledTimes(1);
+    expect(notifications[0]).toMatchObject({ format: "pdf", chunks: [{ truncated: true, warnings: ["unread_images"], untrusted: true }] });
+    const db = new DatabaseSync(setup.databaseFile);
+    expect(db.prepare("SELECT extractor, extractor_version FROM collaboration_attachment_extractions").get()).toEqual({ extractor: "docker-document", extractor_version: "1:sha256:test-fixture" });
+    db.close();
+  });
   it("stores, extracts, and commits redacted immutable evidence before marking ready", async () => {
     const source = new TextEncoder().encode("复现步骤\naccess_token=never-expose-this\n点击登录");
     const setup = context([resource({ sizeBytes: source.byteLength })]);

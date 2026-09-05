@@ -12,6 +12,8 @@ import { redactSensitiveText } from "./sensitive-text.ts";
 import { NaturalIntakeCoordinator, type NaturalIntakeInterpreter, type NaturalProjection } from "./natural-intake.ts";
 import { NaturalAssociationCoordinator } from "./natural-association.ts";
 import { clarificationRecipient } from "./clarification-recipients.ts";
+import { attachmentCompletenessGates, attachmentExcerpt, readNaturalAttachmentContext } from "./attachment-completeness.ts";
+import { readAttachmentEvidenceNotification } from "./attachment-ingestion.ts";
 import {
   appendWorkItemSnapshot,
   readLatestWorkItemSnapshot,
@@ -182,7 +184,8 @@ export class PlanningCoordinator {
           "JOIN collaboration_work_items w ON w.id=j.work_item_id WHERE j.source_event_id=? AND j.work_item_id=? " +
           "AND j.claim_token=? AND j.status='running' AND j.lease_until > ? AND w.status NOT IN ('cancelled','accepted') AND w.version=?")
           .get(natural.sourceEventId, workItemId, natural.claimToken, now, current?.sourceWorkItemVersion ?? -1);
-        if (!claim || current?.revision !== natural.expectedRevision) {
+        if (!claim || current?.revision !== natural.expectedRevision ||
+          readNaturalAttachmentContext(this.database, workItemId).fingerprint !== natural.attachmentContextHash) {
           this.database.exec("COMMIT");
           return null;
         }
@@ -394,6 +397,17 @@ export class PlanningCoordinator {
       evidence.contentHash,
     ) as { display_name: string | null; source_event_id: string } | undefined;
     if (!source) throw new Error("attachment_evidence_source_invalid");
+    const stored = readAttachmentEvidenceNotification(this.database, evidence.attachmentId);
+    if (stored.workItemId !== workItemId || stored.format !== evidence.format || stored.source.sourceEventId !== evidence.sourceEventId ||
+      stored.chunks.length !== evidence.chunks.length ||
+      stored.chunks.some((chunk, index) => {
+        const supplied = evidence.chunks[index];
+        return chunk.ordinal !== supplied.ordinal || chunk.lineStart !== supplied.lineStart || chunk.lineEnd !== supplied.lineEnd ||
+          chunk.text !== supplied.text || chunk.textHash !== supplied.textHash;
+      }) || evidence.truncated !== stored.chunks.some(c => c.truncated) ||
+      JSON.stringify([...new Set(evidence.warnings)].sort()) !== JSON.stringify([...new Set(stored.chunks.flatMap(c => c.warnings))].sort())) {
+      throw new Error("attachment_evidence_projection_mismatch");
+    }
     const chunkExists = this.database.prepare(
       "SELECT 1 FROM collaboration_attachment_chunks c " +
         "JOIN collaboration_attachment_extractions x ON x.id = c.extraction_id " +
@@ -410,11 +424,8 @@ export class PlanningCoordinator {
     const latest = readLatestWorkItemSnapshot(this.database, workItemId);
     const sourceLabel = redactSensitiveText((source.display_name ?? evidence.displayName).trim()).slice(0, 120) || "附件";
     const excerpts = evidence.chunks.slice(0, 12).flatMap((chunk) => {
-      const safe = redactSensitiveText(chunk.text).trim();
-      if (!safe) return [];
-      const prefix = `[附件“${sourceLabel}” 第 ${chunk.lineStart}-${chunk.lineEnd} 行] `;
-      const maximum = 2_000 - prefix.length;
-      return [`${prefix}${safe.slice(0, Math.max(0, maximum))}`];
+      const excerpt = attachmentExcerpt(sourceLabel, chunk);
+      return excerpt.text ? [excerpt.text] : [];
     });
     const facts = [...(latest?.facts ?? [])];
     for (const excerpt of excerpts) {
@@ -423,7 +434,7 @@ export class PlanningCoordinator {
     const pending = this.database.prepare(
       "SELECT count(*) AS count FROM collaboration_attachments a " +
         "JOIN collaboration_external_events e ON e.id = a.external_event_id " +
-        "WHERE e.work_item_id = ? AND a.ingest_state NOT IN ('ready', 'unsupported')",
+        "WHERE e.work_item_id = ? AND a.ingest_state <> 'ready'",
     ).get(workItemId) as { count: number };
     const attachmentAmbiguityId = "attachment-content-pending";
     const ambiguities = (latest?.blockingAmbiguities ?? [])
@@ -450,7 +461,9 @@ export class PlanningCoordinator {
     }, now, {
       attachmentId: evidence.attachmentId,
       contentHash: evidence.contentHash,
-      contextSummary: `已安全读取附件“${sourceLabel}”，内容已按来源保存，正在确认目标和验收标准。`,
+      contextSummary: attachmentCompletenessGates(this.database, workItemId, facts).length
+        ? `已保存附件“${sourceLabel}”的可读部分；仍有材料或需求内容未核对完整，尚未开始修改。`
+        : `已安全读取附件“${sourceLabel}”，内容已按来源保存，正在确认目标和验收标准。`,
     });
   }
 

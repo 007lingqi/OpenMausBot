@@ -21,8 +21,10 @@ import type { DingTalkAttachmentDownloadResult } from "../integrations/dingtalk/
 import type { DingTalkPrivateResourceCapability } from "../integrations/dingtalk/types.ts";
 import {
   extractAttachmentText,
+  MAX_EXTRACTED_CHARACTERS,
   type AttachmentTextChunk,
   type AttachmentTextExtraction,
+  type AttachmentTextExtractionInput,
   type AttachmentTextFormat,
 } from "./attachment-text-extractor.ts";
 import { AttachmentStore, type StoredAttachment } from "./attachment-store.ts";
@@ -69,6 +71,7 @@ export interface AttachmentIngestionCoordinatorInput {
   dataDirectory: string;
   vault: DingTalkAttachmentCapabilityVault;
   downloader: AttachmentDownloader;
+  extract?: (input: AttachmentTextExtractionInput) => AttachmentTextExtraction | Promise<AttachmentTextExtraction>;
   onEvidence?: (notification: AttachmentEvidenceNotification) => void | Promise<void>;
 }
 
@@ -107,6 +110,7 @@ interface ProjectionRow {
 interface ExtractionProjectionRow {
   id: string;
   metadata_json: string;
+  source_hash: string;
 }
 
 interface ChunkProjectionRow {
@@ -334,8 +338,8 @@ function extractionMetadata(extraction: AttachmentTextExtraction, mediaType: str
 
 function extractionEvidenceHash(sourceHash: string, extraction: AttachmentTextExtraction): string {
   return digest(JSON.stringify({
-    extractor: "bounded-text",
-    extractorVersion: "1",
+    extractor: extraction.extractor?.name ?? "bounded-text",
+    extractorVersion: extraction.extractor?.version ?? "1",
     sourceHash,
     format: extraction.format,
     characterCount: extraction.characterCount,
@@ -375,11 +379,13 @@ function commitSuccessfulExtraction(input: {
     input.database.prepare(
       "INSERT INTO collaboration_attachment_extractions " +
         "(id, attachment_id, attempt, extractor, extractor_version, source_hash, status, extracted_characters, " +
-        "metadata_json, error_code, created_at) VALUES (?, ?, ?, 'bounded-text', '1', ?, 'succeeded', ?, ?, NULL, ?)",
+        "metadata_json, error_code, created_at) VALUES (?, ?, ?, ?, ?, ?, 'succeeded', ?, ?, NULL, ?)",
     ).run(
       extractionId,
       input.attachment.id,
       input.attempt,
+      input.extraction.extractor?.name ?? "bounded-text",
+      input.extraction.extractor?.version ?? "1",
       input.contentHash,
       input.extraction.characterCount,
       extractionMetadata(input.extraction, input.mediaType),
@@ -438,17 +444,19 @@ function commitExtractionFailure(input: {
   storageKey: string;
   errorCode: string;
   unsupported: boolean;
+  extractor: string;
 }): void {
   input.database.exec("BEGIN IMMEDIATE");
   try {
     input.database.prepare(
       "INSERT INTO collaboration_attachment_extractions " +
         "(id, attachment_id, attempt, extractor, extractor_version, source_hash, status, extracted_characters, " +
-        "metadata_json, error_code, created_at) VALUES (?, ?, ?, 'bounded-text', '1', ?, ?, 0, ?, ?, ?)",
+        "metadata_json, error_code, created_at) VALUES (?, ?, ?, ?, '1', ?, ?, 0, ?, ?, ?)",
     ).run(
       randomUUID(),
       input.attachment.id,
       input.attempt,
+      input.extractor,
       input.contentHash,
       input.unsupported ? "unsupported" : "failed",
       JSON.stringify({ untrusted: true }),
@@ -503,12 +511,14 @@ function parseProjectionMetadata(value: string): ProjectionMetadata {
   const format = root?.format;
   const mediaType = root?.mediaType;
   const rawChunks = root?.chunks;
+  const rootWarnings = projectionWarnings(root?.warnings);
   if (
-    (format !== "text" && format !== "markdown" && format !== "csv") ||
+    (format !== "text" && format !== "markdown" && format !== "csv" && format !== "docx" && format !== "xlsx" && format !== "pdf") ||
     typeof mediaType !== "string" ||
     !mediaType ||
     mediaType.length > 255 ||
-    !Array.isArray(rawChunks)
+    root?.untrusted !== true || typeof root.truncated !== "boolean" || rootWarnings === null ||
+    !Array.isArray(rawChunks) || rawChunks.length < 1 || rawChunks.length > 5000
   ) throw projectionFailure();
 
   const chunks: ProjectionChunkMetadata[] = [];
@@ -529,15 +539,15 @@ function parseProjectionMetadata(value: string): ProjectionMetadata {
       ordinal: index,
       lineStart: Number(chunk.lineStart),
       lineEnd: Number(chunk.lineEnd),
-      truncated: chunk.truncated,
-      warnings,
+      truncated: root.truncated || chunk.truncated,
+      warnings: [...new Set([...rootWarnings, ...warnings])],
       untrusted: true,
     });
   }
   return { format, mediaType, chunks };
 }
 
-function projectionNotification(database: DatabaseSync, attachmentId: string): AttachmentEvidenceNotification {
+export function readAttachmentEvidenceNotification(database: DatabaseSync, attachmentId: string): AttachmentEvidenceNotification {
   const attachment = readAttachment(database, attachmentId);
   if (
     !attachment ||
@@ -546,11 +556,14 @@ function projectionNotification(database: DatabaseSync, attachmentId: string): A
     !SHA256.test(attachment.contentHash)
   ) throw projectionFailure();
   const extraction = database.prepare(
-    "SELECT id, metadata_json FROM collaboration_attachment_extractions " +
+    "SELECT id, metadata_json, source_hash FROM collaboration_attachment_extractions " +
       "WHERE attachment_id = ? AND status = 'succeeded' ORDER BY attempt DESC LIMIT 1",
   ).get(attachment.id) as ExtractionProjectionRow | undefined;
-  if (!extraction) throw projectionFailure();
+  if (!extraction || extraction.source_hash !== attachment.contentHash || extraction.metadata_json.length > 1024 * 1024) throw projectionFailure();
   const metadata = parseProjectionMetadata(extraction.metadata_json);
+  const bounds = database.prepare("SELECT count(*) AS count, coalesce(sum(length(content)),0) AS characters FROM collaboration_attachment_chunks WHERE extraction_id=?")
+    .get(extraction.id) as { count: number; characters: number };
+  if (bounds.count !== metadata.chunks.length || bounds.characters > MAX_EXTRACTED_CHARACTERS) throw projectionFailure();
   const rows = database.prepare(
     "SELECT ordinal, content, content_hash FROM collaboration_attachment_chunks " +
       "WHERE extraction_id = ? ORDER BY ordinal",
@@ -597,6 +610,7 @@ export class AttachmentIngestionCoordinator {
   private readonly attachmentDirectory: string;
   private readonly vault: DingTalkAttachmentCapabilityVault;
   private readonly downloader: AttachmentDownloader;
+  private readonly extract: NonNullable<AttachmentIngestionCoordinatorInput["extract"]>;
   private readonly onEvidence: ((notification: AttachmentEvidenceNotification) => void | Promise<void>) | undefined;
   private readonly projectionOwner = randomUUID();
 
@@ -604,6 +618,7 @@ export class AttachmentIngestionCoordinator {
     this.databaseFile = input.databaseFile;
     this.vault = input.vault;
     this.downloader = input.downloader;
+    this.extract = input.extract ?? extractAttachmentText;
     this.onEvidence = input.onEvidence;
     const collaborationDirectory = join(resolve(input.dataDirectory), "collaboration");
     this.attachmentDirectory = join(collaborationDirectory, "attachments");
@@ -685,7 +700,7 @@ export class AttachmentIngestionCoordinator {
           "AND evidence_projected_at IS NULL AND (evidence_projection_owner IS NULL OR evidence_projection_expires_at <= ?)",
       ).run(this.projectionOwner, now + PROJECTION_CLAIM_MILLISECONDS, row.id, now);
       if (claimed.changes !== 1) continue;
-      const notification = projectionNotification(database, row.id);
+      const notification = readAttachmentEvidenceNotification(database, row.id);
       try {
         await this.onEvidence(notification);
         database.prepare(
@@ -764,7 +779,7 @@ export class AttachmentIngestionCoordinator {
     const displayName = attachment.name ?? "attachment";
     let extraction: AttachmentTextExtraction;
     try {
-      extraction = extractAttachmentText({ bytes: downloaded.bytes, mediaType, displayName });
+      extraction = await this.extract({ bytes: downloaded.bytes, mediaType, displayName });
     } catch (error) {
       const errorCode = extractionErrorCode(error);
       const unsupported = UNSUPPORTED_EXTRACTION_ERRORS.has(errorCode);
@@ -777,6 +792,7 @@ export class AttachmentIngestionCoordinator {
         storageKey,
         errorCode,
         unsupported,
+        extractor: this.extract === extractAttachmentText ? "bounded-text" : "configured-extractor",
       });
       this.vault.remove(attachment.capabilityRef);
       counts[unsupported ? "unsupported" : "failed"] += 1;

@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import { attachmentCompletenessGates, ATTACHMENT_GATE_IDS } from "./attachment-completeness.ts";
 
 export interface AcceptanceCondition {
   description: string;
@@ -170,6 +171,10 @@ export function appendWorkItemSnapshot(
     blockingAmbiguities: ambiguities(patch.blockingAmbiguities ?? previous?.blockingAmbiguities ?? []),
     createdAt: now,
   };
+  current.blockingAmbiguities = ambiguities([
+    ...current.blockingAmbiguities.filter(question => !ATTACHMENT_GATE_IDS.has(question.id)),
+    ...attachmentCompletenessGates(database, workItemId, current.facts),
+  ]);
   database
     .prepare(
       "INSERT INTO collaboration_work_item_snapshots " +

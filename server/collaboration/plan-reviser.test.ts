@@ -307,8 +307,9 @@ describe("definition readiness and immutable plan revisions", () => {
     db.prepare(
       "INSERT INTO collaboration_attachment_extractions " +
         "(id, attachment_id, attempt, extractor, extractor_version, source_hash, status, extracted_characters, " +
-        "metadata_json, error_code, created_at) VALUES ('X-PLAN', ?, 1, 'test', '1', ?, 'succeeded', ?, '{}', NULL, 2)",
-    ).run(attachment.id, "c".repeat(64), injectedText.length);
+        "metadata_json, error_code, created_at) VALUES ('X-PLAN', ?, 1, 'test', '1', ?, 'succeeded', ?, ?, NULL, 2)",
+    ).run(attachment.id, "c".repeat(64), injectedText.length, JSON.stringify({ format: "csv", mediaType: "text/csv", untrusted: true,
+      truncated: false, warnings: [], chunks: [{ ordinal: 0, lineStart: 1, lineEnd: 2, truncated: false, warnings: [], untrusted: true }] }));
     db.prepare(
       "INSERT INTO collaboration_attachment_chunks " +
         "(id, extraction_id, ordinal, content, content_hash, character_start, character_end, created_at) " +
