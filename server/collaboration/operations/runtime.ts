@@ -33,7 +33,7 @@ import {
 import type { CandidateExecutorOptions, CandidateExecutionOutcome } from "../executor.ts";
 import { authorizedPreparationRetrySql, preparationDispatchAllowed, recordPreparationResult } from "../execution-preparation.ts";
 import { CommandCleanupError } from "../execution-limits.ts";
-import { hasUnsettledVerification } from "../verification-lifecycle.ts";
+import { hasUnsettledRepositoryActivity } from "../repository-occupancy.ts";
 import type { PlanningPolicy } from "../graph.ts";
 import type { InboundMessageOutcome } from "../inbound.ts";
 import { assertCurrentInstanceLease, InstanceLeaseCoordinator, StaleFenceError, type InstanceLease } from "../leases.ts";
@@ -1123,7 +1123,6 @@ export class CollaborationHeadlessRuntime {
   async executeCurrentPlan(workItemId: string, attempt?: number): Promise<CandidateExecutionOutcome> {
     this.assertAcceptingNewWork();
     if (!this.executionEnabled()) throw new Error("collaboration_execution_not_configured");
-    if (this.repositoryVerificationBlocked(workItemId)) throw new Error("verification_repository_unsettled");
     const row = this.database!.prepare(
       "SELECT s.repository FROM collaboration_work_items w " +
       "JOIN collaboration_plan_revisions p ON p.work_item_id=w.id AND p.revision=w.current_plan_revision " +
@@ -1134,6 +1133,7 @@ export class CollaborationHeadlessRuntime {
     if (this.activeRepositoryExecutions.has(repository) || this.scheduledWorkItems.has(workItemId)) {
       throw new Error("collaboration_repository_busy");
     }
+    if (this.repositoryVerificationBlocked(workItemId)) throw new Error("verification_repository_unsettled");
     // Reserve synchronously, before the executor's first asynchronous preparation step.
     const lifetime = this.verificationAbort;
     this.activeRepositoryExecutions.add(repository);
@@ -1459,7 +1459,7 @@ export class CollaborationHeadlessRuntime {
     if (!this.database) return true;
     const row=this.database.prepare("SELECT s.repository FROM collaboration_work_items w JOIN collaboration_plan_revisions p ON p.work_item_id=w.id AND p.revision=w.current_plan_revision JOIN collaboration_work_item_snapshots s ON s.work_item_id=w.id AND s.revision=p.snapshot_revision WHERE w.id=?")
       .get(workItemId) as {repository:string}|undefined;
-    return !!row && hasUnsettledVerification(this.database,row.repository);
+    return !!row && hasUnsettledRepositoryActivity(this.database,row.repository);
   }
 
   private verificationCoordinator(candidateRunId: string, runner = this.options.commandRunner!): CandidateVerificationCoordinator {

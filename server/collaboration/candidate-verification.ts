@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { hasUnsettledVerification, reserveVerification, recordVerificationCommand, recordVerificationProof, settleVerification } from "./verification-lifecycle.ts";
+import { reserveVerification, recordVerificationCommand, recordVerificationProof, settleVerification } from "./verification-lifecycle.ts";
+import { hasUnsettledRepositoryActivity } from "./repository-occupancy.ts";
 import { mkdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
@@ -343,7 +344,7 @@ export function candidateHasPassedMetaReview(
 ): boolean {
   if (!FULL_SHA.test(candidateSha)) return false;
   const row = readRow(database, candidateRunId);
-  return Boolean(row && !hasUnsettledVerification(database,row.repository_path) && row.result_sha === candidateSha && latestPassedReviewPair(database, row));
+  return Boolean(row && !hasUnsettledRepositoryActivity(database,row.repository_path) && row.result_sha === candidateSha && latestPassedReviewPair(database, row));
 }
 
 export class CandidateVerificationCoordinator {

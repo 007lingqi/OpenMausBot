@@ -1,5 +1,14 @@
 # Meta 协作验证记录
 
+## 2026-09-06 执行层持久仓库占用与自测清理（最新）
+
+- 最终相关全链 `pnpm vitest run server/collaboration server/integrations/dingtalk server/collaboration-headless.test.ts && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-execution-lifecycle-typecheck && git diff --check` 通过（72596 exit 0）：68 文件 / 490 项，01:13:37 开始、59.66 秒。随后生产代码未改，只增强同仓库不同事项竞争断言；该测试、typecheck 及 diff 检查通过（69868 exit 0）。本批未跑全仓 pnpm test。
+- 新增四个执行用例和一个 v19→v20 升级用例。确认 prepare 前有不可变执行预留，第二执行器/真实 Node 子进程持同一有效 owner 身份也无法启动同仓库的相同或不同事项；Agent 失败且进程 active 不结算；自测清理未知不被转成普通配置结果、新执行器接管后仍拒绝重跑；修改和复核的持久预留双向互斥。既有不同仓库并发与混合队列测试包含在整组中。
+- 先行三项复现缺执行表、失败活进程返回普通结果、自测清理未知返回配置提示。实现后 17 项通过 / 2 项失败：启动拒绝且没有证明改为明确不结算，保留 Run 终态并补充持久占用断言；原暂停 Agent 夹具漏登记证明，补上实际注册后保留原 Owner 中断断言。随后 65 项通过 / 1 项失败为 runtime 错误优先级变化，恢复内存 busy 优先、持久占用后验，41 项和 typecheck 通过。
+- 独立 Node 子进程暴露 TypeScript 参数属性不支持 strip-only，改为普通字段构造后通过，没有换用模拟导入逃避兼容性问题。升级夹具同时移除新表并更新至 schema 20；v19 升级保留已有映射预留及不可变触发器验证通过。
+- 新增执行记录存 binding/proof，而非凭据或 Owner token。仅临时 Git/SQLite、受控 containment/Agent/runner 和独立本机进程验证；未部署 schema、镜像或运行真实模型/钉钉/在线文档。
+- 不证明旧 v19 历史 Run 已被自动回填隔离、不证明遗留 session 受控清理、进程崩溃恢复或 Linux 主机重启成功。真实 Docker/群聊六类试点仍待验收，Goal active。
+
 ## 2026-09-06 底层复核持久占用与迟到结果（最新）
 
 - 最终 `pnpm vitest run server/collaboration server/integrations/dingtalk server/collaboration-headless.test.ts && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-direct-verifier-typecheck && git diff --check` 全链通过（62528 exit 0）：68 文件 / 485 项，01:02:16 开始、68.67 秒。本批未运行全仓 pnpm test，不复用上一批全仓通过作为本批证据。

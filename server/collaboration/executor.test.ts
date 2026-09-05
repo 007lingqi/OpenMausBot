@@ -3,7 +3,13 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { CandidateExecutor, type CandidateExecutorOptions } from "./executor.ts";
+import { WorktreeManager } from "./worktree-manager.ts";
+import { currentInstanceLease } from "./leases.ts";
+import { CommandCleanupError } from "./execution-limits.ts";
+import { ExecutionLifecycle } from "./execution-lifecycle.ts";
+import { reserveVerification, settleVerification } from "./verification-lifecycle.ts";
 
 import { FakeDingTalkAdapter } from "../integrations/dingtalk/fake-adapter.ts";
 import type { DingTalkInboundMessage, DingTalkSender } from "../integrations/dingtalk/types.ts";
@@ -14,6 +20,7 @@ import {
   type ContainmentBinding,
   type ContainmentPort,
   type ContainmentProof,
+  type ContainmentInspection,
 } from "./containment.ts";
 import type { AgentRunPort, AgentRunRequest, AgentRunResult } from "./provider-runner.ts";
 import type {
@@ -44,7 +51,7 @@ class FakeContainment implements ContainmentPort {
       : { verified: false as const, reason: "unverified" };
   }
 
-  async inspect(identity: ContainmentProof["identity"]) {
+  async inspect(identity: ContainmentProof["identity"]): Promise<ContainmentInspection> {
     return { state: "empty" as const, fingerprint: runtimeIdentityFingerprint(identity) };
   }
 
@@ -187,6 +194,7 @@ function setup(input: {
   agent: AgentRunPort;
   commands?: Record<string, TargetCommandSpec>;
   commandRunner?: SandboxedCommandRunner | null;
+  containment?: ContainmentPort;
 }) {
   const root = temp();
   const repo = repository(root);
@@ -197,22 +205,23 @@ function setup(input: {
     input.commandRunner === null
       ? (undefined as unknown as SandboxedCommandRunner)
       : (input.commandRunner ?? new FakeSandboxedCommandRunner());
-  const service = startCollaborationService({
-    dataDirectory: join(root, "data"),
-    planning: {
-      planner: { propose: () => validProposal() },
-      policy: { ...policy, allowedRepositories: [repo] },
-    },
-    execution: {
+  const execution: CandidateExecutorOptions = {
       agent: input.agent,
-      containment: new FakeContainment(),
+      containment: input.containment ?? new FakeContainment(),
       commandRunner,
       managedWorktreeRoot: join(root, "managed-worktrees"),
       repositories: {
         [repo]: { baseSha, targetCommands: input.commands ?? { "pnpm test target": targetCommand() } },
       },
       limits: { maxAttempts: 1, agentTimeoutMs: 2_000, maxAgentEventBytes: 16_000, interruptGraceMs: 500 },
+    };
+  const service = startCollaborationService({
+    dataDirectory: join(root, "data"),
+    planning: {
+      planner: { propose: () => validProposal() },
+      policy: { ...policy, allowedRepositories: [repo] },
     },
+    execution,
   });
   service.bootstrapOwnerLocally({ senderCorpId: "corp-1", senderStaffId: "owner-1", now: 500 });
   const accepted = new FakeDingTalkAdapter((event) => service.ingestDingTalkMessage(event)).receive(inbound());
@@ -228,7 +237,7 @@ function setup(input: {
     },
     2_000,
   );
-  return { root, repo, baseSha, originalStatus, service, commandRunner, workItemId: accepted.workItemId };
+  return { root, repo, baseSha, originalStatus, service, commandRunner, execution, workItemId: accepted.workItemId };
 }
 
 function ledger(root: string): DatabaseSync {
@@ -236,6 +245,117 @@ function ledger(root: string): DatabaseSync {
 }
 
 describe("trusted candidate executor", () => {
+  it("persists repository ownership before preparation and blocks a second executor using the same lease", async () => {
+    const h = setup({ agent: new FakeAgent(request => ({ ...completed(request), status: "failed" })) });
+    const db = ledger(h.root);
+    let release!: () => void;
+    const original = WorktreeManager.prototype.prepare;
+    const prepare = vi.spyOn(WorktreeManager.prototype, "prepare").mockImplementationOnce(async function (this: WorktreeManager, ...args) {
+      await new Promise<void>(resolve => { release = resolve; });
+      return original.apply(this, args);
+    });
+    const pending = h.service.executeCurrentPlan(h.workItemId);
+    void pending.catch(() => undefined);
+    let other: CandidateExecutor | undefined;
+    try {
+      await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+      expect(db.prepare("SELECT count(*) AS n FROM collaboration_execution_sessions").get()).toEqual({ n: 1 });
+      const lease = currentInstanceLease(db)!;
+      const sibling = h.service.ingestDingTalkMessage({ ...inbound(), sourceEventId: "sibling-execution", transportMessageId: "sibling-transport", conversationId: "sibling-conversation" });
+      if (!sibling.workItemId) throw new Error("Expected sibling Work Item");
+      h.service.reviseWorkItemDefinition(sibling.workItemId, {
+        goal: "同仓库的另一个修改", goalConfirmed: true, repository: h.repo,
+        acceptanceConditions: [{ description: "另一个值已更新", observation: "pnpm test target" }], blockingAmbiguities: [],
+      });
+      other = new CandidateExecutor(join(h.root, "data", "collaboration", "collaboration.sqlite"), {
+        ...h.execution, scheduler: { ownerId: lease.ownerId, leaseTtlMs: 60000 },
+      });
+      await expect(other.executeCurrentPlan(h.workItemId)).rejects.toThrow("execution_repository_unsettled");
+      await expect(other.executeCurrentPlan(sibling.workItemId)).rejects.toThrow("execution_repository_unsettled");
+      const childResult = execFileSync(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", `
+        const { CandidateExecutor } = await import(process.argv[1]);
+        const fail = () => { throw new Error('child_must_not_execute'); };
+        const executor = new CandidateExecutor(process.argv[2], {
+          ...JSON.parse(process.argv[3]), agent: {run:fail, interrupt:fail}, commandRunner:{run:fail},
+          containment:{verifyProof:fail,inspect:fail,terminateAndWaitEmpty:fail},
+        });
+        try {
+          await executor.executeCurrentPlan(process.argv[4]);
+          throw new Error('child_execution_was_not_blocked');
+        } catch(error) {
+          if (error.message !== 'execution_repository_unsettled') throw error;
+          console.log('repository_blocked');
+        }
+      `, new URL("./executor.ts", import.meta.url).href,
+      join(h.root, "data", "collaboration", "collaboration.sqlite"), JSON.stringify({
+        managedWorktreeRoot: h.execution.managedWorktreeRoot, repositories: h.execution.repositories,
+        limits: h.execution.limits, scheduler: { ownerId: lease.ownerId, leaseTtlMs: 60000 },
+      }), sibling.workItemId], { encoding: "utf8", timeout: 10000, env: { ...process.env, NODE_NO_WARNINGS: "1" } });
+      expect(childResult.trim()).toBe("repository_blocked");
+      expect(prepare).toHaveBeenCalledTimes(1);
+      expect(() => db.exec("DELETE FROM collaboration_execution_sessions")).toThrow("immutable");
+      release(); await pending;
+      expect(db.prepare("SELECT count(*) AS n FROM collaboration_execution_settlements").get()).toEqual({ n: 1 });
+    } finally { release?.(); await pending.catch(() => undefined); other?.close(); h.service.close(); db.close(); prepare.mockRestore(); }
+  });
+
+  it("does not settle a failed Agent whose processes are still present", async () => {
+    const containment = new FakeContainment();
+    containment.inspect = async identity => ({ state: "active", fingerprint: runtimeIdentityFingerprint(identity) });
+    const h = setup({ containment, agent: new FakeAgent(request => ({ ...completed(request), status: "failed" })) });
+    try {
+      await expect(h.service.executeCurrentPlan(h.workItemId)).rejects.toThrow(CommandCleanupError);
+      const db = ledger(h.root);
+      try {
+        expect(db.prepare("SELECT count(*) AS n FROM collaboration_execution_settlements").get()).toEqual({ n: 0 });
+        expect(db.prepare("SELECT count(*) AS n FROM collaboration_execution_proofs").get()).toEqual({ n: 1 });
+        await expect(h.service.executeCurrentPlan(h.workItemId)).rejects.toThrow("execution_repository_unsettled");
+      } finally { db.close(); }
+    } finally { h.service.close(); }
+  });
+
+  it("makes durable modification and verification reservations mutually exclusive", async () => {
+    const h = setup({ agent: new FakeAgent(request => {
+      writeFileSync(join(request.cwd, "src", "value.txt"), "after\n"); return completed(request);
+    }) });
+    const db = ledger(h.root);
+    try {
+      const candidate = await h.service.executeCurrentPlan(h.workItemId);
+      const lease = currentInstanceLease(db)!;
+      const execution = new ExecutionLifecycle(db, "pending-modification", lease);
+      execution.reserve({ workItemId: h.workItemId, planRevision: 1, repository: h.repo, baseSha: h.baseSha, attempt: 2 });
+      expect(() => reserveVerification(db, candidate.runId, lease, Date.now())).toThrow("execution_repository_unsettled");
+      expect(await execution.settle(new FakeContainment())).toBe(true);
+      const verification = reserveVerification(db, candidate.runId, lease, Date.now());
+      const prepare = vi.spyOn(WorktreeManager.prototype, "prepare");
+      try {
+        await expect(h.service.executeCurrentPlan(h.workItemId)).rejects.toThrow("execution_repository_unsettled");
+        expect(prepare).not.toHaveBeenCalled();
+      } finally { prepare.mockRestore(); }
+      expect(await settleVerification(db, verification, lease, new FakeContainment(), Date.now, () => true)).toBe(true);
+    } finally { h.service.close(); db.close(); }
+  });
+
+  it("retains repository ownership when developer self-test process cleanup is unknown", async () => {
+    const h = setup({ agent: new FakeAgent(request => {
+      writeFileSync(join(request.cwd, "src", "value.txt"), "after\n"); return completed(request);
+    }), commandRunner: { async run() { throw new CommandCleanupError(new Error("self-test cleanup unknown")); } } });
+    try {
+      await expect(h.service.executeCurrentPlan(h.workItemId)).rejects.toThrow(CommandCleanupError);
+      const db = ledger(h.root);
+      try {
+        expect(db.prepare("SELECT count(*) AS n FROM collaboration_execution_commands").get()).toEqual({ n: 2 });
+        expect(db.prepare("SELECT count(*) AS n FROM collaboration_execution_settlements").get()).toEqual({ n: 0 });
+        await expect(h.service.executeCurrentPlan(h.workItemId)).rejects.toThrow("execution_repository_unsettled");
+      } finally { db.close(); }
+      h.service.close();
+      const replacement = new CandidateExecutor(join(h.root, "data", "collaboration", "collaboration.sqlite"), h.execution);
+      try {
+        await expect(replacement.executeCurrentPlan(h.workItemId)).rejects.toThrow("execution_repository_unsettled");
+      } finally { replacement.close(); }
+    } finally { h.service.close(); }
+  });
+
   it("creates a traceable local candidate and exact target-test evidence without touching the original worktree", async () => {
     const agent = new FakeAgent((request) => {
       expect(request.capabilities).toEqual({
@@ -390,20 +510,17 @@ describe("trusted candidate executor", () => {
     second.service.close();
   });
 
-  it("finalizes a rejected Agent launch instead of leaving a running Run", async () => {
+  it("keeps a rejected Agent launch with no process proof fenced even when the Run is terminal", async () => {
     const agent: AgentRunPort = {
       run: async () => { throw new Error("setpriv failed"); },
       interrupt: async () => {},
     };
     const harness = setup({ agent });
-    const outcome = await harness.service.executeCurrentPlan(harness.workItemId);
-    expect(outcome).toMatchObject({
-      resultSha: null,
-      report: { state: "needs_configuration", reasons: ["provider_sandbox_unavailable"] },
-    });
+    await expect(harness.service.executeCurrentPlan(harness.workItemId)).rejects.toThrow(CommandCleanupError);
     harness.service.close();
     const database = ledger(harness.root);
     expect(database.prepare("SELECT status FROM collaboration_runs").get()).toEqual({ status: "needs_configuration" });
+    expect(database.prepare("SELECT count(*) AS n FROM collaboration_execution_settlements").get()).toEqual({ n: 0 });
     database.close();
   });
 
@@ -537,7 +654,8 @@ describe("trusted candidate executor", () => {
     });
     const interrupted: string[] = [];
     const agent: AgentRunPort = {
-      run(request) {
+      async run(request) {
+        await request.registerContainment(proofForBinding(request.containmentBinding));
         captured = request;
         request.emit({ threadId: request.threadId, turnId: request.turnId, type: "progress", message: "before pause" });
         signalStarted?.();

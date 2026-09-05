@@ -3,14 +3,11 @@ import { realpathSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 import { verifyContainmentProof, type ContainmentBinding, type ContainmentPort, type ContainmentProof } from "./containment.ts";
 import { assertCurrentInstanceLease, type InstanceLease } from "./leases.ts";
+import { hasUnsettledExecution, hasUnsettledVerification } from "./repository-occupancy.ts";
+export { hasUnsettledVerification } from "./repository-occupancy.ts";
 
 type Lease = Pick<InstanceLease,"ownerId"|"fence">;
 const canonical = (path: string) => { try { return realpathSync(path); } catch { return path; } };
-
-export function hasUnsettledVerification(db: DatabaseSync, repository: string): boolean {
-  return !!db.prepare("SELECT 1 FROM collaboration_verification_sessions s LEFT JOIN collaboration_verification_settlements f ON f.session_id=s.id WHERE s.repository_path=? AND f.session_id IS NULL LIMIT 1")
-    .get(canonical(repository));
-}
 
 function transaction<T>(db: DatabaseSync, lease: Lease, now: number, operation: () => T): T {
   db.exec("BEGIN IMMEDIATE");
@@ -28,6 +25,7 @@ export function reserveVerification(db: DatabaseSync, runId: string, lease: Leas
     if(!row) throw new Error("verification_target_unavailable");
     const repository=canonical(row.repository_path);
     if(hasUnsettledVerification(db,repository)) throw new Error("verification_repository_unsettled");
+    if(hasUnsettledExecution(db,repository)) throw new Error("execution_repository_unsettled");
     const id=randomUUID();
     db.prepare("INSERT INTO collaboration_verification_sessions(id,candidate_run_id,repository_path,plan_revision,snapshot_revision,candidate_sha,instance_owner,instance_fence,created_at) VALUES(?,?,?,?,?,?,?,?,?)")
       .run(id,runId,repository,row.plan_revision,row.snapshot_revision,row.result_sha,lease.ownerId,lease.fence,now);

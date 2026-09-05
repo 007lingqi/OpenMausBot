@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { OPENMAUSBOT_SOURCE_BASELINE } from "./config.ts";
 
-export const COLLABORATION_SCHEMA_VERSION = 19;
+export const COLLABORATION_SCHEMA_VERSION = 20;
 
 interface Migration {
   version: number;
@@ -1110,6 +1110,41 @@ const migrations: readonly Migration[] = [
         database.exec(`CREATE TRIGGER verification_${table}_no_${operation.toLowerCase()} BEFORE ${operation} ON collaboration_verification_${table}
           BEGIN SELECT RAISE(ABORT,'verification lifecycle is immutable'); END;`);
       }
+    },
+  },
+  {
+    version: 20, name: "durable-execution-lifecycle", checksum: "v20:execution-sessions-commands-proofs-settlements",
+    apply(database) {
+      database.exec(`
+        CREATE TABLE collaboration_execution_sessions (
+          id TEXT PRIMARY KEY, work_item_id TEXT NOT NULL, plan_revision INTEGER NOT NULL,
+          repository_path TEXT NOT NULL, base_sha TEXT NOT NULL, attempt INTEGER NOT NULL CHECK(attempt>0),
+          instance_owner TEXT NOT NULL, instance_fence INTEGER NOT NULL, created_at INTEGER NOT NULL,
+          UNIQUE(work_item_id,attempt),
+          FOREIGN KEY(work_item_id,plan_revision) REFERENCES collaboration_plan_revisions(work_item_id,revision)
+        ) STRICT;
+        CREATE INDEX execution_sessions_repository ON collaboration_execution_sessions(repository_path);
+        CREATE TABLE collaboration_execution_commands (
+          session_id TEXT NOT NULL REFERENCES collaboration_execution_sessions(id), ordinal INTEGER NOT NULL,
+          binding_json TEXT NOT NULL CHECK(json_valid(binding_json)), created_at INTEGER NOT NULL,
+          PRIMARY KEY(session_id,ordinal)
+        ) STRICT;
+        CREATE TABLE collaboration_execution_proofs (
+          session_id TEXT NOT NULL, ordinal INTEGER NOT NULL, proof_json TEXT NOT NULL CHECK(json_valid(proof_json)), created_at INTEGER NOT NULL,
+          PRIMARY KEY(session_id,ordinal), FOREIGN KEY(session_id,ordinal) REFERENCES collaboration_execution_commands(session_id,ordinal)
+        ) STRICT;
+        CREATE TABLE collaboration_execution_settlements (
+          session_id TEXT PRIMARY KEY REFERENCES collaboration_execution_sessions(id),
+          evidence_json TEXT NOT NULL CHECK(json_valid(evidence_json)), created_at INTEGER NOT NULL
+        ) STRICT;
+      `);
+      for (const table of ["sessions", "commands", "proofs", "settlements"]) for (const operation of ["UPDATE", "DELETE"]) {
+        database.exec(`CREATE TRIGGER execution_${table}_no_${operation.toLowerCase()} BEFORE ${operation} ON collaboration_execution_${table}
+          BEGIN SELECT RAISE(ABORT,'execution lifecycle is immutable'); END;`);
+      }
+      for (const table of ["commands", "proofs"]) database.exec(`CREATE TRIGGER execution_${table}_open BEFORE INSERT ON collaboration_execution_${table}
+        WHEN EXISTS(SELECT 1 FROM collaboration_execution_settlements WHERE session_id=NEW.session_id)
+        BEGIN SELECT RAISE(ABORT,'execution already settled'); END;`);
     },
   },
 ];

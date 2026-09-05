@@ -17,6 +17,15 @@
 
 ## 本批执行记录
 
+### 执行层持久仓库占用与自测清理（2026-09-06 最新）
+
+- 上一批 7331c53 为已验证进展。本批 schema 20 增加 execution sessions/commands/proofs/settlements，不再依靠运行记录的终态标签释放占用。从 prepare 前同步事务预留固定仓库、事项/计划、base SHA、attempt 和实例 fence；同事项 attempt 不可重复使用。
+- Agent 与每条自测命令调用前预留、独立证明登记成功后保存证明；执行结束重验全部证明和 empty fingerprint，再以当前 lease 原子结算。失败但进程仍 active、缺证明、清理未知、lease 丢失或关库均保留占用；自测 CommandCleanupError 不再被降为普通配置结果。
+- 修改和复核预留互查，headless 调度/直接执行及完成门禁查询两类未结算记录；底层 CandidateExecutor 同样参与互斥。真实第二连接/独立 Node 子进程检查 prepare 期间占用，另有失败活进程、自测未知、新执行器接管、双向修改/复核互斥、v19→v20 升级及不可变记录测试。
+- 相关整组 68 文件 / 490 项、typecheck、服务端编译和 diff 检查通过（72596 exit 0）。随后仅补充“不同事项、同仓库”竞争测试断言，针对性测试及 typecheck/diff 检查通过（69868 exit 0），生产代码未再改；详见 VERIFY。未运行本批全仓 pnpm test，没有部署 schema 20 或修改原 Docker/群聊/模型/凭据。
+- 按 goal-protocol 保存本批验证边界及 16 个任务文件的本地提交，用户 AGENTS.md、outputs/ 不纳入；无运行中验证命令或未解决测试失败。
+- 下一步：遗留 v19 及更早运行的迁移隔离/受控恢复，schema 20 未结算 session 的安全清理与续办，崩溃/强制重启和真实 Docker 六场景。当前只持久防止不明运行被重放；没有宣称旧历史运行自动回填安全或重启已自动恢复成功。Goal active。
+
 ### 底层复核持久占用与迟到结果（2026-09-06 最新）
 
 - 上一批 deeb2f2 及完整回归是已验证进展。本批检查发现 schema 19 生命周期只在 runtime 包装层，独立 CandidateVerificationCoordinator 可以绕过持久占用；先将同一机制下沉，避免创建第二套复核状态。

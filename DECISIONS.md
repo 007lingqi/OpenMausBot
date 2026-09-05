@@ -1,5 +1,12 @@
 # Meta 协作决策记录
 
+## D-042 — 执行终态不是释放仓库的证据
+
+- schema 20 在 prepare 前以 BEGIN IMMEDIATE 检查修改/复核未结算记录并插入 execution session；所有底层执行入口必须经过此处，和复核器对执行占用的检查形成同一 SQLite 互斥边界。固定 run id、base SHA、事项/计划、attempt 和实例 fence，不用可过期的内存锁代替恢复证据。
+- 每次 Agent/自测调用先记 command，经过独立注册校验再保存 proof；结束时逐个重验 binding 和 empty fingerprint，并在原有效 lease 下插入不可变 settlement。未知/缺证明/清理异常均保留占用，哪怕旧 Run 已写入失败终态也不能放行新执行或最终完成。
+- 纯配置缺失、未进入 runner 的步骤不虚构进程。prepare 返回普通已收束错误时零命令可结算；CommandCleanupError 保留预留。没有证明的 Agent 启动拒绝仍须人工检查，不冒充已确认未启动。
+- 迁移新增表及约束，不自动推断旧版本进程已退出，也不自动解锁遗留 session。本批不部署 schema 20；跨版本恢复协议与真实进程终止/主机重启另行验收。
+
 ## D-041 — 持久复核生命周期属于复核器，不属于可绕过的运行时包装
 
 - 保留 schema 19 作为唯一复核状态，预留/命令/证明/结算迁入 CandidateVerificationCoordinator。headless 只负责运行状态、取消与未收束降级，不再重复预留；直接复核同样不能跳过租约和账本检查。

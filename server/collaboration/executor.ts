@@ -28,6 +28,8 @@ import {
 } from "./quality-gate.ts";
 import { WorktreeManager, type ManagedWorktree } from "./worktree-manager.ts";
 import { assertLedgerArmed } from "./restore-guard.ts";
+import { ExecutionLifecycle } from "./execution-lifecycle.ts";
+import { CommandCleanupError } from "./execution-limits.ts";
 
 interface NodeRow {
   node_id: string;
@@ -136,6 +138,51 @@ export class CandidateExecutor {
     const configured = Object.entries(this.options.repositories).find(([path]) => realpathSync(path) === repository)?.[1];
     if (!configured) throw new Error("Work Item repository is not configured for execution");
     const runId = randomUUID();
+    const lifecycle = new ExecutionLifecycle(this.database, runId, instance);
+    lifecycle.reserve({ workItemId, planRevision: node.current_plan_revision, repository, baseSha: configured.baseSha, attempt });
+    let ordinal = 0;
+    let cleanupUnknown = false;
+    const agent: AgentRunPort = {
+      run: async request => {
+        const command = ++ordinal;
+        lifecycle.command(command, request.containmentBinding);
+        try {
+          return await this.options.agent.run({ ...request, registerContainment: async proof => {
+            await request.registerContainment(proof);
+            lifecycle.proof(command, proof);
+          } });
+        } catch (error) { if (error instanceof CommandCleanupError) cleanupUnknown = true; throw error; }
+      },
+      interrupt: run => this.options.agent.interrupt(run),
+    };
+    const commandRunner: SandboxedCommandRunner | undefined = this.options.commandRunner ? { run: async request => {
+      const command = ++ordinal;
+      lifecycle.command(command, request.containmentBinding);
+      try {
+        return await this.options.commandRunner.run({ ...request, registerContainment: async proof => {
+          await request.registerContainment(proof);
+          lifecycle.proof(command, proof);
+        } });
+      } catch (error) { if (error instanceof CommandCleanupError) cleanupUnknown = true; throw error; }
+    } } : undefined;
+    try {
+      return await this.executeReserved({ workItemId, attempt, now, node, repository, configured, runId, instance, agent, commandRunner });
+    } catch (error) { if (error instanceof CommandCleanupError) cleanupUnknown = true; throw error; }
+    finally {
+      let settled = false;
+      if (!cleanupUnknown) {
+        try { settled = await lifecycle.settle(this.options.containment); }
+        catch { /* Lost lease, closed database or unknown process state must retain repository ownership. */ }
+      }
+      if (!settled) throw new CommandCleanupError(new Error("execution_session_unsettled"));
+    }
+  }
+
+  private async executeReserved({ workItemId, attempt, now, node, repository, configured, runId, instance, agent, commandRunner }: {
+    workItemId: string; attempt: number; now: number; node: NodeRow; repository: string;
+    configured: RepositoryExecutionConfig; runId: string; instance: InstanceLease;
+    agent: AgentRunPort; commandRunner: SandboxedCommandRunner | undefined;
+  }): Promise<CandidateExecutionOutcome> {
     const threadId = `collaboration-${runId}`;
     const turnId = randomUUID();
     const worktree = await this.worktrees.prepare({
@@ -170,7 +217,7 @@ export class CandidateExecutor {
     let eventSequence = 0;
     let acceptingEvents = true;
     let eventLimitExceeded = false;
-    const runPromise = this.options.agent.run({
+    const runPromise = agent.run({
       runId,
       threadId,
       turnId,
@@ -269,7 +316,7 @@ export class CandidateExecutor {
     if (interruptPoll) clearInterval(interruptPoll);
     if (timedOut || eventLimitExceeded || ownerInterrupted) {
       if (ownerInterrupted) controller.abort(new Error("Owner interrupted Agent run"));
-      await this.options.agent.interrupt(runId);
+      await agent.interrupt(runId);
       await Promise.race([
         runPromise.catch(() => null),
         new Promise((resolve) => setTimeout(resolve, this.options.limits.interruptGraceMs)),
@@ -429,7 +476,7 @@ export class CandidateExecutor {
         environment: worktree.environment,
         commandIds: parseStrings(node.target_commands_json),
         commands: configured.targetCommands,
-        runner: this.options.commandRunner,
+        runner: commandRunner,
         containment: this.options.containment,
         containmentContext: {
           runId,
@@ -444,6 +491,7 @@ export class CandidateExecutor {
         ? renderCandidateStatus({ modified: true, needsConfiguration: tests.configurationProblems })
         : renderCandidateStatus({ modified: true, evidence: testEvidence });
     } catch (error) {
+      if (error instanceof CommandCleanupError) throw error;
       report = renderCandidateStatus({ modified: true, needsConfiguration: [errorMessage(error)] });
     }
     if ((await this.worktrees.currentHead(worktree)) !== resultSha || (await this.worktrees.status(worktree)).length) {
