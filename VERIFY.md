@@ -1,5 +1,13 @@
 # Meta 协作验证记录
 
+## 2026-09-06 全仓基线与恢复通知投递门禁（最新）
+
+- 修改前保持 18f4176 源码不变，`pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-background-recovery-full-typecheck && git diff --check` 全链通过（51696 exit 0）。包括主 Vitest/test-floor、broker、Electron 测试与无 node_modules 打包启动/九个代理路径检查。中段工具输出被截断，未保留精确主测试数量，不提供推算值。这是修改前基线，不能冒充后续代码的全仓回归。
+- 最终修改后 `pnpm vitest run server/collaboration/operations/runtime-lifecycle-recovery.test.ts server/collaboration/outbox-dispatcher.test.ts server/collaboration-headless.test.ts && pnpm typecheck && pnpm vitest run server/collaboration server/integrations/dingtalk server/collaboration-headless.test.ts && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-recovery-notice-typecheck && git diff --check` 全链通过（54390 exit 0）：针对性 3 文件 / 34 项；相关整组 70 文件 / 544 项，02:22:25 开始、65.01 秒，类型检查及服务端编译通过。此后只更新文档，代码/测试未再改变。
+- 11 个新增案例覆盖：当前有效 blocked/recovered 提示可投递，暂停、取消、新贡献、旧占用已结算、重试后暂停、过期 claim 接管、恢复后又有同仓库活动时抑制过期提示；当前/上一版合成恢复事件通过真实 headless 装配与 session sender 的受控 fetch 关联到所属任务消息，不读真实凭据或依赖卡片模板。
+- 首轮先行六项失败（7847）复现旧提示仍发送/重试及装配未公开；实现后 30 项与 typecheck 通过（63751）。随后旧 work_item 格式单项复现 delivery_unroutable，补兼容后最终整组通过。权限审查第一次超时未启动命令，只重试一次确认启动 54390 并一直跟进同一句柄。当前无未解决测试失败或运行中验证句柄。
+- 仅临时 Git/SQLite、受控 HTTP/fetch、既有本地子进程与打包 smoke；未调用真实钉钉/模型/在线文档，未部署容器或修改 Owner/凭据。没有证明网络请求已开始后仍可撤回消息，也没有完成无 session 的恢复投递和多群主动路由。后续改动后的全仓复跑及全产品真实验收仍待完成，Goal active。
+
 ## 2026-09-06 后台恢复、通知与安全续排（最新）
 
 - 最终全链 `pnpm vitest run server/collaboration/operations/runtime-verification-retry.test.ts -t 'abandoned zero-command' && pnpm typecheck && git diff --check && pnpm vitest run server/collaboration server/integrations/dingtalk server/collaboration-headless.test.ts && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-runtime-lifecycle-recovery-typecheck` 通过（41694 exit 0）。整组 70 文件 / 533 项，02:04:36 开始、63.20 秒；类型检查及服务端编译通过。之后仅更新状态文档，生产代码与测试未再改。未运行本批全仓 pnpm test。

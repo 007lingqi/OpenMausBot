@@ -1725,7 +1725,7 @@ export class CollaborationHeadlessRuntime {
         "AND NOT EXISTS(SELECT 1 FROM collaboration_outbox WHERE source='dingtalk' AND source_event_id=?)",
       ).get(session.work_item_id, session.plan_revision, sourceEventId) as { version: number; goal: string } | undefined;
       if (current) enqueueInboundCard(db, {
-        sourceEventId, aggregateType: "work_item", aggregateId: session.work_item_id, aggregateVersion: current.version,
+        sourceEventId, aggregateType: "plan", aggregateId: session.work_item_id, aggregateVersion: current.version,
         card: renderCommandStatusCard({ command: "status", workItemId: session.work_item_id, outcome: "allowed", presentation: "business",
           summary: `“${current.goal.slice(0, 200)}”：` + (outcome.state === "blocked"
             ? "服务已恢复，但还不能确认上次处理是否彻底结束。为避免重复修改，该项目的后续处理暂缓，需要负责人检查。"

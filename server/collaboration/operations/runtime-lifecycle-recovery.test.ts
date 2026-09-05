@@ -11,6 +11,11 @@ import { recoverLifecycleSession } from "../lifecycle-recovery.ts";
 import { containmentBindingHash, runtimeIdentityFingerprint, type ContainmentPort, type ContainmentInspection } from "../containment.ts";
 import { CollaborationHeadlessRuntime } from "./runtime.ts";
 import { renderDingTalkSessionMessage } from "../../integrations/dingtalk/session-message.ts";
+import { OutboxDispatcher } from "../outbox-dispatcher.ts";
+import { currentInstanceLease } from "../leases.ts";
+import { createDingTalkDelivery } from "../../collaboration-headless.ts";
+import { DingTalkSessionReplyRegistry } from "../../integrations/dingtalk/reply-router.ts";
+import type { OutboxDeliveryPort } from "../outbox.ts";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -47,6 +52,51 @@ async function fixture() {
 }
 
 describe("runtime passive lifecycle recovery", () => {
+  it.each(["unchanged", "pause", "cancel", "new_contribution", "settled", "retry_pause", "expired_claim", "recovered", "new_activity"] as const)("revalidates recovery notice at delivery: %s", async change => {
+    const f = await fixture(); const runtime = f.runtime(); let sends = 0;
+    try {
+      if (change === "recovered" || change === "new_activity") f.containment.inspect = async identity => ({ state: "empty", fingerprint: runtimeIdentityFingerprint(identity) });
+      await runtime.start(); await vi.waitFor(() => expect(f.notices()).toHaveLength(1));
+      f.db.exec("UPDATE collaboration_outbox SET delivery_state='sent',sent_at=1 WHERE source_event_id NOT LIKE 'lifecycle-recovery:%'");
+      const lease = currentInstanceLease(f.db)!;
+      const dispatcher = new OutboxDispatcher(f.db, { async deliver() { sends++; return change === "retry_pause" ? { outcome: "retryable", error: "try_later" } : { outcome: "sent" }; } },
+        { maxAttempts: 3, claimTtlMs: 1000, baseBackoffMs: 1, maxBackoffMs: 10 });
+      if (change === "retry_pause") expect((await dispatcher.dispatchOne(lease, Date.now()))?.state).toBe("retry_scheduled");
+      if (change === "pause" || change === "retry_pause" || change === "expired_claim") f.db.prepare("UPDATE collaboration_work_items SET control_state='paused',version=version+1 WHERE id=?").run(f.workItemId);
+      if (change === "expired_claim") f.db.prepare("UPDATE collaboration_outbox SET delivery_state='claimed',claim_owner='expired',claim_fence=1,claim_expires_at=? WHERE source_event_id LIKE 'lifecycle-recovery:%'").run(Date.now()-1);
+      if (change === "new_activity") new ExecutionLifecycle(f.db, "next-execution", lease).reserve({ workItemId: f.workItemId, planRevision: 1, repository: f.root, baseSha: "a".repeat(40), attempt: 2 });
+      if (change === "cancel") f.db.prepare("UPDATE collaboration_work_items SET status='cancelled',control_state='cancelled',version=version+1 WHERE id=?").run(f.workItemId);
+      if (change === "new_contribution") f.db.prepare("UPDATE collaboration_work_items SET version=version+1 WHERE id=?").run(f.workItemId);
+      if (change === "settled") {
+        f.containment.inspect = async identity => ({ state: "empty", fingerprint: runtimeIdentityFingerprint(identity) });
+        await recoverLifecycleSession(f.db, { kind: "execution", sessionId: f.session.id, instance: lease, containment: f.containment, now: Date.now });
+      }
+      await new Promise(resolve => setTimeout(resolve, 5));
+      const shouldSend = change === "unchanged" || change === "recovered";
+      expect(await dispatcher.dispatchOne(lease, Date.now())).toMatchObject({ state: shouldSend ? "sent" : "superseded" });
+      expect(sends).toBe(shouldSend || change === "retry_pause" ? 1 : 0);
+    } finally { await runtime.stop(); f.db.close(); }
+  });
+
+  it.each(["current", "previous"] as const)("routes a %s synthetic recovery event through the real task session without credentials or a card template", async version => {
+    const f = await fixture(); const runtime = f.runtime();
+    const fetcher = vi.fn(async (_url: string | URL, _init?: RequestInit) => new Response(JSON.stringify({ errcode: 0 }), { status: 200 }));
+    vi.stubGlobal("fetch", fetcher);
+    try {
+      await runtime.start(); await vi.waitFor(() => expect(f.notices()).toHaveLength(1));
+      const row = f.db.prepare("SELECT id,aggregate_type,aggregate_id,aggregate_version,kind,dedupe_key,payload_json FROM collaboration_outbox WHERE source_event_id LIKE 'lifecycle-recovery:%'").get() as {
+        id:string; aggregate_type:"work_item"|"plan"; aggregate_id:string; aggregate_version:number; kind:"command_status_card"; dedupe_key:string; payload_json:string;
+      };
+      const sessions = new DingTalkSessionReplyRegistry();
+      sessions.capture({ sourceEventId: "recovery", webhookUrl: "https://api.dingtalk.com/session-fixture", expiresAt: Date.now() + 60000 });
+      const message: Parameters<OutboxDeliveryPort["deliver"]>[0] = { id: row.id, source: "dingtalk", dedupeKey: row.dedupe_key, aggregateType: version === "previous" ? "work_item" : row.aggregate_type,
+        aggregateId: row.aggregate_id, aggregateVersion: row.aggregate_version, kind: row.kind, payload: JSON.parse(row.payload_json) };
+      expect(await createDingTalkDelivery(sessions, {}, f.root).deliver(message)).toEqual({ outcome: "sent" });
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(String(fetcher.mock.calls[0]?.[0])).toBe("https://api.dingtalk.com/session-fixture");
+    } finally { vi.unstubAllGlobals(); await runtime.stop(); f.db.close(); }
+  });
+
   it("repairs the notification gap after settlement persisted but the previous process stopped before enqueue", async () => {
     const f = await fixture(); const runtime = f.runtime();
     f.containment.inspect = async identity => ({ state: "empty", fingerprint: runtimeIdentityFingerprint(identity) });

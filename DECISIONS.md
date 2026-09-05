@@ -1,5 +1,11 @@
 # Meta 协作决策记录
 
+## D-045 — 恢复通知必须在开始投递时仍然真实
+
+- 新增窄范围投递门禁，只识别控制面生成的 lifecycle-recovery 来源；不把历史命令回执一律按版本丢弃。比较 session 所属事项、当前版本/计划/最新快照、active 状态及对应结算；blocked 已解除或 recovered 后又有同仓库活动时不发旧提示。门禁同样应用于重试与过期 claim 接管。
+- 通知入队改用 plan 关联，使 headless 从实际任务消息选择回复 session；旧 work_item 类型合成恢复事件也解析到任务消息，保留原始去重键。通过实际发送装配和受控 fetch 验证，不新增 cardTemplateId 或读取真实凭据。
+- Outbox 判断完成到外部服务接收之间不存在跨系统事务。本批只承诺开始 transport 前的状态校验，主动发送等待 token/已在途请求的最终检查、无 session 的可恢复路由以及多群主动路由仍需独立设计和验证，不能声称任何时刻都可撤回旧消息。
+
 ## D-044 — 恢复后台化，但不把退出检查变成自动重做
 
 - startup 的 legacy 扫描排除已有 execution session 的 Run，交由进入 running 后的一次性被动恢复；未持久化旧 Run 的原恢复协议不在本批重写。按 canonical repository 分组，至多四组并发、同组串行，每项五秒超时后停止本次检查。只有被动 authority 读取可放弃等待，绝不能用此取消方法冒充终止 Agent/测试进程。

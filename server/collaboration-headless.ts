@@ -233,7 +233,7 @@ export function readDingTalkAllowedConversationIds(environment: NodeJS.ProcessEn
   return preferredIds ?? legacyIds!;
 }
 
-function createDingTalkDelivery(
+export function createDingTalkDelivery(
   sessions: DingTalkSessionReplyRegistry,
   environment: NodeJS.ProcessEnv,
   dataDirectory: string,
@@ -249,7 +249,8 @@ function createDingTalkDelivery(
   return {
     async deliver(message) {
       const routedSourceEventId =
-        message.aggregateType === "plan"
+        message.aggregateType === "plan" ||
+        (message.aggregateType === "work_item" && message.dedupeKey.startsWith("dingtalk:event:lifecycle-recovery:"))
           ? latestWorkItemSourceEventId(databaseFile, message.aggregateId) ?? sourceEventId(message.dedupeKey)
           : sourceEventId(message.dedupeKey);
       let payload = message.payload;

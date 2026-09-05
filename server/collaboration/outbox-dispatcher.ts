@@ -3,10 +3,12 @@ import type { DatabaseSync } from "node:sqlite";
 import { assertCurrentInstanceLease, type InstanceLease, StaleFenceError } from "./leases.ts";
 import type { CollaborationOutboxEntry, OutboxDeliveryPort } from "./outbox.ts";
 import { assertLedgerArmed } from "./restore-guard.ts";
+import { isCurrentRecoveryNotification } from "./recovery-notification.ts";
 
 interface DispatchRow {
   id: string;
   source: "dingtalk";
+  source_event_id: string;
   dedupe_key: string;
   aggregate_type: CollaborationOutboxEntry["aggregateType"];
   aggregate_id: string;
@@ -89,7 +91,7 @@ export class OutboxDispatcher {
       ).run(now);
       const row = this.database
         .prepare(
-          "SELECT candidate.id, candidate.source, candidate.dedupe_key, candidate.aggregate_type, " +
+          "SELECT candidate.id, candidate.source, candidate.source_event_id, candidate.dedupe_key, candidate.aggregate_type, " +
             "candidate.aggregate_id, candidate.aggregate_version, candidate.kind, candidate.payload_json, " +
             "candidate.attempt, candidate.supersession_key FROM collaboration_outbox candidate " +
             "WHERE candidate.sent_at IS NULL AND candidate.superseded_at IS NULL AND candidate.next_attempt_at <= ? " +
@@ -137,7 +139,7 @@ export class OutboxDispatcher {
           "AND newer.aggregate_version > current.aggregate_version AND newer.superseded_at IS NULL)",
       )
       .get(row.id, instance.ownerId, instance.fence, now);
-    if (current) return true;
+    if (current && isCurrentRecoveryNotification(this.database, row)) return true;
     const updated = this.database
       .prepare(
         "UPDATE collaboration_outbox SET delivery_state = 'superseded', superseded_at = ?, " +
