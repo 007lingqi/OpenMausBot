@@ -97,6 +97,9 @@ export function decideMessageAssociation(
     if (reply?.work_item_id) {
       return { kind: "associate", workItemId: reply.work_item_id };
     }
+    // A reply is an explicit context choice. Missing/foreign/unassigned parents
+    // must not fall through to recency, continuation keywords, or new-task guesses.
+    return ambiguous(activeWorkItems(database, input.conversationId));
   }
 
   if (EXPLICIT_NEW_TOPIC.test(input.text)) return { kind: "create" };

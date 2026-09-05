@@ -23,7 +23,52 @@ function setup(associate: (request: NaturalAssociationRequest) => Promise<unknow
     db: new DatabaseSync(join(directory, "collaboration", "collaboration.sqlite")) };
 }
 describe("natural group association before requirement interpretation", () => {
-  it.each(["unsent", "other_person", "other_group", "expired", "multiple", "closed", "out_of_range", "intervening_question"] as const)("does not apply an ungrounded ordinal: %s", async (mode) => {
+  it.each(["foreign", "unassigned", "cancelled", "accepted"])("keeps a quoted reply unresolved when its late parent is %s", async mode => {
+    let calls = 0;
+    const h = setup(async () => { calls++; throw new Error("must not guess the quoted context"); });
+    try {
+      const target = h.service.ingestDingTalkMessage(message("first", "登录失败提示"));
+      h.service.ingestDingTalkMessage({ ...message("child", "就是这个意思"), replyToSourceEventId: "parent" });
+      for (let i=0;i<3;i++) await h.service.processNaturalIntake();
+      if (mode === "foreign") h.service.ingestDingTalkMessage({ ...message("parent", "新任务：导出失败"), conversationId: "another-group" });
+      else if (mode === "unassigned") h.service.ingestDingTalkMessage({ ...message("parent", "这个也一样"), replyToSourceEventId: "child" });
+      else {
+        h.service.ingestDingTalkMessage({ ...message("parent", "网络错误时"), replyToSourceEventId: "first" });
+        h.db.prepare("UPDATE collaboration_work_items SET status=? WHERE id=?").run(mode, target.workItemId!);
+      }
+      for (let i=0;i<6;i++) await h.service.processNaturalIntake();
+      expect(calls).toBe(0);
+      expect(h.db.prepare("SELECT work_item_id FROM collaboration_external_events WHERE source_event_id='child'").get()).toEqual({ work_item_id: null });
+      expect(h.db.prepare("SELECT count(*) n FROM collaboration_work_item_events e JOIN collaboration_external_events x ON x.id=e.external_event_id WHERE x.source_event_id='child'").get()).toEqual({ n: 0 });
+    } finally { h.service.close(); h.db.close(); }
+  });
+  it("does not let the model guess an unknown quoted message and follows a late known parent after restart", async () => {
+    let calls = 0;
+    const h = setup(async request => { calls++; return { version: 1, sourceEventId: request.sourceEventId, decision: "associate",
+      workItemId: request.candidates[0].id, quote: request.text, confidence: "high" }; });
+    try {
+      const first = h.service.ingestDingTalkMessage(message("first", "登录错误显示原因"));
+      h.service.ingestDingTalkMessage({ ...message("reply", "补充：超时也显示"), replyToSourceEventId: "late-parent" });
+      for (let i=0;i<3;i++) await h.service.processNaturalIntake();
+      expect(h.db.prepare("SELECT work_item_id FROM collaboration_external_events WHERE source_event_id='reply'").get()).toEqual({ work_item_id: null });
+      expect(calls).toBe(0);
+      h.service.ingestDingTalkMessage({ ...message("late-parent", "补充：网络错误"), replyToSourceEventId: "first" });
+      h.service.close();
+      const restarted = startCollaborationService(h.options);
+      try {
+        for (let i=0;i<5;i++) await restarted.processNaturalIntake();
+        expect(h.db.prepare("SELECT work_item_id FROM collaboration_external_events WHERE source_event_id='reply'").get()).toEqual({ work_item_id: first.workItemId });
+        expect(calls).toBe(0);
+        expect(h.db.prepare("SELECT count(*) n FROM collaboration_work_item_events e JOIN collaboration_external_events x ON x.id=e.external_event_id WHERE x.source_event_id='reply'").get()).toEqual({ n: 1 });
+        const proof = h.db.prepare("SELECT proposal_json FROM collaboration_natural_association_jobs j JOIN collaboration_external_events e ON e.id=j.event_id WHERE e.source_event_id='reply'").get() as { proposal_json: string };
+        expect(JSON.parse(proof.proposal_json)).toMatchObject({ replySourceEventId: "late-parent", workItemId: first.workItemId });
+        expect(restarted.ingestDingTalkMessage({ ...message("reply", "改写重放不能改变原引用"), replyToSourceEventId: "first" }).duplicate).toBe(true);
+        for (let i=0;i<3;i++) await restarted.processNaturalIntake();
+        expect(h.db.prepare("SELECT count(*) n FROM collaboration_work_item_events e JOIN collaboration_external_events x ON x.id=e.external_event_id WHERE x.source_event_id='reply'").get()).toEqual({ n: 1 });
+      } finally { restarted.close(); }
+    } finally { h.service.close(); h.db.close(); }
+  });
+  it.each(["unsent", "other_person", "other_group", "expired", "multiple", "closed", "out_of_range", "intervening_question", "quoted_other"] as const)("does not apply an ungrounded ordinal: %s", async (mode) => {
     const h = setup(async request => ({ version: 1, sourceEventId: request.sourceEventId, decision: "clarify", workItemId: null, quote: request.text, confidence: "uncertain" }));
     try {
       h.service.ingestDingTalkMessage(message("first", "登录失败提示不准确"));
@@ -52,7 +97,8 @@ describe("natural group association before requirement interpretation", () => {
           { maxAttempts: 3, claimTtlMs: 10000, baseBackoffMs: 100, maxBackoffMs: 1000 });
         await dispatcher.dispatchOne(lease, Date.now());
       }
-      const selection = message("choice", mode === "out_of_range" ? "第三个" : "第二个");
+      const selection = { ...message("choice", mode === "out_of_range" ? "第三个" : "第二个"),
+        ...(mode === "quoted_other" ? { replyToSourceEventId: "another-bot-question" } : {}) };
       if (mode === "other_person") selection.sender = { ...selection.sender, senderStaffId: "other", senderId: "other" };
       if (mode === "other_group") {
         selection.conversationId = "other-group";

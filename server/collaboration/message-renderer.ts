@@ -16,6 +16,7 @@ export interface AssociationChoiceCard {
   candidateWorkItemIds: string[];
   candidateWorkItems: Array<{ id: string; title: string }>;
   allowOrdinalSelection?: boolean;
+  replyContextMissing?: boolean;
 }
 
 export interface InvalidReferenceCard {

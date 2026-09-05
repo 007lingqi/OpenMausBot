@@ -62,6 +62,14 @@ function decide(database: DatabaseSync, text: string, replyToSourceEventId?: str
 }
 
 describe("natural message association", () => {
+  it.each(["补充：失败时显示原因", "这是新问题：支付失败", "第二个"])("does not ignore an unresolved reply when interpreting %s", text => {
+    const db = database();
+    expect(decide(db, text, "unknown-bot-message")).toMatchObject({ kind: "ambiguous", workItemIds: [] });
+    insertWorkItem(db, "WI-AAA1", "登录失败提示", 1);
+    expect(decide(db, text, "unknown-bot-message")).toMatchObject({ kind: "ambiguous" });
+    db.prepare("INSERT INTO collaboration_external_events VALUES ('dingtalk','foreign-parent','other-group','WI-AAA1')").run();
+    expect(decide(db, text, "foreign-parent")).toMatchObject({ kind: "ambiguous" });
+  });
   it("keeps explicit WI references ahead of a different valid reply chain", () => {
     const db = database();
     insertWorkItem(db, "WI-AAA1", "登录失败提示", 1);

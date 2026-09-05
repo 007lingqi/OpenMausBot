@@ -235,6 +235,10 @@ export class InboundMessageProcessor {
         input.association.candidateWorkItems,
       );
       if (this.naturalAssociation) card.allowOrdinalSelection = true;
+      if (input.message.replyToSourceEventId) {
+        card.replyContextMissing = true;
+        card.acknowledgement = "你的补充已保存，但还没能确认你回复的那条消息属于哪个问题。确认前不会开始修改。";
+      }
     } else {
       state = "invalid_reference";
       card = renderInvalidReferenceCard(input.association.reference);

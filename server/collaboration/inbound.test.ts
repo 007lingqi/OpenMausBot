@@ -58,6 +58,28 @@ function scalar(db: DatabaseSync, table: string): number {
 }
 
 describe("fake DingTalk Work Item ingress", () => {
+  it("preserves an unresolved reply without creating a task and explains its missing context", async () => {
+    const directory = temporaryDirectory();
+    const service = startCollaborationService({ dataDirectory: directory });
+    const input = message({ replyToSourceEventId: "unknown-bot-message", text: "补充：超时也显示原因" });
+    const first = service.ingestDingTalkMessage(input);
+    expect(first).toMatchObject({ association: "ambiguous", workItemId: null,
+      card: { replyContextMissing: true, candidateWorkItems: [] } });
+    const { renderDingTalkSessionMessage } = await import("../integrations/dingtalk/session-message.ts");
+    const rendered = JSON.stringify(renderDingTalkSessionMessage(first.card));
+    expect(rendered).toContain("你回复的那条消息");
+    expect(rendered).not.toContain("第二个");
+    expect(rendered).not.toContain("unknown-bot-message");
+    service.close();
+    const restarted = startCollaborationService({ dataDirectory: directory });
+    expect(restarted.ingestDingTalkMessage(input)).toMatchObject({ duplicate: true, workItemId: null, outboxId: first.outboxId });
+    restarted.close();
+    const db = database(directory);
+    expect(scalar(db, "collaboration_work_items")).toBe(0);
+    expect(scalar(db, "collaboration_external_events")).toBe(1);
+    expect(JSON.parse((db.prepare("SELECT normalized_json FROM collaboration_external_events").get() as { normalized_json: string }).normalized_json).replyToSourceEventId).toBe("unknown-bot-message");
+    db.close();
+  });
   it("creates one durable Work Item and received-only primary status acknowledgement", () => {
     const directory = temporaryDirectory();
     const service = startCollaborationService({ dataDirectory: directory });

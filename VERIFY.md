@@ -1,5 +1,12 @@
 # Meta 协作验证记录
 
+## 2026-09-06 引用上下文与乱序续办（当前批）
+
+- TDD 26823 exit 1：association/natural-association 两文件 4 失败 / 32 通过，证明未知引用导致错误新建或模型误归并。初修 61624 exit 0（36 项/typecheck）。新增入站通俗反馈 44000 exit 1（1 失败 / 34 通过），修正后 17641 exit 0（64 项/typecheck/diff）。
+- 最终定向命令：`pnpm vitest run server/collaboration/association.test.ts server/collaboration/inbound.test.ts server/collaboration/natural-association.test.ts server/integrations/dingtalk/sender.test.ts && pnpm typecheck && git diff --check`，77377 exit 0：4 文件 / 68 项。包含乱序引用重启续办、持久来源、重放无重复、跨群/循环/终态原引用不采用、其他引用不套用已发送序号、无任务时只保存澄清和通俗缺上下文提示。
+- 无排除完整命令：`pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-reply-context-typecheck && git diff --check`，86281 exit 0（1dccad）。主集 265 文件通过 / 1 跳过，2,648 项通过 / 18 条件跳过，2,666 注册数达到底线；490.29 秒。broker 7、updater 15、desktop-viewer 5、package-link 2、save-file 10 项均通过；无 node_modules 可达的打包服务及 9 个代理入口通过，类型/独立服务端编译/diff 检查成功。所有验证句柄已终态。
+- 本批 schema 25 不变；测试使用合成事件与受控模型，不是出站机器人回执映射或真实群自然交互验收。未部署、未访问真实模型/文档或运行 Docker，上一批 Docker 证据不能冒充此版验证。
+
 ## 2026-09-06 Owner 需求解释恢复（当前批）
 
 - Stream TDD 首先 3 失败 / 17 通过；恢复实现后 90146 exit 0（53 项/typecheck）。后续新增通知版本漂移回归 84808 exit 1（1 失败 / 13 通过），并被运行中的旧整组 5918 捕获（1 失败 / 642 通过）；均为修复前红灯，不能当作当前未修复失败。

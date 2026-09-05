@@ -56,6 +56,13 @@ export class NaturalAssociationCoordinator {
     this.db.prepare("UPDATE collaboration_natural_association_jobs SET status='failed', claim_token=NULL, lease_until=NULL " +
       "WHERE status='routed' AND projection_attempts>=3 AND (lease_until IS NULL OR lease_until<=?)").run(now);
     this.recoverProjectionNotices(now);
+    // A reply can arrive before its original message, or before that original
+    // message's attribution is resolved. Revisit only now-provable same-group links.
+    this.db.prepare("UPDATE collaboration_natural_association_jobs SET status='pending' WHERE status='clarify' AND attempts<3 " +
+      "AND EXISTS(SELECT 1 FROM collaboration_external_events e JOIN collaboration_external_events parent " +
+      "ON parent.source=e.source AND parent.source_event_id=json_extract(e.normalized_json,'$.replyToSourceEventId') AND parent.conversation_id=e.conversation_id " +
+      "JOIN collaboration_work_items w ON w.id=parent.work_item_id AND w.conversation_id=e.conversation_id " +
+      "WHERE e.id=event_id AND e.work_item_id IS NULL AND e.association_state='ambiguous' AND w.status NOT IN ('cancelled','accepted'))").run();
     const job = this.db.prepare("SELECT e.*, j.attempts, j.status FROM collaboration_natural_association_jobs j JOIN collaboration_external_events e ON e.id=j.event_id " +
       "WHERE j.status='pending' OR (j.status='routed' AND (j.lease_until IS NULL OR j.lease_until<=?)) " +
       "OR (j.status='running' AND j.lease_until<=? AND j.attempts<3) ORDER BY e.received_at,e.rowid LIMIT 1").get(now, now) as Job | undefined;
@@ -69,18 +76,28 @@ export class NaturalAssociationCoordinator {
     const controller = new AbortController(); this.controllers.add(controller);
     const timer = setTimeout(() => controller.abort(), 90_000);
     try {
-      const choice = routeDisplayedChoice(this.db, job, token, now);
+      const quotedSource = JSON.parse(job.normalized_json).replyToSourceEventId as string | null | undefined;
+      const quotedParent = quotedSource ? this.db.prepare("SELECT w.id FROM collaboration_external_events e JOIN collaboration_work_items w ON w.id=e.work_item_id " +
+        "WHERE e.source='dingtalk' AND e.source_event_id=? AND e.conversation_id=? AND w.conversation_id=e.conversation_id AND w.status NOT IN ('cancelled','accepted')")
+        .get(quotedSource, job.conversation_id) as { id: string } | undefined : undefined;
+      if (quotedSource && !quotedParent) {
+        this.db.prepare("UPDATE collaboration_natural_association_jobs SET status='clarify',claim_token=NULL,lease_until=NULL WHERE event_id=? AND claim_token=?")
+          .run(job.id, token);
+        return;
+      }
+      const choice = quotedSource ? null : routeDisplayedChoice(this.db, job, token, now);
       if (choice) {
         if (choice === "clarify") this.db.prepare("UPDATE collaboration_natural_association_jobs SET status='clarify',claim_token=NULL,lease_until=NULL WHERE event_id=? AND claim_token=?").run(job.id, token);
         return; // Both the original contribution and its selection have durable projection jobs.
       }
-      const rows = this.db.prepare("SELECT id,title,version FROM collaboration_work_items WHERE conversation_id=? AND status NOT IN ('cancelled','accepted') ORDER BY updated_at DESC,id LIMIT 21")
-        .all(job.conversation_id) as unknown as Array<{ id: string; title: string; version: number }>;
+      const rows = this.db.prepare("SELECT id,title,version FROM collaboration_work_items WHERE conversation_id=? AND status NOT IN ('cancelled','accepted') " +
+        "AND (? IS NULL OR id=?) ORDER BY updated_at DESC,id LIMIT 21")
+        .all(job.conversation_id, quotedParent?.id ?? null, quotedParent?.id ?? null) as unknown as Array<{ id: string; title: string; version: number }>;
       const history = this.db.prepare("SELECT * FROM collaboration_external_events WHERE conversation_id=? ORDER BY received_at DESC,rowid DESC LIMIT 13")
         .all(job.conversation_id) as unknown as EventRow[];
       const sourceText = String(JSON.parse(job.normalized_json).text);
       const request: NaturalAssociationRequest = { sourceEventId: job.source_event_id, principalId: job.principal_id,
-        text: redactSensitiveText(sourceText).slice(0, 2_000),
+        text: quotedParent ? redactSensitiveText(sourceText) : redactSensitiveText(sourceText).slice(0, 2_000),
         candidates: rows.slice(0, 20).map(row => { const snapshot = readLatestWorkItemSnapshot(this.db, row.id); return {
           ...row, snapshotRevision: snapshot?.revision ?? 0, title: redactSensitiveText(row.title), goal: snapshot?.goal ? redactSensitiveText(snapshot.goal).slice(0, 500) : null,
           questions: this.questions(row.id),
@@ -90,7 +107,8 @@ export class NaturalAssociationCoordinator {
         historyWindowLimited: history.length > 12,
         truncated: rows.length > 20 || sourceText.length > 2_000 || history.slice(0, 12).some(row => String(JSON.parse(row.normalized_json).text).length > 2_000),
       };
-      const raw = await Promise.race([this.associate(request, controller.signal), new Promise<never>((_, reject) => {
+      const raw = quotedParent ? { version: 1, sourceEventId: job.source_event_id, decision: "associate", workItemId: quotedParent.id,
+        quote: request.text.slice(0, 2_000), confidence: "high" } : await Promise.race([this.associate(request, controller.signal), new Promise<never>((_, reject) => {
         controller.signal.addEventListener("abort", () => reject(new Error("natural_association_cancelled")), { once: true });
       })]);
       if (this.stopped) return;
@@ -98,7 +116,7 @@ export class NaturalAssociationCoordinator {
       if (decision.sourceEventId !== job.source_event_id || !request.text.includes(decision.quote) ||
         (decision.decision !== "associate" && decision.workItemId !== null)) throw new Error("natural_association_invalid");
       const unresolvedOrdinal = /^(?:第[一二三四五六七八九十\d]+个|前一个|后一个|上一个|下一个)(?:[，。？！!?\s]|$)/u.test(request.text.trim());
-      if (decision.confidence !== "high" || decision.decision === "clarify" || request.truncated || unresolvedOrdinal) {
+      if (decision.confidence !== "high" || decision.decision === "clarify" || (!quotedParent && (request.truncated || unresolvedOrdinal))) {
         this.db.prepare("UPDATE collaboration_natural_association_jobs SET status='clarify', claim_token=NULL WHERE event_id=? AND claim_token=?").run(job.id, token);
         return; // The original durable business-title clarification remains available.
       }
@@ -111,6 +129,8 @@ export class NaturalAssociationCoordinator {
           "WHERE j.event_id=? AND j.claim_token=? AND j.status='running' AND j.lease_until>? AND e.association_state='ambiguous' AND e.work_item_id IS NULL")
           .get(job.id, token, now + Math.max(0, Date.now() - started));
         if (!valid) throw new Error("natural_association_claim_stale");
+        if (quotedParent && !this.db.prepare("SELECT 1 FROM collaboration_external_events WHERE source='dingtalk' AND source_event_id=? AND conversation_id=? AND work_item_id=?")
+          .get(quotedSource!, job.conversation_id, quotedParent.id)) throw new Error("natural_association_reply_stale");
         const id = candidate?.id ?? `WI-${randomUUID().replaceAll("-", "").slice(0, 12).toUpperCase()}`;
         if (candidate) {
           if ((readLatestWorkItemSnapshot(this.db, id)?.revision ?? 0) !== candidate.snapshotRevision) throw new Error("natural_association_spec_stale");
@@ -126,7 +146,7 @@ export class NaturalAssociationCoordinator {
         this.db.prepare("INSERT INTO collaboration_work_item_events (id,work_item_id,external_event_id,event_type,payload_json,principal_id,created_at) VALUES (?,?,?,?,?,?,?)")
           .run(randomUUID(), id, job.id, candidate ? "contribution.added" : "problem.reported", JSON.stringify({ text: request.text }), job.principal_id, now);
         this.db.prepare("UPDATE collaboration_natural_association_jobs SET status='routed',proposal_json=?,claim_token=NULL,lease_until=NULL WHERE event_id=?")
-          .run(JSON.stringify(decision), job.id);
+          .run(JSON.stringify({ ...decision, ...(quotedParent ? { replySourceEventId: quotedSource } : {}) }), job.id);
         this.db.prepare("UPDATE collaboration_outbox SET delivery_state='superseded',superseded_at=? WHERE source_event_id=? AND delivery_state='pending'").run(now, job.source_event_id);
         enqueueInboundCard(this.db, { sourceEventId: `association:${job.source_event_id}`, aggregateType: "plan", aggregateId: id,
           aggregateVersion: (candidate?.version ?? 0) + 1, now,

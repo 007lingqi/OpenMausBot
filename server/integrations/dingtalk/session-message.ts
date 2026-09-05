@@ -112,7 +112,9 @@ export function renderDingTalkSessionMessage(payload: unknown): Record<string, u
   } else if (type === "association_choice_card") {
     lines.push(
       "",
-      "我还不能确定这条消息是继续已有问题，还是一个新问题。",
+      card?.replyContextMissing === true
+        ? "你的补充已保存，但还没能确认你回复的那条消息属于哪个问题。确认前不会开始修改。"
+        : "我还不能确定这条消息是继续已有问题，还是一个新问题。",
       "",
       "**可能相关的问题**",
     );
@@ -122,7 +124,9 @@ export function renderDingTalkSessionMessage(payload: unknown): Record<string, u
     } else {
       lines.push("- 当前问题标题暂不可用");
     }
-    lines.push("", card?.allowOrdinalSelection === true
+    lines.push("", !candidates.length && card?.replyContextMissing === true
+      ? "请补充问题名称或原需求内容，我再确认归属。"
+      : card?.allowOrdinalSelection === true
       ? "直接说“第二个”就可以选择，不用重复刚才的内容。也可以继续补充；如果这是新问题，请直接描述。"
       : "请回复“继续【问题标题】，补充：具体内容”，或者回复“这是新问题：具体内容”。");
   } else if (type === "invalid_reference_card") {
