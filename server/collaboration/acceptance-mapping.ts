@@ -80,6 +80,28 @@ function contracts(proposal: Proposal): Record<string, AssertionContract> {
   return result;
 }
 
+/** Reconstruct approval from immutable source/review receipts, not from a claimed passed flag. */
+export function readApprovedAcceptanceMapping(db: DatabaseSync, expected: {
+  requestHash: string; policyId: string; candidateSha: string; specHash: string; conditions: MappingRequest["conditions"];
+}): Record<string, AssertionContract> | undefined {
+  try {
+    assertLedgerArmed(db);
+    if (!digest.safeParse(expected.requestHash).success || !/^[A-Za-z0-9._:-]{1,128}$/u.test(expected.policyId)) return undefined;
+    const key=hash({requestHash:expected.requestHash,policyId:expected.policyId,version:1});
+    const row=db.prepare("SELECT a.request_json,r.receipt_json FROM collaboration_acceptance_mapping_attempts a LEFT JOIN collaboration_acceptance_mapping_results r USING(request_key,attempt) WHERE a.request_key=? ORDER BY a.attempt DESC LIMIT 1")
+      .get(key) as {request_json:string;receipt_json:string|null}|undefined;
+    if(!row?.receipt_json) return undefined;
+    const saved=JSON.parse(row.request_json) as {policyId:unknown;request:MappingRequest};
+    const request=safeRequest(saved.request);
+    if(saved.policyId!==expected.policyId || mappingRequestHash(request)!==expected.requestHash || request.candidateSha!==expected.candidateSha ||
+      request.specHash!==expected.specHash || hash(request.conditions)!==hash(expected.conditions)) return undefined;
+    const receipt=JSON.parse(row.receipt_json) as {proposal:unknown;review:unknown};
+    const proposal=validateProposal(receipt.proposal,request);
+    const review=validateReview(receipt.review,request,proposal);
+    return review.findings.every(f=>f.state==="covered") ? contracts(proposal) : undefined;
+  } catch { return undefined; }
+}
+
 /** Durable model proposals plus independent review; approval is a mapping recommendation, never test success. */
 export class AcceptanceMappingCoordinator {
   private readonly db: DatabaseSync;

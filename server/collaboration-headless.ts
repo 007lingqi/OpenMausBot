@@ -62,6 +62,7 @@ import { RealDingTalkStreamSdk } from "./integrations/dingtalk/stream-sdk.ts";
 import { validateTargetCommandSpec, type TargetCommandSpec } from "./collaboration/quality-gate.ts";
 import type { AcceptanceCondition } from "./collaboration/snapshot.ts";
 import { configuredNaturalIntake } from "./collaboration/operations/natural-intake-model.ts";
+import { configuredAcceptanceMapping } from "./collaboration/operations/acceptance-mapping-model.ts";
 
 interface HeadlessArguments {
   dataDirectory: string;
@@ -505,7 +506,9 @@ function productionRuntimeOptions(
   const credentialProvider = new SecureDingTalkCredentialFileProvider(environment);
   const executionOptions = dockerExecutionOptions(environment);
   const naturalIntake = configuredNaturalIntake(environment);
+  const acceptanceMapping = configuredAcceptanceMapping(environment);
   if (naturalIntake && !executionOptions.planner) throw new Error("natural_intake_requires_planning_configuration");
+  if (acceptanceMapping && !executionOptions.planner) throw new Error("acceptance_mapping_requires_planning_configuration");
   return {
     dataDirectory: options.dataDirectory,
     shutdownTimeoutMs,
@@ -513,6 +516,7 @@ function productionRuntimeOptions(
     logger: safeRuntimeLogger(io),
     ...executionOptions,
     ...(naturalIntake ? { naturalIntake } : {}),
+    ...(acceptanceMapping ? { acceptanceMapping } : {}),
     ...(dingTalkEnabled
       ? { outboxDelivery: createDingTalkDelivery(sessions, environment, options.dataDirectory) }
       : {}),

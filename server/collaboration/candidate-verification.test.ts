@@ -245,9 +245,7 @@ function verify(item: Fixture, runner: SandboxedCommandRunner, now = 4_000, maxA
   });
 }
 
-describe("independent candidate verification", () => {
-  it("automatically binds current source-backed cases and still requires both test stages", async () => {
-    const item = fixture(undefined, true, true);
+function mappingHarness(item: Fixture) {
     const proposer: NaturalIntakeModelPort = { async complete(input) {
       const value = JSON.parse(input.user);
       return { version: 1, requestHash: value.requestHash, bindings: [{ conditionHash: acceptanceConditionHash(value.conditions[0]),
@@ -264,6 +262,41 @@ describe("independent candidate verification", () => {
       attestation: { sandboxEnforced:true,writableRoot:request.sandbox.writableRoot,deniedPaths:[...request.sandbox.deniedPaths],network:"deny",processIsolated:true,processTreeReaped:true,containmentProof:proof(request.containmentBinding),assertionReporter:"node-test-v1" } }));
     const coordinator = new CandidateVerificationCoordinator(item.database, { commandRunner: runner, containment: new FakeContainment(), commands:item.commands,
       dataDirectory:item.dataDirectory, acceptanceMapping: {proposer,verifier,policyId:"fixture-v1"} });
+    return {proposer,verifier,runner,coordinator};
+}
+
+describe("independent candidate verification", () => {
+  it("rejects a completed-looking review pair that references a nonexistent mapping receipt", async () => {
+    const item=fixture();
+    expect((await verify(item,new FakeRunner())).passed).toBe(true);
+    for(const stage of ["verifier","meta"]) {
+      const row=item.database.prepare("SELECT * FROM collaboration_candidate_reviews WHERE candidate_run_id=? AND stage=? ORDER BY attempt DESC LIMIT 1").get(item.runId,stage) as Record<string,string|number>;
+      const verdict=JSON.parse(String(row.verdict_json));
+      if(stage==="verifier") verdict.mapping={requestHash:"0".repeat(64),policyId:"nonexistent"};
+      else verdict.verifierAttempt=2;
+      item.database.prepare("INSERT INTO collaboration_candidate_reviews(id,candidate_run_id,stage,attempt,status,agent_id,snapshot_revision,spec_hash,candidate_sha,verdict_json,created_at) VALUES(?,?,?,2,'passed',?,?,?,?,?,5000)")
+        .run(`unproven-${stage}`,item.runId,stage,row.agent_id,row.snapshot_revision,row.spec_hash,row.candidate_sha,JSON.stringify(verdict));
+    }
+    expect(candidateHasPassedMetaReview(item.database,item.runId,item.candidateSha)).toBe(false);
+  });
+  it.each(["pause","cancel","spec","candidate","dirty"])("does not run tests after %s changes while mapping is pending", async change => {
+    const item=fixture(undefined,true,true); const h=mappingHarness(item);
+    const complete=h.proposer.complete.bind(h.proposer);
+    h.proposer.complete=async input => {
+      if(change==="pause" || change==="cancel") item.database.prepare("UPDATE collaboration_work_items SET control_state=? WHERE id=?").run(change==="pause"?"paused":"cancelled",item.workItemId);
+      if(change==="spec") item.service.reviseWorkItemDefinition(item.workItemId,{goal:"新的业务目标",goalConfirmed:true},4100);
+      if(change==="candidate") git(item.worktree,["commit","--allow-empty","-m","changed after mapping"]);
+      if(change==="dirty") writeFileSync(join(item.worktree,"src/value.txt"),"changed after mapping");
+      return complete(input);
+    };
+    const result=await h.coordinator.verify({candidateRunId:item.runId,worktreePath:item.worktree,instance:{ownerId:"instance-1",fence:1},now:4000});
+    expect(result.passed).toBe(false);
+    expect(result.reasons).toContain("verification_target_changed");
+    expect(h.runner.requests).toHaveLength(0);
+    expect(candidateHasPassedMetaReview(item.database,item.runId,item.candidateSha)).toBe(false);
+  });
+  it("automatically binds current source-backed cases and still requires both test stages", async () => {
+    const item=fixture(undefined,true,true); const {coordinator}=mappingHarness(item);
     const outcome = await coordinator.verify({candidateRunId:item.runId,worktreePath:item.worktree,instance:{ownerId:"instance-1",fence:1},now:4000});
     expect(outcome.passed).toBe(true);
     expect(candidateHasPassedMetaReview(item.database,item.runId,item.candidateSha)).toBe(true);

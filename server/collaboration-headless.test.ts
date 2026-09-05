@@ -70,7 +70,12 @@ describe("secure collaboration headless CLI", () => {
       OMB_EXECUTION_REPOSITORY: root, OMB_EXECUTION_WORKTREE_ROOT: join(root, "worktrees"), OMB_EXECUTION_EXCHANGE_ROOT: join(root, "exchange"),
       OMB_EXECUTION_BASE_SHA: "b".repeat(40), OMB_DOCKER_COMMAND_IMAGE: "fixture:local", OMB_CONTAINMENT_VERIFIER_KEY_FILE: key,
       OMB_HOST_GENERATION_FILE: generation, OMB_EXECUTION_TARGET_COMMANDS_JSON: JSON.stringify({ cases: command }),
-      OMB_EXECUTION_WRITE_SCOPES_JSON: '["src/**"]', OMB_EXECUTION_ACCEPTANCE_JSON: '[{"description":"保存成功","observation":"显示已保存"}]' };
+      OMB_EXECUTION_WRITE_SCOPES_JSON: '["src/**"]', OMB_EXECUTION_ACCEPTANCE_JSON: '[{"description":"保存成功","observation":"显示已保存"}]',
+      OMB_ACCEPTANCE_MAPPING_ENABLED: "1", OMB_ACCEPTANCE_MAPPING_POLICY_REVISION:"fixture-v1",
+      ...Object.fromEntries(["PROPOSER","VERIFIER"].flatMap(role => [
+        [`OMB_ACCEPTANCE_MAPPING_${role}_MODEL`,"fixture-model"], [`OMB_ACCEPTANCE_MAPPING_${role}_ENDPOINT`,"https://model.example.invalid/responses"],
+        [`OMB_ACCEPTANCE_MAPPING_${role}_CREDENTIAL_FILE`,"/not-read-during-probe"],
+      ])) };
     const seen: CollaborationHeadlessRuntimeOptions[] = [];
     const dependencies = { io: io().io, createRuntime(options: CollaborationHeadlessRuntimeOptions) {
       seen.push(options);
@@ -78,6 +83,8 @@ describe("secure collaboration headless CLI", () => {
     } };
     await runCollaborationHeadless(["--health", "--data-dir", root], environment, dependencies);
     expect(seen[0].execution?.repositories[root].targetCommands.cases).toEqual(command);
+    expect(seen[0].acceptanceMapping?.policyId).toMatch(/^mapping-v1:/);
+    expect(seen[0].acceptanceMapping?.proposer).not.toBe(seen[0].acceptanceMapping?.verifier);
     await expect(runCollaborationHeadless(["--health", "--data-dir", root], { ...environment,
       OMB_EXECUTION_TARGET_COMMANDS_JSON: JSON.stringify({ cases: { ...command, assertionReporter: "arbitrary" } }) }, dependencies)).rejects.toThrow("assertion reporter");
     expect(seen).toHaveLength(1);

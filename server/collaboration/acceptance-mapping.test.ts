@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { openCollaborationLedger } from "./db.ts";
 import { acceptanceConditionHash } from "./acceptance-assertions.ts";
 import { nodeTestAssertionId } from "./node-test-reporter.ts";
-import { AcceptanceMappingCoordinator, mappingRequestHash, mappingProposalHash, type MappingRequest } from "./acceptance-mapping.ts";
+import { AcceptanceMappingCoordinator, mappingRequestHash, mappingProposalHash, readApprovedAcceptanceMapping, type MappingRequest } from "./acceptance-mapping.ts";
 import type { NaturalIntakeModelPort } from "./natural-intake.ts";
 
 const roots: string[] = [];
@@ -38,6 +38,11 @@ describe("source-grounded acceptance mapping", () => {
     expect(result.status).toBe("approved");
     expect(result.contracts?.cases.bindings).toEqual([{ conditionHash: acceptanceConditionHash(condition), assertionIds: [nodeTestAssertionId("case.test.mjs", "保存")] }]);
     expect(model.calls).toHaveLength(2);
+    const expected={requestHash:result.requestHash,policyId:model.policyId,candidateSha:request.candidateSha,specHash:request.specHash,conditions:request.conditions};
+    expect(readApprovedAcceptanceMapping(store.database,expected)).toEqual(result.contracts);
+    for(const change of [{candidateSha:"d".repeat(40)},{specHash:"e".repeat(64)},{policyId:"changed"},{conditions:[{description:"别的需求",observation:"另一结果"}]}]) {
+      expect(readApprovedAcceptanceMapping(store.database,{...expected,...change})).toBeUndefined();
+    }
     expect(model.calls[0].system).not.toBe(model.calls[1].system);
     expect(await new AcceptanceMappingCoordinator(store.database, model).map(request, 2000)).toEqual(result);
     expect(model.calls).toHaveLength(2);

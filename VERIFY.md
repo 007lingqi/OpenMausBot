@@ -1,5 +1,16 @@
 # Meta 协作验证记录
 
+## 2026-09-05 显式模型配置与最终收据核查（最新）
+
+- 最终 `pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-mapping-config-typecheck && git diff --check` 全链通过，66111 exit 0。主 Vitest 260 文件通过 / 1 文件跳过，2438 项通过 / 18 项跳过（2456，总数门禁通过），22:46:12 开始、491.13 秒；broker 7 项、Electron 独立套件 32 项、打包服务脱离 node_modules 启动和 9 个代理路径检查均通过。类型检查、服务端编译及补丁检查通过。
+- 本次完整测试通信链路和 server/index 明显较上轮慢，但同一进程持续产出通过结果，未重启、跳过用例或扩大超时。所有既有平台跳过项保留，不宣称跨平台全通过。
+- 先行失败：配置模块不存在与 headless 未装配两项；补齐后 14 项及类型检查通过。假 mapping 收据被完成判定误接受的测试先失败，加入持久收据重建后候选/映射 35 项通过；TS object 属性收窄失败已补齐 in 判断并通过全仓类型检查。Compose 叠加模板先缺失，添加后四文件 23 项和 typecheck 通过（5903）。最终无遗留测试失败。
+- 新增覆盖：默认不开模型、不借其他凭据；独立无历史上下文、受限凭据文件、无工具/无存储/无 previous_response_id；模型/地址/凭据引用/规则版本任一改变使策略身份失效；headless 探针不加载模型凭据；pause/cancel/Spec/HEAD/dirty 变化后测试启动数为 0；收据缺失或与当前 Spec/候选/条件不匹配不通过。
+- 配置测试使用本地假凭据与 fake fetch，不是实际模型调用。状态变化测试直接写入受控数据库或临时工作区，不是 Owner 真实群决策。Compose 使用 YAML 解析检查显式 opt-in 和三份只读文件挂载，未做真实 Compose 合并或部署。
+- Docker 只读 ps 首次授权审查超时未启动；一次重试成功，原 openmausbot-collaboration-pilot Up 2 days healthy，历史退出容器保留。无运行配置、凭据或身份变更；未停止/重建容器。真实模型配置已向用户异步询问，但尚无获确认配置，不读取其他功能凭据。
+- Goal 仍 active：真实授权配置/语义效果/六类群聊、长文档在线读取、独立复核依赖上下文与补测试、跨进程映射竞争等仍未完成。20 工具轮后只跟进已运行的最终验证、状态记录及本地提交。
+
+
 ## 2026-09-05 有来源的自动验收映射（最新）
 
 - 最终 `pnpm vitest run server/collaboration server/integrations/dingtalk server/collaboration-headless.test.ts && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-acceptance-mapping-typecheck && git diff --check`：65 文件 / 433 项通过，22:26:25 开始、43.49 秒，8560 exit 0；全仓类型检查、服务端编译和补丁检查通过。

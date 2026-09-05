@@ -1,0 +1,36 @@
+# Explicit opt-in overlay. The base compose file keeps all model calls disabled.
+# Supply authorized non-production endpoints and existing mode-0600 credential files.
+services:
+  collaboration:
+    environment:
+      OMB_NATURAL_INTAKE_ENABLED: "1"
+      OMB_NATURAL_INTAKE_MODEL: ${OMB_NATURAL_INTAKE_MODEL:?required}
+      OMB_NATURAL_INTAKE_ENDPOINT: ${OMB_NATURAL_INTAKE_ENDPOINT:?required}
+      OMB_NATURAL_INTAKE_CREDENTIAL_FILE: /run/openmausbot-secrets/natural-model.key
+      OMB_ACCEPTANCE_MAPPING_ENABLED: "1"
+      OMB_ACCEPTANCE_MAPPING_POLICY_REVISION: ${OMB_ACCEPTANCE_MAPPING_POLICY_REVISION:?required}
+      OMB_ACCEPTANCE_MAPPING_PROPOSER_MODEL: ${OMB_ACCEPTANCE_MAPPING_PROPOSER_MODEL:?required}
+      OMB_ACCEPTANCE_MAPPING_PROPOSER_ENDPOINT: ${OMB_ACCEPTANCE_MAPPING_PROPOSER_ENDPOINT:?required}
+      OMB_ACCEPTANCE_MAPPING_PROPOSER_CREDENTIAL_FILE: /run/openmausbot-secrets/mapping-proposer.key
+      OMB_ACCEPTANCE_MAPPING_VERIFIER_MODEL: ${OMB_ACCEPTANCE_MAPPING_VERIFIER_MODEL:?required}
+      OMB_ACCEPTANCE_MAPPING_VERIFIER_ENDPOINT: ${OMB_ACCEPTANCE_MAPPING_VERIFIER_ENDPOINT:?required}
+      OMB_ACCEPTANCE_MAPPING_VERIFIER_CREDENTIAL_FILE: /run/openmausbot-secrets/mapping-verifier.key
+    volumes:
+      - type: bind
+        source: ${OMB_NATURAL_INTAKE_HOST_CREDENTIAL_FILE:?required}
+        target: /run/openmausbot-secrets/natural-model.key
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${OMB_ACCEPTANCE_MAPPING_PROPOSER_HOST_CREDENTIAL_FILE:?required}
+        target: /run/openmausbot-secrets/mapping-proposer.key
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${OMB_ACCEPTANCE_MAPPING_VERIFIER_HOST_CREDENTIAL_FILE:?required}
+        target: /run/openmausbot-secrets/mapping-verifier.key
+        read_only: true
+        bind:
+          create_host_path: false

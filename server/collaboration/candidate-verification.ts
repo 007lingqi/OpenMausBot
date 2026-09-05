@@ -16,7 +16,7 @@ import {
 } from "./quality-gate.ts";
 import { assertLedgerArmed } from "./restore-guard.ts";
 import { assertionCoverage, readAssertionReport, type CoverageCommand, type CoverageItem } from "./acceptance-assertions.ts";
-import { AcceptanceMappingCoordinator, type AcceptanceMappingModels } from "./acceptance-mapping.ts";
+import { AcceptanceMappingCoordinator, readApprovedAcceptanceMapping, type AcceptanceMappingModels } from "./acceptance-mapping.ts";
 import { collectAcceptanceMappingRequest } from "./acceptance-source.ts";
 
 const VERIFIER_AGENT_ID = "deterministic-verifier-v1";
@@ -293,6 +293,15 @@ function latestPassedReviewPair(
     selfCommands.some((command, index) => !command || typeof command !== "object" || command.commandId !== selectedIds[index])) return null;
   const selfCoverage = assertionCoverage(conditions, selfCommands as CoverageCommand[]);
   if (selfCoverage.some(item => item.state !== "passed") || hash(savedSelfCoverage) !== hash(selfCoverage)) return null;
+  const mapping=reviewVerdict(verifier)?.mapping;
+  if(mapping!==undefined) {
+    if(!mapping || typeof mapping!=="object" || Array.isArray(mapping) || !("requestHash" in mapping) || !("policyId" in mapping) || typeof mapping.requestHash!=="string" || typeof mapping.policyId!=="string") return null;
+    const approved=readApprovedAcceptanceMapping(database,{requestHash:mapping.requestHash,policyId:mapping.policyId,
+      candidateSha:row.result_sha,specHash:verifier.spec_hash,conditions});
+    if(!approved || Object.entries(approved).some(([id,contract])=>
+      hash(commands.find(command=>command.commandId===id)?.assertionContract)!==hash(contract) ||
+      hash(selfCommands.find(command=>command.commandId===id)?.assertionContract)!==hash(contract))) return null;
+  }
   return { verifier, meta };
 }
 
