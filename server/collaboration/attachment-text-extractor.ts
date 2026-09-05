@@ -252,12 +252,16 @@ function buildChunks(text: string, truncated: boolean, warnings: string[]): Atta
       continue;
     }
     emit();
-    for (let offset = 0; offset < line.length; offset += MAX_CHUNK_CHARACTERS) {
+    for (let offset = 0; offset < line.length;) {
+      let end = Math.min(line.length, offset + MAX_CHUNK_CHARACTERS);
+      const last = line.charCodeAt(end - 1);
+      if (end < line.length && last >= 0xd800 && last <= 0xdbff) end--;
       currentLineStart = lineNumber;
       currentLineEnd = lineNumber;
-      currentText = line.slice(offset, offset + MAX_CHUNK_CHARACTERS);
+      currentText = line.slice(offset, end);
       hasCurrent = true;
       emit();
+      offset = end;
     }
   }
   emit();

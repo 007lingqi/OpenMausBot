@@ -12,7 +12,7 @@ import { redactSensitiveText } from "./sensitive-text.ts";
 import { NaturalIntakeCoordinator, type NaturalIntakeInterpreter, type NaturalProjection } from "./natural-intake.ts";
 import { NaturalAssociationCoordinator } from "./natural-association.ts";
 import { clarificationRecipient } from "./clarification-recipients.ts";
-import { attachmentCompletenessGates, attachmentExcerpt, readNaturalAttachmentContext } from "./attachment-completeness.ts";
+import { attachmentCompletenessGates, attachmentExcerpts, readNaturalAttachmentContext } from "./attachment-completeness.ts";
 import { readAttachmentEvidenceNotification } from "./attachment-ingestion.ts";
 import {
   appendWorkItemSnapshot,
@@ -423,10 +423,7 @@ export class PlanningCoordinator {
     }
     const latest = readLatestWorkItemSnapshot(this.database, workItemId);
     const sourceLabel = redactSensitiveText((source.display_name ?? evidence.displayName).trim()).slice(0, 120) || "附件";
-    const excerpts = evidence.chunks.slice(0, 12).flatMap((chunk) => {
-      const excerpt = attachmentExcerpt(sourceLabel, chunk);
-      return excerpt.text ? [excerpt.text] : [];
-    });
+    const excerpts = evidence.chunks.slice(0, 12).flatMap(chunk => attachmentExcerpts(sourceLabel, chunk));
     const facts = [...(latest?.facts ?? [])];
     for (const excerpt of excerpts) {
       if (!facts.includes(excerpt) && facts.length < 100) facts.push(excerpt);

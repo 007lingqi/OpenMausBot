@@ -1,5 +1,14 @@
 # Meta 协作验证记录
 
+## 2026-09-06 正文尾部、来源与字符完整性（最新）
+
+- 最终 `pnpm vitest run server/collaboration server/integrations/dingtalk server/collaboration-headless.test.ts && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-document-source-typecheck && git diff --check` 全链通过（31434 exit 0）：71 文件 / 570 项，03:04:42 开始、66.37 秒。之后只更新文档；本批未运行全仓 pnpm test，不将前几批全仓结果算作当前证据。
+- 针对性 `pnpm vitest run server/collaboration/attachment-completeness.test.ts server/collaboration/plan-reviser.test.ts server/collaboration/attachment-ingestion.test.ts server/collaboration/attachment-text-extractor.test.ts && pnpm typecheck && git diff --check` 通过（83059 exit 0）：4 文件 / 49 项。
+- 首批新增三格式长正文与缺尾部测试实际复现旧投影丢尾部（74744 exit 1）；同时测试扩展误改原 text 夹具 MIME，引发一个既有来源冲突，恢复原 MIME 后解决（70927 exit 1 为修复前结果）。分段实现后 40 项通过，但新测试用了项目 TS lib 尚未支持的 String.isWellFormed（38119 exit 2）；改用 UTF-8 round trip 精确比较，不升级全局 lib。
+- 新增长行第 8,000 字处表情符号案例（1393fb exit 1）实际复现入库替换为乱码，修复原始切块边界后通过。先行调用按 -t 选择单项，其余跳过仅为定点复现；最终整组没有新增跳过或削弱原用例。
+- 新增正文分段还原包含边界空白/Unicode、三格式生产适配器→Ledger→Spec→服务重建和重放、表格尾部验收引用/原始来源收据、三格式 partial 保持、删除事实尾部阻塞。原 2,100 字“必定阻塞”用例由完整保存/丢尾部再阻塞覆盖替代；超 12 chunk 和满 100 事实边界仍验证阻塞。
+- 这些集成使用受控 Docker 命令端口/解析结果及自造下载字节，并非真实 Office 文档解析或 Linux 隔离证明。未调用真实模型/钉钉/在线文档，不处理真实附件，不改试点。旧投影迁移/乱码重提取、超上下文文档完整处理、全仓回归及六类真实试点仍待完成。
+
 ## 2026-09-06 文档容器验证入口与防假通过（最新）
 
 - 最终 `pnpm vitest run server/collaboration server/integrations/dingtalk server/collaboration-headless.test.ts && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-document-smoke-typecheck && git diff --check` 全链通过（79314 exit 0）：71 文件 / 561 项，02:52:37 开始、65.07 秒；类型检查及服务端编译通过。之后只改状态文档。没有运行本批全仓 pnpm test，不挪用 18f4176 的全仓结果。

@@ -33,11 +33,26 @@ export function readNaturalAttachmentContext(database: DatabaseSync, workItemId:
   return { attachments, incomplete, fingerprint: createHash("sha256").update(JSON.stringify({ rows, receipts })).digest("hex") };
 }
 
-export function attachmentExcerpt(displayName: string, chunk: { text: string; lineStart: number; lineEnd: number }): { text: string; complete: boolean } {
+/** Preserve every character within a chunk, with independently bounded, source-labelled Spec facts. */
+export function attachmentExcerpts(displayName: string, chunk: { ordinal: number; text: string; lineStart: number; lineEnd: number }): string[] {
   const label = redactSensitiveText(displayName.trim()).slice(0, 120) || "附件";
   const prefix = `[附件“${label}” 第 ${chunk.lineStart}-${chunk.lineEnd} 行] `;
   const safe = redactSensitiveText(chunk.text).trim();
-  return { text: safe ? `${prefix}${safe.slice(0, Math.max(0, 2000 - prefix.length))}` : "", complete: prefix.length + safe.length <= 2000 };
+  if (!safe) return [];
+  // Retain the representation of existing short-source facts.
+  if (prefix.length + safe.length <= 2000) return [`${prefix}${safe}`];
+  const excerpts: string[] = [];
+  const suffix = "\n[片段结束]";
+  for (let offset = 0; offset < safe.length;) {
+    const source = `[附件“${label}” 第 ${chunk.lineStart}-${chunk.lineEnd} 行，片段 ${chunk.ordinal + 1}.${excerpts.length + 1}] `;
+    let end = Math.min(safe.length, offset + 2000 - source.length - suffix.length);
+    const last = safe.charCodeAt(end - 1);
+    if (end < safe.length && last >= 0xd800 && last <= 0xdbff) end--;
+    // A suffix preserves whitespace at segment boundaries when snapshot strings are trimmed.
+    excerpts.push(`${source}${safe.slice(offset, end)}${suffix}`);
+    offset = end;
+  }
+  return excerpts;
 }
 
 /** Recomputed from durable evidence, not from conversation claims or editable ambiguity lists. */
@@ -57,8 +72,7 @@ export function attachmentCompletenessGates(database: DatabaseSync, workItemId: 
       // CSV formula-like strings are preserved verbatim as data, not missing evaluated content.
       if (evidence.chunks.some(chunk => chunk.truncated || chunk.warnings.some(w => !/^csv_formula_like_cells_present:\d+$/.test(w)))) incomplete = true;
       for (const chunk of evidence.chunks) {
-        const excerpt = attachmentExcerpt(evidence.source.displayName ?? "附件", chunk);
-        if (!excerpt.complete || (excerpt.text && !facts.includes(excerpt.text))) contextIncomplete = true;
+        if (attachmentExcerpts(evidence.source.displayName ?? "附件", chunk).some(excerpt => !facts.includes(excerpt))) contextIncomplete = true;
       }
     } catch { incomplete = true; }
   }
