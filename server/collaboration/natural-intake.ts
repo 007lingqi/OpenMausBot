@@ -42,6 +42,8 @@ export class ModelNaturalIntakeInterpreter implements NaturalIntakeInterpreter {
       "每项新增目标、验收和回答都必须引用当前 event.text 中逐字存在的 quote；保留 sourceEventId 和 baseRevision。",
       "acceptance 只添加可观察业务结果，不写测试命令、不声称测试已通过。answers 只能解决当前 natural- 问题，不清除系统门禁。",
       "questions 最多三个，只询问会改变结果的缺口；已回答的问题不要重问。给出相关角色，不伪造人员身份。",
+      "每个问题的 respondent 可以为 null；只有同一事项的 history 中某位同事明确说明负责该方面、掌握所问证据或承担待补充工作时，才提供其 principalId、sourceEventId 和该发言的逐字 quote。",
+      "不能因为某人被 @、最近发言或名字像负责人就指定他。requester 由系统确定最初提出需求的人；不确定具体回答人时 respondent=null，仅提示角色。此建议不授予任何控制或审批权限。",
       "不确定则追问，不能把已记录、已规划或候选当作修改完成。不要输出任何控制字段或 Secret。",
     ].join("\n") });
   }
@@ -54,7 +56,9 @@ const schema = z.object({
   acceptance: z.array(z.object({ description: text, observation: text, quote }).strict()).max(10),
   answers: z.array(z.object({ questionId: text, quote }).strict()).max(3),
   questions: z.array(z.object({ id: z.string().regex(/^[a-z][a-z0-9-]{0,48}$/), question: text,
-    reason: text, role: z.enum(["requester", "product", "test", "development"]) }).strict()).max(3),
+    reason: text, role: z.enum(["requester", "product", "test", "development"]),
+    respondent: z.object({ principalId: z.string().min(1).max(256), sourceEventId: z.string().min(1).max(256), quote }).strict().nullable(),
+  }).strict()).max(3),
 }).strict();
 export type NaturalIntakeProposal = z.infer<typeof schema>;
 
@@ -71,6 +75,10 @@ export function validateNaturalIntakeProposal(raw: unknown, request: NaturalInta
     throw new Error("natural_intake_answer_not_pending");
   }
   if (new Set(result.questions.map(q => q.id)).size !== result.questions.length) throw new Error("natural_intake_duplicate_question");
+  for (const q of result.questions) if (q.respondent && !request.history.some(event =>
+    event.sourceEventId === q.respondent!.sourceEventId && event.principalId === q.respondent!.principalId && event.text.includes(q.respondent!.quote))) {
+    throw new Error("natural_intake_respondent_not_grounded");
+  }
   // Short contextual confirmation may confirm only the exact goal that was asked.
   if (result.goal?.confirmed && !request.event.text.includes(result.goal.text) &&
       !(request.snapshot.goal === result.goal.text && request.questions.some(q => q.blocker === "goal"))) {
@@ -85,7 +93,8 @@ export function naturalDefinitionPatch(request: NaturalIntakeRequest, proposal: 
   for (const q of proposal.questions) {
     const id = `natural-${q.id}`;
     const prior = ambiguities.findIndex(value => value.id === id);
-    const value = { id, question: redactSensitiveText(q.question), dependsOn: [],
+    const value = { id, question: redactSensitiveText(q.question), dependsOn: [], role: q.role,
+      ...(q.respondent ? { respondent: q.respondent } : {}),
       recommendedAnswer: `请${({ requester: "提出问题的同事", product: "产品同事", test: "测试同事", development: "研发同事" })[q.role]}补充：${redactSensitiveText(q.reason)}` };
     if (prior < 0) ambiguities.push(value); else ambiguities[prior] = value;
   }

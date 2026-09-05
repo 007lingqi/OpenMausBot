@@ -217,6 +217,11 @@ beforeAll(async () => {
       ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
       HOME: home,
       USERPROFILE: home,
+      // This real server still belongs to the test harness. Preserve the
+      // existing local-model discovery guard instead of probing developer
+      // services on every defaultSelection() call during HTTP tests.
+      VITEST: "true",
+      OPENMAUSBOT_PROBE_LOCAL_INJECT: "0",
       OMB_PORT: String(PORT),
       OMB_WEBHOOK_PORT: String(WEBHOOK_PORT),
       OMB_BOX_API: `http://127.0.0.1:${boxStubPort}`,

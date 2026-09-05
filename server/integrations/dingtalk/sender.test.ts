@@ -11,6 +11,42 @@ const primaryStatus = {
 };
 
 describe("DingTalk session sender", () => {
+  it("puts each question next to its actual recipient and sends only those notification IDs", async () => {
+    let body: unknown;
+    const sender = new FetchDingTalkSessionSender(async (_url, init) => {
+      body = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({ errcode: 0 }), { status: 200 });
+    });
+    await sender.send("https://api.dingtalk.com/session-webhook", {
+      type: "clarification_card", headline: "需要澄清", workItemId: "WI-INTERNAL", snapshotRevision: 1,
+      requestedResponders: [{ targetId: "qa", displayName: "小王" }, { targetId: "product", displayName: "小李" }],
+      questions: [
+        { id: "systems", question: "哪些手机系统能复现？", recommendedAnswer: "请测试同事补充",
+          requestedResponder: { targetId: "qa", displayName: "小王" } },
+        { id: "scope", question: "是否只调整登录页面？", recommendedAnswer: "请产品同事补充",
+          requestedResponder: { targetId: "product", displayName: "小李" } },
+      ],
+    });
+    const payload = body as { markdown: { text: string }; at: unknown };
+    expect(payload.markdown.text).toContain("@小王，哪些手机系统能复现？");
+    expect(payload.markdown.text).toContain("@小李，是否只调整登录页面？");
+    expect(payload.markdown.text).not.toContain("WI");
+    expect(payload.at).toEqual({ atUserIds: ["qa", "product"], isAtAll: false });
+  });
+
+  it("does not ask users to supply missing information when a notice contains no questions", async () => {
+    let body: unknown;
+    const sender = new FetchDingTalkSessionSender(async (_url, init) => {
+      body = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({ errcode: 0 }), { status: 200 });
+    });
+    await sender.send("https://api.dingtalk.com/session-webhook", {
+      type: "clarification_card", headline: "需要澄清", questions: [], contextSummary: "原消息已保存，后续整理中断，无需重复发送。",
+    });
+    const payload = body as { markdown: { text: string } };
+    expect(payload.markdown.text).toContain("无需重复发送");
+    expect(payload.markdown.text).not.toContain("请补充以下关键信息");
+  });
   it("presents a ready plan in language product and project users can understand", async () => {
     let requestBody: unknown;
     const sender = new FetchDingTalkSessionSender(async (_url, init) => {

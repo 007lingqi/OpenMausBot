@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { startCollaborationService } from "./service.ts";
 import { policy, validProposal } from "./planner.test-fixtures.ts";
 import { readLatestWorkItemSnapshot } from "./snapshot.ts";
+import { clarificationRecipient } from "./clarification-recipients.ts";
+import { renderDingTalkSessionMessage } from "../integrations/dingtalk/session-message.ts";
 import { ModelNaturalIntakeInterpreter, validateNaturalIntakeProposal, type NaturalIntakeRequest, type NaturalIntakeInterpreter } from "./natural-intake.ts";
 
 const scratch: string[] = [];
@@ -29,6 +31,87 @@ function harness(interpreter: NaturalIntakeInterpreter) {
 }
 
 describe("durable source-bound natural requirement intake", () => {
+  it("does not resolve cross-task or ambiguous staff identities into notification targets", () => {
+    const h = harness({ async interpret(request) { return proposal(request); } });
+    try {
+      const first = h.service.ingestDingTalkMessage(message("first", "修复登录"));
+      const other = h.service.ingestDingTalkMessage({ ...message("foreign", "新任务：我负责测试导出"), conversationId: "other-group",
+        sender: { senderCorpId: "corp", senderStaffId: "qa", senderId: "qa", displayName: "小李" } });
+      const event = h.db.prepare("SELECT principal_id FROM collaboration_external_events WHERE source_event_id='foreign'").get() as { principal_id: string };
+      const question = { id: "natural-test", title: "复现", question: "哪些系统？", recommendedAnswer: "请测试补充",
+        blocker: "blocking_ambiguity" as const, role: "test" as const,
+        respondent: { principalId: event.principal_id, sourceEventId: "foreign", quote: "我负责测试导出" } };
+      expect(clarificationRecipient(h.db, first.workItemId!, question)).toBeUndefined();
+      expect(clarificationRecipient(h.db, other.workItemId!, question)).toEqual({ targetId: "qa", displayName: "小李" });
+      h.db.prepare("INSERT INTO collaboration_principal_aliases (source,alias_kind,scope_id,external_id,principal_id,created_at) VALUES ('dingtalk','corp_staff','other-corp','qa',?,1)").run(event.principal_id);
+      expect(clarificationRecipient(h.db, other.workItemId!, question)).toBeUndefined();
+    } finally { h.service.close(); h.db.close(); }
+  });
+
+  it("keeps a role-only question without guessing a person or using unverified sender IDs", async () => {
+    const h = harness({ async interpret(request) { return { ...proposal(request), questions: [{
+      id: "test-scope", question: "哪些系统能复现？", reason: "需要确定回归范围", role: "test", respondent: null,
+    }] }; } });
+    try {
+      h.service.ingestDingTalkMessage({ ...message("first", "登录失败"), sender: { senderId: "unknown", displayName: "测试经理" },
+        mentions: [{ targetId: "robot", displayName: "机器人" }] });
+      await h.service.processNaturalIntake();
+      const cards = h.service.pendingOutbox().map(row => row.card);
+      const card = cards.find(card => card.type === "clarification_card" && card.questions.some(q => q.id === "natural-test-scope"));
+      expect(card).toMatchObject({ questions: expect.arrayContaining([expect.objectContaining({
+        id: "natural-test-scope", recommendedAnswer: "请测试同事补充：需要确定回归范围",
+      })]) });
+      expect(card).not.toHaveProperty("requestedResponders");
+      expect(JSON.stringify(card)).not.toContain("机器人");
+    } finally { h.service.close(); h.db.close(); }
+  });
+  it("directs a test question to its source speaker, persists it across restart, and never grants control", async () => {
+    const h = harness({ async interpret(request) {
+      const source = request.history.find(row => row.text === "我负责测试，手机端可以复现");
+      return { ...proposal(request), questions: source ? [{ id: "reproduction", question: "哪些手机系统能复现？",
+        reason: "系统范围影响修复和回归", role: "test", respondent: {
+          principalId: source.principalId, sourceEventId: source.sourceEventId, quote: source.text,
+        } }] : [] };
+    } });
+    try {
+      const first = h.service.ingestDingTalkMessage(message("first", "修复登录问题"));
+      h.service.ingestDingTalkMessage({ ...message("test-detail", "我负责测试，手机端可以复现", "first"),
+        sender: { senderCorpId: "corp", senderStaffId: "staff-qa", senderId: "qa", displayName: "小王" },
+        mentions: [{ targetId: "robot", displayName: "机器人" }, { targetId: "unrelated", displayName: "旁观者" }] });
+      await h.service.processNaturalIntake();
+      const card = h.service.pendingOutbox().map(row => row.card).find(card => card.type === "clarification_card" &&
+        card.questions.some(q => q.id === "natural-reproduction"));
+      expect(card).toMatchObject({ questions: expect.arrayContaining([expect.objectContaining({
+        id: "natural-reproduction", requestedResponder: { targetId: "staff-qa", displayName: "小王" },
+      })]) });
+      expect(JSON.stringify(card)).not.toContain("旁观者");
+      const outbound = renderDingTalkSessionMessage(card) as { markdown: { text: string }; at: { atUserIds: string[]; isAtAll: boolean } };
+      expect(outbound.markdown.text).toContain("@小王，哪些手机系统能复现？");
+      expect(outbound.markdown.text).not.toContain("principalId");
+      expect(outbound.at).toEqual({ atUserIds: ["staff-qa", "tester"], isAtAll: false });
+      h.service.close();
+      const restarted = startCollaborationService(h.options);
+      try {
+        restarted.reviseWorkItemDefinition(first.workItemId!, { facts: ["补充日志"] });
+        expect(restarted.pendingOutbox().map(row => row.card)).toContainEqual(expect.objectContaining({
+          questions: expect.arrayContaining([expect.objectContaining({ id: "natural-reproduction",
+            requestedResponder: { targetId: "staff-qa", displayName: "小王" } })]),
+        }));
+        expect(restarted.ownerBinding()).toBeNull();
+      } finally { restarted.close(); }
+    } finally { h.service.close(); h.db.close(); }
+  });
+
+  it("rejects invented respondent identities, quotes and out-of-context speaker references", () => {
+    const request = { event: { sourceEventId: "e", principalId: "person", text: "请确认" }, snapshot: { revision: 1 },
+      history: [{ sourceEventId: "known", principalId: "qa", text: "我负责测试" }], questions: [] } as unknown as NaturalIntakeRequest;
+    for (const respondent of [
+      { principalId: "foreign", sourceEventId: "known", quote: "我负责测试" },
+      { principalId: "qa", sourceEventId: "unknown", quote: "我负责测试" },
+      { principalId: "qa", sourceEventId: "known", quote: "不存在的任命" },
+    ]) expect(() => validateNaturalIntakeProposal({ ...proposal(request), questions: [{ id: "q", question: "哪些系统？",
+      reason: "影响范围", role: "test", respondent }] }, request)).toThrow();
+  });
   it("recovers a failure notice after the final model claim expires and does not duplicate it", async () => {
     let calls = 0;
     const h = harness({ async interpret(request) { calls++; return proposal(request); } });
@@ -59,7 +142,7 @@ describe("durable source-bound natural requirement intake", () => {
     const request = { event: { sourceEventId: "e", text: "是的" }, snapshot: { revision: 1 },
       questions: [{ id: "natural-context-incomplete" }] } as unknown as NaturalIntakeRequest;
     expect(() => validateNaturalIntakeProposal({ ...proposal(request), answers: [{ questionId: "natural-context-incomplete", quote: "是的" }] }, request)).toThrow();
-    expect(() => validateNaturalIntakeProposal({ ...proposal(request), questions: [{ id: "input-pending", question: "已完成？", reason: "跳过检查", role: "requester" }] }, request)).toThrow();
+    expect(() => validateNaturalIntakeProposal({ ...proposal(request), questions: [{ id: "input-pending", question: "已完成？", reason: "跳过检查", role: "requester", respondent: null }] }, request)).toThrow("natural_intake_reserved_question");
   });
 
   it("cancels a pending model call on shutdown without touching a closed ledger", async () => {
@@ -118,7 +201,7 @@ describe("durable source-bound natural requirement intake", () => {
 
   it("restores queued interpretation after restart and asks a contextual question instead of confirming a vague result", async () => {
     const h = harness({ async interpret(request) { return { ...proposal(request), questions: [
-      { id: "visual-result", question: "你希望优先改善文字可读性，还是页面布局？", reason: "两种选择会改变修改范围", role: "requester" },
+      { id: "visual-result", question: "你希望优先改善文字可读性，还是页面布局？", reason: "两种选择会改变修改范围", role: "requester", respondent: null },
     ] }; } });
     const first = h.service.ingestDingTalkMessage(message("vague", "效果更好看"));
     h.service.close();

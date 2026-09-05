@@ -34,6 +34,7 @@ export interface ClarificationCard {
     title: string;
     question: string;
     recommendedAnswer: string;
+    requestedResponder?: { targetId?: string; displayName?: string };
   }>;
   requestedResponders?: Array<{ targetId?: string; displayName?: string }>;
   contextSummary?: string;

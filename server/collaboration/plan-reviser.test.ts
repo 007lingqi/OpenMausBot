@@ -213,7 +213,7 @@ describe("definition readiness and immutable plan revisions", () => {
     db.close();
   });
 
-  it("carries stable mentioned people into a non-privileged clarification reminder", () => {
+  it("asks the requester instead of treating everyone mentioned as a responsible person", () => {
     const directory = temporaryDirectory();
     const service = startCollaborationService({
       dataDirectory: directory,
@@ -231,7 +231,7 @@ describe("definition readiness and immutable plan revisions", () => {
     const clarification = service.pendingOutbox().find((entry) => entry.kind === "clarification_card");
     expect(clarification?.card).toMatchObject({
       type: "clarification_card",
-      requestedResponders: [{ targetId: "staff-tester", displayName: "测试负责人" }],
+      requestedResponders: [{ targetId: "owner-candidate", displayName: "Contributor" }],
     });
     service.close();
   });

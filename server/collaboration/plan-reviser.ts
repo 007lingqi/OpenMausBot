@@ -11,6 +11,7 @@ import { buildDefinitionPatchFromText } from "./spec-builder.ts";
 import { redactSensitiveText } from "./sensitive-text.ts";
 import { NaturalIntakeCoordinator, type NaturalIntakeInterpreter, type NaturalProjection } from "./natural-intake.ts";
 import { NaturalAssociationCoordinator } from "./natural-association.ts";
+import { clarificationRecipient } from "./clarification-recipients.ts";
 import {
   appendWorkItemSnapshot,
   readLatestWorkItemSnapshot,
@@ -123,47 +124,6 @@ function plannerFailures(error: unknown): string[] {
   return [`planner failed: ${message.slice(0, 500)}`];
 }
 
-function requestedResponders(
-  database: DatabaseSync,
-  workItemId: string,
-): Array<{ targetId?: string; displayName?: string }> {
-  const rows = database.prepare(
-    "SELECT e.normalized_json FROM collaboration_external_events e " +
-      "WHERE e.work_item_id = ? ORDER BY e.received_at DESC LIMIT 10",
-  ).all(workItemId) as unknown as Array<{ normalized_json: string }>;
-  const responders: Array<{ targetId?: string; displayName?: string }> = [];
-  const seen = new Set<string>();
-  for (const row of rows) {
-    let normalized: unknown;
-    try {
-      normalized = JSON.parse(row.normalized_json) as unknown;
-    } catch {
-      continue;
-    }
-    if (!normalized || typeof normalized !== "object" || Array.isArray(normalized)) continue;
-    const mentions = (normalized as { mentions?: unknown }).mentions;
-    if (!Array.isArray(mentions)) continue;
-    for (const mention of mentions) {
-      if (!mention || typeof mention !== "object" || Array.isArray(mention)) continue;
-      const value = mention as { targetId?: unknown; displayName?: unknown };
-      const targetId = typeof value.targetId === "string" ? value.targetId.trim().slice(0, 256) : "";
-      const displayName = typeof value.displayName === "string"
-        ? redactSensitiveText(value.displayName.trim()).slice(0, 128)
-        : "";
-      if (!targetId && !displayName) continue;
-      const key = targetId || `name:${displayName}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      responders.push({
-        ...(targetId ? { targetId } : {}),
-        ...(displayName ? { displayName } : {}),
-      });
-      if (responders.length >= 3) return responders;
-    }
-  }
-  return responders;
-}
-
 export class PlanningCoordinator {
   private readonly database: DatabaseSync;
   private readonly options: PlanningCoordinatorOptions;
@@ -267,16 +227,18 @@ export class PlanningCoordinator {
               "(id, work_item_id, snapshot_revision, questions_json, created_at) VALUES (?, ?, ?, ?, ?)",
           )
           .run(randomUUID(), workItemId, snapshots.current.revision, JSON.stringify(readiness.frontier), now);
-        const responders = requestedResponders(this.database, workItemId);
+        const questions = readiness.frontier.map(question => {
+          const { id, title, recommendedAnswer } = question;
+          const recipient = clarificationRecipient(this.database, workItemId, question);
+          return { id, title, question: question.question, recommendedAnswer,
+            ...(recipient ? { requestedResponder: recipient } : {}) };
+        });
+        const responders = [...new Map(questions.flatMap(question => question.requestedResponder
+          ? [[question.requestedResponder.targetId, question.requestedResponder] as const] : [])).values()];
         const card = renderClarificationCard({
           workItemId,
           snapshotRevision: snapshots.current.revision,
-          questions: readiness.frontier.map(({ id, title, question, recommendedAnswer }) => ({
-            id,
-            title,
-            question,
-            recommendedAnswer,
-          })),
+          questions,
           ...(responders.length ? { requestedResponders: responders } : {}),
           ...(projection?.contextSummary ? { contextSummary: projection.contextSummary } : {}),
         });

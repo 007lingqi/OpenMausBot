@@ -1,6 +1,6 @@
 import { isAbsolute } from "node:path";
 
-import type { WorkItemSnapshot } from "./snapshot.ts";
+import type { WorkItemSnapshot, BlockingAmbiguity } from "./snapshot.ts";
 
 export type ReadinessBlocker = "goal" | "repository" | "acceptance" | "blocking_ambiguity";
 
@@ -10,6 +10,8 @@ export interface ClarificationQuestion {
   question: string;
   recommendedAnswer: string;
   blocker: ReadinessBlocker;
+  role?: BlockingAmbiguity["role"];
+  respondent?: BlockingAmbiguity["respondent"];
 }
 
 export interface DefinitionReadiness {
@@ -41,6 +43,7 @@ export function evaluateDefinitionReadiness(
         ? `确认当前目标：“${snapshot.goal}”，或给出修订后的单一目标。`
         : "用一句可验收的话描述目标，并明确确认它。",
       blocker: "goal",
+      role: "requester",
     });
   }
   if (missingRepository) {
@@ -79,6 +82,8 @@ export function evaluateDefinitionReadiness(
       question: ambiguity.question,
       recommendedAnswer: ambiguity.recommendedAnswer,
       blocker: "blocking_ambiguity",
+      ...(ambiguity.role ? { role: ambiguity.role } : {}),
+      ...(ambiguity.respondent ? { respondent: ambiguity.respondent } : {}),
     });
   });
 

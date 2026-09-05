@@ -10,6 +10,8 @@ export interface BlockingAmbiguity {
   question: string;
   dependsOn: string[];
   recommendedAnswer: string;
+  role?: "requester" | "product" | "test" | "development";
+  respondent?: { principalId: string; sourceEventId: string; quote: string };
 }
 
 export interface WorkItemSnapshot {
@@ -91,6 +93,8 @@ function ambiguities(values: readonly (string | BlockingAmbiguity)[]): BlockingA
       question: value.question.trim(),
       dependsOn: strings(value.dependsOn, "blockingAmbiguities.dependsOn"),
       recommendedAnswer: value.recommendedAnswer.trim(),
+      ...(value.role ? { role: value.role } : {}),
+      ...(value.respondent ? { respondent: { ...value.respondent } } : {}),
     };
   });
   if (new Set(normalized.map((value) => value.id)).size !== normalized.length) {

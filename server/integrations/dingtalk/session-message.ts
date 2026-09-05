@@ -126,6 +126,7 @@ export function renderDingTalkSessionMessage(payload: unknown): Record<string, u
   } else if (type === "invalid_reference_card") {
     lines.push("", "引用的问题不可用。", "", `- 引用: \`${text(card?.reference, "unknown", 128)}\``);
   } else if (type === "clarification_card") {
+    const perQuestionRecipients = Array.isArray(card?.questions) && card.questions.some(question => record(question)?.requestedResponder);
     const responders = Array.isArray(card?.requestedResponders)
       ? card.requestedResponders.slice(0, 3).flatMap((entry) => {
           const responder = record(entry);
@@ -133,9 +134,9 @@ export function renderDingTalkSessionMessage(payload: unknown): Record<string, u
           return displayName ? [text(displayName, "相关人员", 128)] : [];
         })
       : [];
-    lines.push(
+    if (Array.isArray(card?.questions) && card.questions.length > 0) lines.push(
       "",
-      responders.length
+      responders.length && !perQuestionRecipients
         ? `为了避免返工，建议由 ${responders.map((name) => `@${name}`).join("、")} 补充以下信息：`
         : "为了避免返工，请补充以下关键信息：",
     );
@@ -145,7 +146,10 @@ export function renderDingTalkSessionMessage(payload: unknown): Record<string, u
     if (Array.isArray(card?.questions)) {
       for (const question of card.questions.slice(0, 3)) {
         const item = record(question);
-        lines.push(`- ${text(item?.question, "需要补充信息")}`);
+        const recipient = record(item?.requestedResponder);
+        const name = typeof recipient?.displayName === "string" && recipient.displayName.trim()
+          ? `@${text(recipient.displayName, "相关同事", 128)}，` : "";
+        lines.push(`- ${name}${text(item?.question, "需要补充信息")}`);
         if (typeof item?.recommendedAnswer === "string" && item.recommendedAnswer.trim()) {
           lines.push(`  - 建议回答：${text(item.recommendedAnswer, "请给出明确答案", 500)}`);
         }
