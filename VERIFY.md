@@ -1,5 +1,12 @@
 # Meta 协作验证记录
 
+## 2026-09-06 Owner 附件整理恢复（最新）
+
+- 接续 Stream 三条短句 TDD 为 3 失败 / 14 通过；初轮集成新增 1 失败 / 58 通过，系夹具使用错误审计表名，修正后 59 项/typecheck 通过（31383 exit 0）。
+- 按真实外部群标识构造 fixture 后 4 失败 / 34 通过（42568 exit 1），证明原查询错误地拿外部标识匹配内部会话。修复群别名查询，并加入普通入口和 Owner 命令跨路径重放拒绝验证。
+- 最终命令：`pnpm vitest run server/collaboration server/integrations/dingtalk server/collaboration-headless.test.ts --exclude server/collaboration/operations/natural-intake-model.test.ts && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-projection-recovery-typecheck && git diff --check`，18332 exit 0：70 文件 / 611 项，Vitest 68.89 秒。类型检查、服务端编译及 diff 检查均经过实际执行。
+- 证据对应本批 schema 24 源码及测试；合并前早一组 75587 绿灯不能替代最终版本。没有运行中句柄。不等于全仓 pnpm test，也没有真实群、在线文档、模型、Docker 或主机重启验收。
+
 ## 2026-09-06 投影失败三次收束与无端口回归（最新）
 
 - 默认权限 `node:net` 随机端口绑定 127.0.0.1 预检返回 EPERM（569e5c exit 1）；未产生运行服务器。结合上轮两次审批超时，本轮不重复申请全仓执行，也不把缺失的端口/全仓测试列作通过。

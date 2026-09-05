@@ -3,8 +3,9 @@ import type { DatabaseSync } from "node:sqlite";
 import { enqueueInboundCard } from "./outbox.ts";
 
 function retryState(db: DatabaseSync, attachmentId: string) {
-  const rows = db.prepare("SELECT error_code,retry_after FROM collaboration_attachment_projection_failures WHERE attachment_id=? ORDER BY sequence DESC LIMIT 3")
-    .all(attachmentId) as Array<{ error_code: string; retry_after: number }>;
+  const rows = db.prepare("SELECT error_code,retry_after FROM collaboration_attachment_projection_failures WHERE attachment_id=? " +
+    "AND sequence>coalesce((SELECT max(boundary_sequence) FROM collaboration_attachment_projection_recoveries WHERE attachment_id=?),0) ORDER BY sequence DESC LIMIT 3")
+    .all(attachmentId, attachmentId) as Array<{ error_code: string; retry_after: number }>;
   return { count: rows.length, stopped: rows.length === 3 && rows.every(row => row.error_code === rows[0]!.error_code),
     nextAttemptAt: rows[0]?.retry_after ?? 0 };
 }
@@ -70,6 +71,7 @@ export function isCurrentProjectionFeedback(db: DatabaseSync, message: { source_
     "JOIN collaboration_external_events e ON e.id=a.external_event_id JOIN collaboration_work_items w ON w.id=e.work_item_id " +
     "WHERE ?='attachment-feedback:'||a.id||':projection:'||f.claim_token AND w.id=? AND w.version=? AND w.control_state='active' " +
     "AND w.status NOT IN ('accepted','cancelled') AND a.ingest_state='ready' AND a.evidence_projected_at IS NULL " +
+    "AND f.sequence>coalesce((SELECT max(boundary_sequence) FROM collaboration_attachment_projection_recoveries WHERE attachment_id=a.id),0) " +
     "AND NOT EXISTS(SELECT 1 FROM collaboration_attachment_projection_failures newer WHERE newer.attachment_id=a.id AND newer.sequence>f.sequence)")
     .get(message.source_event_id, message.aggregate_id, message.aggregate_version);
 }

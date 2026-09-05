@@ -114,6 +114,22 @@ class FakeSdk implements DingTalkStreamSdkPort {
 }
 
 describe("DingTalk Stream adapter", () => {
+  it.each(["继续整理附件", "请重新整理附件", "继续整理第2份附件"])("routes the explicit recovery request %s to Owner control, never ordinary task creation", async text => {
+    const sdk = new FakeSdk();
+    const ingest = vi.fn((message: DingTalkInboundMessage) => inboundOutcome(message));
+    const recoverProjection = vi.fn(() => ({ allowed: true, duplicate: false, workItemId: "WI-1", reason: "attachment_projection_recovered" }));
+    const adapter = new DingTalkStreamAdapter(sdk, { ingest }, { perform: () => ownerOutcome(), recoverProjection }, new DingTalkSessionReplyRegistry());
+    await adapter.start();
+    const packet = envelope("bot-message-text.json", "projection-recovery");
+    const payload = JSON.parse(packet.data) as Record<string, unknown>;
+    payload.text = { content: text };
+    await sdk.emit("robot", { ...packet, data: JSON.stringify(payload) });
+    expect(recoverProjection).toHaveBeenCalledTimes(1);
+    expect(ingest).not.toHaveBeenCalled();
+    expect(sdk.acknowledgements).toEqual(["projection-recovery"]);
+    adapter.stop();
+  });
+
   it("registers callbacks once and relies on the SDK reconnect lifecycle", async () => {
     const recorded = scenario<{ initialConnected: boolean; expectedState: string; expectedTopics: string[] }>("reconnect.json");
     const sdk = new FakeSdk();

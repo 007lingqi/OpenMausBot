@@ -753,8 +753,8 @@ export class AttachmentIngestionCoordinator {
     const rows = database.prepare(
       "SELECT a.id FROM collaboration_attachments a " +
         "WHERE ingest_state = 'ready' AND evidence_projected_at IS NULL " +
-        "AND coalesce((SELECT retry_after FROM collaboration_attachment_projection_failures f WHERE f.attachment_id=a.id ORDER BY sequence DESC LIMIT 1),0)<=? " +
-        "AND (SELECT count(*)=3 AND count(DISTINCT error_code)=1 FROM (SELECT error_code FROM collaboration_attachment_projection_failures f WHERE f.attachment_id=a.id ORDER BY sequence DESC LIMIT 3))=0 " +
+        "AND coalesce((SELECT retry_after FROM collaboration_attachment_projection_failures f WHERE f.attachment_id=a.id AND f.sequence>coalesce((SELECT max(boundary_sequence) FROM collaboration_attachment_projection_recoveries WHERE attachment_id=a.id),0) ORDER BY sequence DESC LIMIT 1),0)<=? " +
+        "AND (SELECT count(*)=3 AND count(DISTINCT error_code)=1 FROM (SELECT error_code FROM collaboration_attachment_projection_failures f WHERE f.attachment_id=a.id AND f.sequence>coalesce((SELECT max(boundary_sequence) FROM collaboration_attachment_projection_recoveries WHERE attachment_id=a.id),0) ORDER BY sequence DESC LIMIT 3))=0 " +
         "ORDER BY updated_at, created_at, external_event_id, ordinal LIMIT ?",
     ).all(now, PROCESS_LIMIT) as unknown as ProjectionRow[];
     for (const row of rows) {

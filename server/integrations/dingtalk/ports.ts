@@ -6,6 +6,7 @@ import type {
   DingTalkPrivateResourceCapability,
   DingTalkOwnerTextCommand,
   DingTalkOwnerTextCommandOutcome,
+  DingTalkProjectionRecoveryOutcome,
   DingTalkStreamEnvelope,
 } from "./types.ts";
 
@@ -17,6 +18,7 @@ export interface DingTalkInboundSink {
 }
 
 export interface DingTalkOwnerActionSink {
+  recoverProjection?(message: DingTalkInboundMessage): MaybePromise<DingTalkProjectionRecoveryOutcome>;
   perform(action: DingTalkCardAction): MaybePromise<OwnerActionOutcome>;
   performCommand?(command: DingTalkOwnerTextCommand): MaybePromise<DingTalkOwnerTextCommandOutcome>;
 }

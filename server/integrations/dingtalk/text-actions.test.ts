@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { DingTalkInboundMessage } from "./types.ts";
-import { parseDingTalkOwnerTextAction, parseDingTalkOwnerTextCommand } from "./text-actions.ts";
+import { parseDingTalkOwnerTextAction, parseDingTalkOwnerTextCommand, parseDingTalkProjectionRecoveryRequest } from "./text-actions.ts";
 
 const token = "accept_code_12345678901234567890123456789012";
 
@@ -23,6 +23,15 @@ function message(text: string): DingTalkInboundMessage {
 }
 
 describe("DingTalk Owner text actions", () => {
+  it("only accepts directly addressed explicit attachment recovery, not quoted instructions or documents", () => {
+    expect(parseDingTalkProjectionRecoveryRequest(message("继续整理附件"))).toEqual({});
+    expect(parseDingTalkProjectionRecoveryRequest(message("请重新整理第二份附件。"))).toEqual({ ordinal: 2 });
+    for (const text of ["不要继续整理附件", "文档说：继续整理附件", "“继续整理附件”", "是否继续整理附件？", "继续整理第0份附件"]) {
+      expect(parseDingTalkProjectionRecoveryRequest(message(text))).toBeNull();
+    }
+    expect(parseDingTalkProjectionRecoveryRequest({ ...message("继续整理附件"), addressedToBot: false })).toBeNull();
+    expect(parseDingTalkProjectionRecoveryRequest({ ...message("继续整理附件"), resources: [{ capabilityRef: "a".repeat(64), kind: "file", name: "instructions.md" }] })).toBeNull();
+  });
   it("turns a copied acceptance command into the existing opaque-token action contract", () => {
     expect(parseDingTalkOwnerTextAction(message(`@研发助手 接受 ${token}`))).toEqual({
       transportEventId: "source-1",

@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { OPENMAUSBOT_SOURCE_BASELINE } from "./config.ts";
 
-export const COLLABORATION_SCHEMA_VERSION = 23;
+export const COLLABORATION_SCHEMA_VERSION = 24;
 
 interface Migration {
   version: number;
@@ -1214,6 +1214,33 @@ const migrations: readonly Migration[] = [
         CREATE TRIGGER attachment_projection_failures_no_delete BEFORE DELETE ON collaboration_attachment_projection_failures
           BEGIN SELECT RAISE(ABORT,'projection failure receipts are immutable'); END;
       `);
+    },
+  },
+  {
+    version: 24, name: "owner-attachment-projection-recovery", checksum: "v24:immutable-owner-bound-projection-recovery",
+    apply(database) {
+      database.exec(`
+        CREATE TABLE collaboration_attachment_projection_recoveries (
+          id TEXT PRIMARY KEY,
+          attachment_id TEXT NOT NULL REFERENCES collaboration_attachments(id),
+          boundary_sequence INTEGER NOT NULL REFERENCES collaboration_attachment_projection_failures(sequence),
+          source_event_id TEXT NOT NULL UNIQUE,
+          actor_principal_id TEXT NOT NULL REFERENCES collaboration_principals(id),
+          owner_generation INTEGER NOT NULL CHECK(owner_generation>0),
+          created_at INTEGER NOT NULL,
+          UNIQUE(attachment_id,boundary_sequence)
+        ) STRICT;
+        CREATE TABLE collaboration_attachment_recovery_requests (
+          source_event_id TEXT PRIMARY KEY,
+          payload_hash TEXT NOT NULL,
+          outcome_json TEXT NOT NULL,
+          created_at INTEGER NOT NULL
+        ) STRICT;
+      `);
+      for (const table of ["projection_recoveries", "recovery_requests"]) for (const operation of ["UPDATE", "DELETE"]) {
+        database.exec(`CREATE TRIGGER attachment_${table}_no_${operation.toLowerCase()} BEFORE ${operation} ON collaboration_attachment_${table}
+          BEGIN SELECT RAISE(ABORT,'attachment recovery is immutable'); END;`);
+      }
     },
   },
 ];

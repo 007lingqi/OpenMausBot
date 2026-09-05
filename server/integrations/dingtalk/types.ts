@@ -88,6 +88,13 @@ export interface DingTalkOwnerTextCommandOutcome {
   reason: string;
 }
 
+export interface DingTalkProjectionRecoveryOutcome {
+  allowed: boolean;
+  duplicate: boolean;
+  workItemId: string | null;
+  reason: string;
+}
+
 export interface DingTalkStreamEnvelope {
   type: string;
   headers: {

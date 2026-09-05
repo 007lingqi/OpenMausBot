@@ -102,6 +102,9 @@ export class InboundMessageProcessor {
     this.database.exec("BEGIN IMMEDIATE");
     try {
       assertLedgerArmed(this.database);
+      if (this.database.prepare("SELECT 1 FROM collaboration_attachment_recovery_requests WHERE source_event_id=?").get(sourceEventId)) {
+        throw new Error("attachment_recovery_event_conflict");
+      }
       const existing = this.database
         .prepare(
           "SELECT e.transport_message_id, e.principal_id, p.resolution, e.association_state, e.work_item_id " +

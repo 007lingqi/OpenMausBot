@@ -17,6 +17,16 @@ const COMMANDS: Readonly<Record<string, DingTalkOwnerTextCommandName>> = {
   刷新验收码: "refresh_approval",
 };
 
+/** Only explicit direct text is control intent; quoted/document content is not. */
+export function parseDingTalkProjectionRecoveryRequest(message: DingTalkInboundMessage): { ordinal?: number } | null {
+  if (!message.addressedToBot || message.resources?.length) return null;
+  const matched = /^(?:请)?(?:继续|重新)整理(?:第([1-9][0-9]?|[一二三四五六七八九十])份)?附件[。！!]?$/u.exec(message.text.trim());
+  if (!matched) return null;
+  if (!matched[1]) return {};
+  const ordinal = Number(matched[1]) || "一二三四五六七八九十".indexOf(matched[1]) + 1;
+  return { ordinal };
+}
+
 /**
  * Parses the deliberately small Owner text protocol. The opaque value is the
  * same server-issued, SHA/version-bound token used by interactive cards; no

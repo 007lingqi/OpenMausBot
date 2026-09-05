@@ -575,6 +575,12 @@ describe("production-isomorphic collaboration runtime", () => {
     });
     await runtime.start();
     if (!sinks?.ingestAttachments) throw new Error("Expected attachment sink");
+    const recovery = { ...message("attachment-recovery"), text: "继续整理附件" };
+    expect(sinks.recoverProjection(recovery)).toMatchObject({ allowed: false, duplicate: false, reason: "owner_not_configured" });
+    expect(sinks.recoverProjection(recovery)).toMatchObject({ duplicate: true });
+    expect(() => sinks!.ingest({ ...recovery, text: "新建任务" })).toThrow("attachment_recovery_event_conflict");
+    expect(() => sinks!.performCommand({ transportEventId: recovery.sourceEventId, transportMessageId: recovery.transportMessageId,
+      command: "retry", workItemId: "WI-000000000001", sender: recovery.sender, receivedAt: recovery.receivedAt })).toThrow("attachment_recovery_event_conflict");
     await sinks.ingestAttachments([{ capabilityRef: "a".repeat(64), downloadCode: "private-code" }]);
     expect(persist).toHaveBeenNthCalledWith(1, [
       { capabilityRef: "a".repeat(64), downloadCode: "private-code" },

@@ -18,6 +18,11 @@ import { InstanceLeaseCoordinator } from "./leases.ts";
 import { renderDingTalkSessionMessage } from "../integrations/dingtalk/session-message.ts";
 import { createDingTalkDelivery } from "../collaboration-headless.ts";
 import { DingTalkSessionReplyRegistry } from "../integrations/dingtalk/reply-router.ts";
+import { LocalOwnerRegistry } from "./owner.ts";
+import { recoverAttachmentProjection } from "./attachment-projection-recovery.ts";
+import { isCurrentProjectionFeedback } from "./attachment-projection-retry.ts";
+import { InboundMessageProcessor } from "./inbound.ts";
+import type { DingTalkInboundMessage } from "../integrations/dingtalk/types.ts";
 
 const VAULT_SECRET = "attachment-ingestion-test-secret-at-least-32-bytes";
 const WORK_ITEM_ID = "WI-attachment-ingestion";
@@ -95,22 +100,139 @@ function row(databaseFile: string, ref = REF_A): Record<string, unknown> {
 }
 
 describe("AttachmentIngestionCoordinator", () => {
+  async function recoveryFixture(count = 1) {
+    const setup = context(Array.from({ length: count }, (_, ordinal) => resource({ capabilityRef: ordinal ? REF_B : REF_A })));
+    const bytes = Buffer.from("original bug evidence");
+    const download = vi.fn(async (): Promise<DingTalkAttachmentDownloadResult> => ({ ok: true, bytes, sha256: hash(bytes) }));
+    await new AttachmentIngestionCoordinator({ ...setup, downloader: { download } }).process([capability(), ...(count > 1 ? [capability(REF_B)] : [])], 1000);
+    const registry = new LocalOwnerRegistry(setup.databaseFile);
+    registry.bootstrap({ senderCorpId: "test-corp", senderStaffId: "test-owner", now: 1000 });
+    registry.close();
+    const db = new DatabaseSync(setup.databaseFile);
+    db.exec("PRAGMA foreign_keys=ON");
+    db.exec("INSERT INTO collaboration_conversation_aliases(source,external_id,conversation_id,created_at) VALUES('dingtalk','external-C1','C1',1000)");
+    const attachments = db.prepare("SELECT id FROM collaboration_attachments ORDER BY ordinal").all() as Array<{ id: string }>;
+    for (const attachment of attachments) for (let i = 0; i < 3; i++) db.prepare("INSERT INTO collaboration_attachment_projection_failures(attachment_id,claim_token,error_code,created_at,retry_after) VALUES(?,?,?,?,?)")
+      .run(attachment.id, `${attachment.id}:${i}`, "attachment_projection_unavailable", 2000 + i, 3000);
+    const message: DingTalkInboundMessage = { sourceEventId: "recover-1", transportMessageId: "recover-transport", conversationId: "external-C1", addressedToBot: true,
+      text: "继续整理附件", sender: { senderCorpId: "test-corp", senderStaffId: "test-owner", senderId: "test-sender", displayName: "Owner" }, receivedAt: 4000 };
+    return { ...setup, db, download, attachments, message, recover: (input = message) => recoverAttachmentProjection(db, input, 4000, () => {}) };
+  }
+
+  it("Owner resumes saved evidence once without re-download, task mutation or losing failure history", async () => {
+    const f = await recoveryFixture();
+    try {
+      const work = f.db.prepare("SELECT * FROM collaboration_work_items").all();
+      const before = f.db.prepare("SELECT * FROM collaboration_attachment_extractions").all();
+      expect(f.recover()).toMatchObject({ allowed: true, duplicate: false, workItemId: WORK_ITEM_ID });
+      expect(f.recover()).toMatchObject({ allowed: true, duplicate: true });
+      const ingress = new InboundMessageProcessor(f.databaseFile);
+      try { expect(() => ingress.processDingTalkMessage({ ...f.message, text: "创建另一项任务" })).toThrow("attachment_recovery_event_conflict"); }
+      finally { ingress.close(); }
+      expect(f.db.prepare("SELECT * FROM collaboration_work_items").all()).toEqual(work);
+      expect(f.db.prepare("SELECT owner_generation FROM collaboration_attachment_projection_recoveries").all()).toEqual([{ owner_generation: 1 }]);
+      expect(() => f.recover({ ...f.message, text: "重新整理附件" })).toThrow("attachment_recovery_event_conflict");
+      const onEvidence = vi.fn();
+      await new AttachmentIngestionCoordinator({ ...f, downloader: { download: f.download }, onEvidence }).process([], 5000);
+      expect(onEvidence).toHaveBeenCalledTimes(1);
+      expect(f.download).toHaveBeenCalledTimes(1);
+      expect(f.db.prepare("SELECT * FROM collaboration_attachment_extractions").all()).toEqual(before);
+      expect(f.db.prepare("SELECT count(*) AS n FROM collaboration_attachment_projection_failures").get()).toEqual({ n: 3 });
+      expect(row(f.databaseFile).evidence_projected_at).toBe(5000);
+      const notices = f.db.prepare("SELECT payload_json FROM collaboration_outbox WHERE source_event_id='recover-1'").all() as Array<{ payload_json: string }>;
+      expect(notices).toHaveLength(1);
+      expect(JSON.stringify(renderDingTalkSessionMessage(JSON.parse(notices[0]!.payload_json)))).toContain("不代表代码修改已完成");
+      expect(() => f.db.exec("DELETE FROM collaboration_attachment_projection_recoveries")).toThrow();
+      expect(() => f.db.exec("DELETE FROM collaboration_attachment_recovery_requests")).toThrow();
+    } finally { f.db.close(); }
+  });
+
+  it("a new window stops after three failures and replay cannot reopen it", async () => {
+    const f = await recoveryFixture();
+    try {
+      f.recover();
+      const onEvidence = vi.fn(() => { throw new Error("synthetic failure"); });
+      for (const now of [5000, 10000, 15000]) await expect(new AttachmentIngestionCoordinator({ ...f, downloader: { download: f.download }, onEvidence }).process([], now)).rejects.toThrow("synthetic failure");
+      expect(f.recover().duplicate).toBe(true);
+      await new AttachmentIngestionCoordinator({ ...f, downloader: { download: f.download }, onEvidence }).process([], 20000);
+      expect(onEvidence).toHaveBeenCalledTimes(3);
+      expect(f.db.prepare("SELECT count(*) AS n FROM collaboration_attachment_projection_failures").get()).toEqual({ n: 6 });
+      expect(f.db.prepare("SELECT count(*) AS n FROM collaboration_attachment_projection_recoveries").get()).toEqual({ n: 1 });
+      expect(isCurrentProjectionFeedback(f.db, { source_event_id: `attachment-feedback:${f.attachments[0]!.id}:projection:${f.attachments[0]!.id}:2`, aggregate_id: WORK_ITEM_ID, aggregate_version: 1 })).toBe(false);
+    } finally { f.db.close(); }
+  });
+
+  it("clarifies multiple attachments and selects only the original message ordinal", async () => {
+    const f = await recoveryFixture(2);
+    try {
+      expect(f.recover()).toMatchObject({ allowed: false, reason: "attachment_projection_recovery_ambiguous" });
+      expect(f.recover({ ...f.message, sourceEventId: "recover-2", replyToSourceEventId: "source-event-1", text: "继续整理第二份附件" })).toMatchObject({ allowed: true });
+      expect(f.db.prepare("SELECT attachment_id FROM collaboration_attachment_projection_recoveries").all()).toEqual([{ attachment_id: f.attachments[1]!.id }]);
+    } finally { f.db.close(); }
+  });
+
+  it.each(["member", "cross-group", "wrong-reply", "paused", "cancelled", "accepted", "live-claim", "already-projected"])("does not reopen %s", async mode => {
+    const f = await recoveryFixture();
+    try {
+      if (mode === "member") f.message.sender = Object.assign({}, f.message.sender, { senderStaffId: "member", isAdmin: true });
+      if (mode === "cross-group") f.message.conversationId = "C2";
+      if (mode === "wrong-reply") f.message.replyToSourceEventId = "unrelated-source";
+      if (mode === "paused") f.db.exec("UPDATE collaboration_work_items SET control_state='paused'");
+      if (mode === "cancelled" || mode === "accepted") f.db.prepare("UPDATE collaboration_work_items SET status=?").run(mode);
+      if (mode === "live-claim") f.db.exec("UPDATE collaboration_attachments SET evidence_projection_owner='another-worker',evidence_projection_expires_at=9000");
+      if (mode === "already-projected") f.db.exec("UPDATE collaboration_attachments SET evidence_projected_at=3000");
+      expect(f.recover().allowed).toBe(false);
+      expect(f.db.prepare("SELECT count(*) AS n FROM collaboration_attachment_projection_recoveries").get()).toEqual({ n: 0 });
+    } finally { f.db.close(); }
+  });
+
+  it("atomically rolls back recovery and audit when reply persistence fails", async () => {
+    const f = await recoveryFixture();
+    try {
+      const audits = f.db.prepare("SELECT * FROM collaboration_audit_events").all();
+      f.db.exec("CREATE TRIGGER reject_recovery_reply BEFORE INSERT ON collaboration_outbox BEGIN SELECT RAISE(ABORT,'fixture_outbox_failed'); END");
+      expect(() => f.recover()).toThrow("fixture_outbox_failed");
+      expect(f.db.prepare("SELECT count(*) AS n FROM collaboration_attachment_projection_recoveries").get()).toEqual({ n: 0 });
+      expect(f.db.prepare("SELECT count(*) AS n FROM collaboration_attachment_recovery_requests").get()).toEqual({ n: 0 });
+      expect(f.db.prepare("SELECT * FROM collaboration_audit_events").all()).toEqual(audits);
+      f.db.exec("DROP TRIGGER reject_recovery_reply");
+      expect(f.recover().allowed).toBe(true);
+    } finally { f.db.close(); }
+  });
   it("upgrades v22 preserving download failure receipts without inventing projection failures", async () => {
+    // All later additive tables are removed to model a real v22 database.
     const setup = context([resource()]);
     await new AttachmentIngestionCoordinator({ ...setup, downloader: { download: async () => ({ ok: false, kind: "retryable", code: "dingtalk_attachment_timeout" }) } }).process([capability()], 1000);
     const db = new DatabaseSync(setup.databaseFile);
     const failures = db.prepare("SELECT * FROM collaboration_attachment_failures").all();
     const outbox = db.prepare("SELECT * FROM collaboration_outbox").all();
-    db.exec("DROP TABLE collaboration_attachment_projection_failures; DELETE FROM collaboration_schema_migrations WHERE version=23; PRAGMA user_version=22");
+    db.exec("DROP TABLE collaboration_attachment_recovery_requests; DROP TABLE collaboration_attachment_projection_recoveries; DROP TABLE collaboration_attachment_projection_failures; DELETE FROM collaboration_schema_migrations WHERE version>=23; PRAGMA user_version=22");
     db.close();
     const upgraded = openCollaborationLedger(join(setup.dataDirectory, "collaboration"));
-    expect(upgraded.migrationState).toEqual({ schemaVersion: 23, appliedMigrations: 23 });
+    expect(upgraded.migrationState).toEqual({ schemaVersion: 24, appliedMigrations: 24 });
     upgraded.close();
     const after = new DatabaseSync(setup.databaseFile);
     expect(after.prepare("SELECT * FROM collaboration_attachment_failures").all()).toEqual(failures);
     expect(after.prepare("SELECT * FROM collaboration_outbox").all()).toEqual(outbox);
     expect(after.prepare("SELECT count(*) AS n FROM collaboration_attachment_projection_failures").get()).toEqual({ n: 0 });
     after.close();
+  });
+  it("upgrades v23 preserving stopped projection receipts without inventing recovery authorization", async () => {
+    const f = await recoveryFixture();
+    const failures = f.db.prepare("SELECT * FROM collaboration_attachment_projection_failures").all();
+    f.db.exec("DROP TABLE collaboration_attachment_recovery_requests; DROP TABLE collaboration_attachment_projection_recoveries; DELETE FROM collaboration_schema_migrations WHERE version=24; PRAGMA user_version=23");
+    f.db.close();
+    const upgraded = openCollaborationLedger(join(f.dataDirectory, "collaboration"));
+    expect(upgraded.migrationState).toEqual({ schemaVersion: 24, appliedMigrations: 24 });
+    upgraded.close();
+    const db = new DatabaseSync(f.databaseFile);
+    try {
+      expect(db.prepare("SELECT * FROM collaboration_attachment_projection_failures").all()).toEqual(failures);
+      expect(db.prepare("SELECT count(*) AS n FROM collaboration_attachment_projection_recoveries").get()).toEqual({ n: 0 });
+      const onEvidence = vi.fn();
+      await new AttachmentIngestionCoordinator({ ...f, downloader: { download: f.download }, onEvidence }).process([], 9000);
+      expect(onEvidence).not.toHaveBeenCalled();
+    } finally { db.close(); }
   });
   it("does not starve healthy projection behind a full batch of stopped attachments", async () => {
     const resources = Array.from({ length: 51 }, (_, i) => resource({ capabilityRef: (i + 1).toString(16).padStart(64, "0") }));
