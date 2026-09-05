@@ -17,6 +17,16 @@
 
 ## 本批执行记录
 
+### 全仓回归恢复与真实 Linux 进程崩溃续办（2026-09-06 最新）
+
+- 上一批 030f09c 有已验证提交，分类 progress；本批只增加真实 Linux 验证入口和状态记录，不修改业务逻辑。初始用户 AGENTS.md/outputs 保留。
+- docker-helper 指引下只读检查 colima-openmausbot-pilot：原 openmausbot-collaboration-pilot 仍 healthy，只有 Node 固定镜像缓存，没有文档解析镜像。公开 registry-1.docker.io 和 pypi.org 匿名 HEAD 各一次均 DNS 超时（15152/60645 exit 28）；未修改网络、借用凭据、重复拉取或构建解析镜像。
+- 本机监听权限定向验证这次实际成功：natural-intake-model.test.ts 9 项通过（496a0a exit 0）。随后完整 `pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-goal-full-regression && git diff --check` 68403 exit 0；包含测试数量底线、broker、Electron 辅助模块和 packaged-server 启动，无排除模型文件。它验证 030f09c 业务版本；本批最终新增探针另有实际 Docker 和编译证据。
+- 缓存固定 Node 镜像真实 Docker reporter/cancel smoke 83726 exit 0：passed/failed/skipped 断言分别映射 passed/missing/missing，取消前不执行、运行后子进程 heartbeat 停止。只清理本次资源。
+- 新 natural-intake-recovery.smoke.ts/probe 实际生产服务+SQLite WAL+两个 Linux 子进程：15 条同时间戳/三位合成成员发言，一条解释完成后父进程收到 durable 回执并 SIGKILL 服务进程；新进程确认 1 applied/14 pending，再恢复全部 15 条验收且原消息重放不新增事件，Owner 仍为空。运行器实际 inspect 无网络/只读根/非 root/资源限制、零退出/非 OOM，并确认只清理本次容器。模型与消息明确 controlled/synthetic，不冒充真实群聊。
+- 探针调试顺序：根目录 docker cp 失败；改 stdin 放进容器自有 tmpfs 后，fork 继承 eval 参数导致 produce 失败；清空 execArgv 后到达 recover，修正 Node SQLite 空原型记录的夹具比较后通过（bce00d exit 0）。最终类型/服务端编译/diff 检查 50206 exit 0。原始试点容器与全部历史退出容器仍在，无临时残留。
+- 无运行中验证句柄。恢复入口：本批允许任务文件本地提交、不推送；下一批补真实 parser 基础镜像/依赖可达条件，或在权限和凭据明确后做六类真实钉钉/模型试点。机器人出站引用、旧输入回补、解释失败 Owner 恢复等代码待办继续保留。整机重启、在线正文、独立生产 supervisor 与人工 Owner 验收仍未通过，Goal active。
+
 ### 长会话与突发补充不丢失（2026-09-06 最新）
 
 - 上一批 147db49 为真实本地提交，本轮分类为 progress 后继续；工作区初始仅用户 AGENTS.md/outputs 未跟踪。检查引用回复链路确认只有入站消息匹配，没有机器人出站回执映射；没有凭空声明已支持。

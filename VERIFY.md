@@ -1,5 +1,14 @@
 # Meta 协作验证记录
 
+## 2026-09-06 全仓与实际 Docker 进程恢复（最新）
+
+- 当前 030f09c 业务版本：`pnpm vitest run server/collaboration/operations/natural-intake-model.test.ts` 实际监听本机临时 HTTP，9 项通过（496a0a exit 0）。不使用真实模型凭据。
+- 完整 `pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-goal-full-regression && git diff --check`，68403 exit 0。没有任何测试过滤/排除；包含 test-floor、broker、updater、desktop-viewer、package-link、save-file、packaged-server。实际无 node_modules 的打包服务启动成功，9 个子代理路径通过。输出分段未保留可复核的总计，本记录不猜测总测试数。此前端口/全仓未验证限制在此业务版本已补齐，不能反向修改历史证据。
+- 真实 Docker context `colima-openmausbot-pilot`，固定 image `sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e`：既有 `node-test-reporter.smoke.ts` 和 `docker-command-cancel.smoke.ts` 全链 83726 exit 0，assertion passed/failed/skipped 正确，取消后 Linux 子进程 heartbeat 停止。
+- 新验证命令：`OMB_INTAKE_SMOKE_CONTEXT=colima-openmausbot-pilot OMB_INTAKE_SMOKE_IMAGE=sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e node --experimental-strip-types server/collaboration/operations/natural-intake-recovery.smoke.ts`。bce00d exit 0，真实 Docker inspect 隔离参数、服务进程 durable 后 SIGKILL、新进程从 SQLite 恢复 14 个待办至全部 15 项、同消息重放无新增、Owner 无变化、容器退出零/非 OOM/最终清理确认。证据源 linux_process_sqlite，解释器 controlled，不能算真实模型或钉钉场景。
+- 新探针先后遇到准备复制、子进程参数继承、SQLite 返回记录原型比较失败，均有实际非零退出；修正后才记通过。最终 `pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-intake-linux-smoke && git diff --check` 50206 exit 0，覆盖探针最终版本。
+- Docker 前后 ps 确认原试点 healthy、历史容器不动、无本批容器残留。公开 registry-1.docker.io 与 pypi.org DNS 各一次 5 秒超时（15152/60645 exit 28），没有真实解析镜像/Office 文档 smoke。全仓通过与进程恢复不能替代整机重启、真实在线文档/群聊、独立 supervisor 或 Owner 签字。
+
 ## 2026-09-06 长会话增量上下文与逐条队列（最新）
 
 - 先行 `pnpm vitest run server/collaboration/natural-intake.test.ts`：4752 exit 1，2 失败 / 16 通过，分别证明超过 12 条永久 contextTruncated 和当前消息末尾要求截断。首修后 30981 exit 0，18 项及类型检查通过。
