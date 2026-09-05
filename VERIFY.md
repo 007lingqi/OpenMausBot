@@ -1,5 +1,13 @@
 # Meta 协作验证记录
 
+## 2026-09-06 回复超时与有界正文读取（当前批）
+
+- TDD `pnpm vitest run server/integrations/dingtalk/sender-deadline.test.ts`：26d27c exit 1，10 项失败。当前实现在 header/body/超大无 EOF 响应中不会结束，受控 fake timers 复现，不调用真实网络。
+- 初修 39095 exit 0（19f7bd）：6 文件 / 71 项、typecheck/diff 通过。新增边界/真实装配队列测试后 56412 exit 2（bd5216）：79 项通过，但新 PrimaryStatusCard 夹具缺字段导致类型检查失败。修正后 30719 exit 0（25ff49）：6 文件 / 79 项、typecheck/diff 通过。
+- 定向命令：`pnpm vitest run server/integrations/dingtalk/sender-deadline.test.ts server/integrations/dingtalk/sender.test.ts server/integrations/dingtalk/interactive-card-sender.test.ts server/integrations/dingtalk/reply-router.test.ts server/collaboration/outbox-dispatcher.test.ts server/collaboration/operations/runtime-lifecycle-recovery.test.ts && pnpm typecheck && git diff --check`。覆盖入账装配、超时放开下一回复、未知状态不重发、令牌阶段不误当作消息提交、通俗 Markdown 以及原回复路由。
+- 全仓命令：`pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-reply-deadline-typecheck && git diff --check`；首次权限审查超时，未产生测试进程，重试一次后句柄 31815 最终 exit 0（1ae167）。主集 428.13 秒，266 文件通过 / 1 跳过，2,681 项通过 / 18 跳过，注册数 2,699。index 88 项通过，部分约 8 秒调用仍保留观察，不宣称旧稳定性疑点已修复。
+- broker 7、updater 15、desktop-viewer 5、package-link 2、save-file 10 通过；打包服务在无可访问 node_modules 条件启动、9 条 spawned proxy 路径通过；后续类型检查、独立服务端编译及 diff 检查均通过。所有验证进程已终态。未调用真实钉钉/模型/在线文档或部署，不替代六类真实试点。
+
 ## 2026-09-06 非幂等投递回执丢失保护（当前批）
 
 - 只读 DWS help 75008 exit 0，结合 dingtalk-chat chat-bot/contracts 本地契约：processQueryKey 不等于 openMessageId，Bot/Webhook 不支持幂等键。仅接口能力调查，不是实际消息或远端映射结果。

@@ -16,6 +16,7 @@ import { currentInstanceLease } from "../leases.ts";
 import { createDingTalkDelivery } from "../../collaboration-headless.ts";
 import { DingTalkSessionReplyRegistry } from "../../integrations/dingtalk/reply-router.ts";
 import type { OutboxDeliveryPort } from "../outbox.ts";
+import { enqueueInboundCard } from "../outbox.ts";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -52,6 +53,38 @@ async function fixture() {
 }
 
 describe("runtime passive lifecycle recovery", () => {
+  it("unblocks the next queued reply after a real sender stalls without resending the uncertain one", async () => {
+    const f = await fixture();
+    vi.useFakeTimers();
+    let first = true;
+    const fetcher = vi.fn(async () => {
+      if (first) { first = false; return new Response(new ReadableStream()); }
+      return new Response(JSON.stringify({ errcode: 0 }));
+    });
+    vi.stubGlobal("fetch", fetcher);
+    try {
+      f.db.exec("UPDATE collaboration_outbox SET delivery_state='sent',sent_at=1");
+      const sessions = new DingTalkSessionReplyRegistry();
+      for (const [index, id] of ["deadline-first", "deadline-next"].entries()) {
+        enqueueInboundCard(f.db, { sourceEventId: id, aggregateType: "work_item", aggregateId: f.workItemId, aggregateVersion: 1,
+          card: { type: "primary_status_card", headline: "已接收", acknowledgement: "原消息已保存", workItemId: f.workItemId, workItemVersion: 1, workItemStatus: "collecting", association: "created" },
+          now: Date.now()+index });
+        sessions.capture({ sourceEventId: id, webhookUrl: "https://api.dingtalk.com/session-fixture", expiresAt: Date.now()+60000 });
+      }
+      const lease = new InstanceLeaseCoordinator(f.db, "deadline-test").acquire(Date.now(), 60000)!;
+      const options = { maxAttempts: 3, claimTtlMs: 30000, baseBackoffMs: 1, maxBackoffMs: 10 };
+      const dispatcher = new OutboxDispatcher(f.db, createDingTalkDelivery(sessions, {}, f.root), options);
+      const stalled = dispatcher.dispatchOne(lease, Date.now());
+      await vi.advanceTimersByTimeAsync(8_001);
+      expect(await stalled).toMatchObject({ state: "dead_letter" });
+      expect(await dispatcher.dispatchOne(lease, Date.now())).toMatchObject({ state: "sent" });
+      const restarted = new OutboxDispatcher(f.db, createDingTalkDelivery(sessions, {}, f.root), options);
+      expect(await restarted.dispatchOne(lease, Date.now())).toBeNull();
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(f.db.prepare("SELECT sent_at,last_error FROM collaboration_outbox WHERE source_event_id='deadline-first'").get())
+        .toEqual({ sent_at: null, last_error: "session_delivery_unconfirmed" });
+    } finally { vi.useRealTimers(); vi.unstubAllGlobals(); f.db.close(); }
+  });
   it("wires uncertain real-adapter delivery into a durable no-resend state without real credentials", async () => {
     const f = await fixture();
     const fetcher = vi.fn(async () => new Response("lost business receipt", { status: 200 }));

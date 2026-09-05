@@ -1,5 +1,6 @@
 import type { DingTalkHttpResult, DingTalkSessionSendPort } from "./ports.ts";
 import { renderDingTalkSessionMessage } from "./session-message.ts";
+import { boundedReplyRequest } from "./bounded-reply-request.ts";
 
 type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
@@ -21,22 +22,20 @@ export class FetchDingTalkSessionSender implements DingTalkSessionSendPort {
 
   async send(webhookUrl: string, payload: unknown): Promise<DingTalkHttpResult> {
     const url = assertDingTalkWebhook(webhookUrl);
-    const response = await this.fetcher(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(renderDingTalkSessionMessage(payload)),
-      redirect: "error",
-    });
-    if (!response.ok) return { ok: false, status: response.status, code: `http_${response.status}` };
-    let result: unknown;
+    let response: Awaited<ReturnType<typeof boundedReplyRequest>>;
     try {
-      const body = await response.text();
-      if (!body || body.length > 16 * 1024) throw new Error("dingtalk_response_invalid");
-      result = JSON.parse(body) as unknown;
+      response = await boundedReplyRequest(this.fetcher, url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(renderDingTalkSessionMessage(payload)),
+        redirect: "error",
+      }, 16 * 1024);
     } catch {
-      return { ok: false, status: response.status, code: "dingtalk_response_invalid" };
+      return { ok: false, status: 503, code: "dingtalk_session_transport", deliveryState: "unknown" };
     }
-    if (!result || typeof result !== "object" || Array.isArray(result)) {
+    if (!response.ok) return { ok: false, status: response.status, code: `http_${response.status}` };
+    const result = response.record;
+    if (!result) {
       return { ok: false, status: response.status, code: "dingtalk_response_invalid" };
     }
     const business = result as { errcode?: unknown; success?: unknown };
