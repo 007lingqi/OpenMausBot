@@ -375,12 +375,12 @@ describe("runtime repository single-writer scheduling", () => {
     const h = createHarness([createRepository(root, "schema-15-preparation")]);
     const db = new DatabaseSync(h.databaseFile);
     // Reconstruct the exact v15 delta in this disposable fixture only.
-    db.exec("DROP INDEX collaboration_outbox_delivery_sequence; ALTER TABLE collaboration_outbox DROP COLUMN delivery_sequence; DROP TABLE collaboration_sent_association_choices; DROP TABLE collaboration_execution_preparation_results; DELETE FROM collaboration_schema_migrations WHERE version>=16; PRAGMA user_version=15");
+    db.exec("DROP TABLE collaboration_acceptance_mapping_results; DROP TABLE collaboration_acceptance_mapping_attempts; DROP INDEX collaboration_outbox_delivery_sequence; ALTER TABLE collaboration_outbox DROP COLUMN delivery_sequence; DROP TABLE collaboration_sent_association_choices; DROP TABLE collaboration_execution_preparation_results; DELETE FROM collaboration_schema_migrations WHERE version>=16; PRAGMA user_version=15");
     db.prepare("INSERT INTO collaboration_execution_dispatches (work_item_id,plan_revision,attempt,instance_owner,instance_fence,created_at) VALUES (?,1,1,'dead-instance',1,1)").run(h.items[0].workItemId);
     const original = db.prepare("SELECT * FROM collaboration_execution_dispatches").get();
     await h.runtime.start();
     try {
-      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 17 });
+      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 18 });
       expect(db.prepare("SELECT * FROM collaboration_execution_dispatches").get()).toEqual(original);
       expect(db.prepare("SELECT state FROM collaboration_execution_preparation_results").get()).toEqual({ state: "interrupted" });
     } finally { db.close(); await stopHarness(h); }

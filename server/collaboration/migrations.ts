@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { OPENMAUSBOT_SOURCE_BASELINE } from "./config.ts";
 
-export const COLLABORATION_SCHEMA_VERSION = 17;
+export const COLLABORATION_SCHEMA_VERSION = 18;
 
 interface Migration {
   version: number;
@@ -1056,6 +1056,24 @@ const migrations: readonly Migration[] = [
         BEGIN SELECT RAISE(ABORT,'sent choices are immutable'); END;
       CREATE TRIGGER collaboration_sent_choices_no_delete BEFORE DELETE ON collaboration_sent_association_choices
         BEGIN SELECT RAISE(ABORT,'sent choices are immutable'); END;
+    `); },
+  },
+  {
+    version: 18, name: "acceptance-mapping-provenance", checksum: "v18:immutable-mapping-attempts-and-review",
+    apply(database) { database.exec(`
+      CREATE TABLE collaboration_acceptance_mapping_attempts (
+        request_key TEXT NOT NULL, attempt INTEGER NOT NULL CHECK(attempt BETWEEN 1 AND 3),
+        request_json TEXT NOT NULL CHECK(json_valid(request_json)), created_at INTEGER NOT NULL,
+        PRIMARY KEY(request_key,attempt)
+      ) STRICT;
+      CREATE TABLE collaboration_acceptance_mapping_results (
+        request_key TEXT NOT NULL, attempt INTEGER NOT NULL, receipt_json TEXT NOT NULL CHECK(json_valid(receipt_json)), created_at INTEGER NOT NULL,
+        PRIMARY KEY(request_key,attempt), FOREIGN KEY(request_key,attempt) REFERENCES collaboration_acceptance_mapping_attempts(request_key,attempt)
+      ) STRICT;
+      CREATE TRIGGER collaboration_mapping_attempt_no_update BEFORE UPDATE ON collaboration_acceptance_mapping_attempts BEGIN SELECT RAISE(ABORT,'mapping attempt is immutable'); END;
+      CREATE TRIGGER collaboration_mapping_attempt_no_delete BEFORE DELETE ON collaboration_acceptance_mapping_attempts BEGIN SELECT RAISE(ABORT,'mapping attempt is immutable'); END;
+      CREATE TRIGGER collaboration_mapping_result_no_update BEFORE UPDATE ON collaboration_acceptance_mapping_results BEGIN SELECT RAISE(ABORT,'mapping result is immutable'); END;
+      CREATE TRIGGER collaboration_mapping_result_no_delete BEFORE DELETE ON collaboration_acceptance_mapping_results BEGIN SELECT RAISE(ABORT,'mapping result is immutable'); END;
     `); },
   },
 ];

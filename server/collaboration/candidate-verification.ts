@@ -16,6 +16,8 @@ import {
 } from "./quality-gate.ts";
 import { assertLedgerArmed } from "./restore-guard.ts";
 import { assertionCoverage, readAssertionReport, type CoverageCommand, type CoverageItem } from "./acceptance-assertions.ts";
+import { AcceptanceMappingCoordinator, type AcceptanceMappingModels } from "./acceptance-mapping.ts";
+import { collectAcceptanceMappingRequest } from "./acceptance-source.ts";
 
 const VERIFIER_AGENT_ID = "deterministic-verifier-v1";
 const META_AGENT_ID = "meta-acceptance-gate-v1";
@@ -75,6 +77,7 @@ export interface CandidateVerificationOptions {
   commands: Readonly<Record<string, TargetCommandSpec>>;
   dataDirectory: string;
   maxAttempts?: number;
+  acceptanceMapping?: AcceptanceMappingModels;
 }
 
 interface AcceptanceCondition {
@@ -121,10 +124,12 @@ function hash(value: unknown): string {
 function verificationContractHash(
   row: VerificationRow,
   commands: Readonly<Record<string, TargetCommandSpec>>,
+  mappingPolicy: string | null = null,
 ): string {
   const commandIds = strings(row.commands_json);
   return hash({
     schemaVersion: VERIFICATION_CONTRACT_SCHEMA_VERSION,
+    mappingPolicy,
     spec: {
       workItemId: row.work_item_id,
       planRevision: row.plan_revision,
@@ -373,7 +378,7 @@ export class CandidateVerificationCoordinator {
     assertLedgerArmed(this.database);
     const row = readRow(this.database, input.candidateRunId);
     if (!row) throw new Error("candidate_verification_target_unavailable");
-    const currentSpecHash = verificationContractHash(row, this.options.commands);
+    const currentSpecHash = verificationContractHash(row, this.options.commands, this.options.acceptanceMapping?.policyId);
     const existingPair = latestPassedReviewPair(this.database, row, currentSpecHash);
     if (existingPair) {
       return {
@@ -420,7 +425,27 @@ export class CandidateVerificationCoordinator {
     const before = gitState(worktreePath);
     let evidence: TestEvidence[] = [];
     let reasons: string[] = [];
+    let commands = this.options.commands;
+    let mapping: { requestHash: string; policyId: string } | undefined;
     if (before.head !== row.result_sha || before.status) reasons.push("candidate_worktree_not_clean");
+    if (!reasons.length && this.options.acceptanceMapping && commandIds.some(id => !commands[id]?.assertionContract)) {
+      try {
+        const request = collectAcceptanceMappingRequest({ worktree: worktreePath, candidateSha: row.result_sha, specHash: currentSpecHash,
+          conditions, commandIds, commands });
+        const result = await new AcceptanceMappingCoordinator(this.database, this.options.acceptanceMapping).map(request, input.now);
+        if (result.status === "pending") return { passed: false, status: "needs_configuration", reasons: ["acceptance_mapping_pending"],
+          specHash: currentSpecHash, verifierAttempt: previous?.attempt ?? 0, metaAttempt: null };
+        if (result.status !== "approved" || !result.contracts) reasons.push("acceptance_mapping_incomplete");
+        else {
+          commands = Object.fromEntries(commandIds.map(id => [id, { ...commands[id], assertionContract: result.contracts![id] ?? commands[id].assertionContract }]));
+          mapping = { requestHash: result.requestHash, policyId: this.options.acceptanceMapping.policyId };
+        }
+      } catch { reasons.push("acceptance_mapping_unavailable"); }
+      const current = readRow(this.database, input.candidateRunId);
+      const state = gitState(worktreePath);
+      if (!current || verificationContractHash(current, this.options.commands, this.options.acceptanceMapping.policyId) !== currentSpecHash ||
+        state.head !== before.head || state.status !== before.status) reasons.push("verification_target_changed");
+    }
     if (!reasons.length) {
       const home = join(this.options.dataDirectory, "collaboration", "verifier-home");
       mkdirSync(home, { recursive: true, mode: 0o700 });
@@ -428,7 +453,7 @@ export class CandidateVerificationCoordinator {
         worktree: worktreePath,
         environment: isolatedExecutionEnvironment(process.env, home),
         commandIds,
-        commands: this.options.commands,
+        commands,
         runner: this.options.commandRunner,
         deniedPaths: [realpathSync(row.repository_path), realpathSync(join(this.options.dataDirectory, "collaboration"))],
         containment: this.options.containment,
@@ -450,7 +475,7 @@ export class CandidateVerificationCoordinator {
 
     const refreshed = readRow(this.database, input.candidateRunId);
     const stale = !refreshed ||
-      verificationContractHash(refreshed, this.options.commands) !== currentSpecHash ||
+      verificationContractHash(refreshed, this.options.commands, this.options.acceptanceMapping?.policyId) !== currentSpecHash ||
       refreshed.result_sha !== row.result_sha;
     if (stale) reasons.push("verification_target_changed");
     const verifierStatus: CandidateReviewStatus = stale
@@ -473,7 +498,8 @@ export class CandidateVerificationCoordinator {
           candidateRunId: input.candidateRunId,
           contractSchemaVersion: VERIFICATION_CONTRACT_SCHEMA_VERSION,
           reasons,
-          commands: publicEvidence(evidence, this.options.commands),
+          commands: publicEvidence(evidence, commands),
+          ...(mapping ? { mapping } : {}),
         },
         now: input.now,
       });
@@ -503,7 +529,7 @@ export class CandidateVerificationCoordinator {
         metaAttempt: null,
       };
     }
-    return this.metaReview(row, currentSpecHash, commandIds, conditions, evidence, attempt, input.now);
+    return this.metaReview(row, currentSpecHash, commandIds, conditions, evidence, attempt, input.now, commands);
   }
 
   private metaReview(
@@ -514,6 +540,7 @@ export class CandidateVerificationCoordinator {
     verifierEvidence: TestEvidence[],
     verifierAttempt: number,
     now: number,
+    commands: Readonly<Record<string, TargetCommandSpec>>,
   ): CandidateVerificationOutcome {
     const selfEvidence = this.database.prepare(
       "SELECT command_id,state,stdout,containment_binding_json FROM collaboration_test_evidence WHERE run_id = ?",
@@ -533,13 +560,13 @@ export class CandidateVerificationCoordinator {
           assertions = readAssertionReport(item.stdout, { runId: row.candidate_run_id, nonce: binding.nonce });
         }
       } catch { /* Missing or malformed self-test provenance is not evidence. */ }
-      return { commandId, state: item?.state ?? "missing", assertions, assertionContract: this.options.commands[commandId]?.assertionContract };
+      return { commandId, state: item?.state ?? "missing", assertions, assertionContract: commands[commandId]?.assertionContract };
     });
     const selfCoverage = assertionCoverage(conditions, selfCommands);
     const coverage = mapAcceptanceCoverage({
       acceptanceConditions: conditions,
       commandIds,
-      commands: this.options.commands,
+      commands,
       evidence: verifierEvidence,
     });
     const ambiguityCount = arrayLength(row.blocking_ambiguities_json);
@@ -550,7 +577,7 @@ export class CandidateVerificationCoordinator {
     const refreshed = readRow(this.database, row.candidate_run_id);
     if (
       !refreshed ||
-      verificationContractHash(refreshed, this.options.commands) !== currentSpecHash ||
+      verificationContractHash(refreshed, this.options.commands, this.options.acceptanceMapping?.policyId) !== currentSpecHash ||
       refreshed.result_sha !== row.result_sha
     ) reasons.push("meta_target_changed");
     const status: CandidateReviewStatus = reasons.includes("blocking_ambiguity_present")

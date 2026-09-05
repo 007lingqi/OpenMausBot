@@ -1,5 +1,15 @@
 # Meta 协作验证记录
 
+## 2026-09-05 有来源的自动验收映射（最新）
+
+- 最终 `pnpm vitest run server/collaboration server/integrations/dingtalk server/collaboration-headless.test.ts && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-acceptance-mapping-typecheck && git diff --check`：65 文件 / 433 项通过，22:26:25 开始、43.49 秒，8560 exit 0；全仓类型检查、服务端编译和补丁检查通过。
+- 先行映射与来源模块缺失导致测试无法导入；初版 ledger 夹具使用不存在 database 属性导致 5 项失败，改用真实 DatabaseSync 后通过。候选接入测试先复现 reporter 强制静态契约导致失败，动态采集/映射接通后针对性 31 项及 typecheck 通过（95003）。
+- 第一次整组 431 passed / 2 failed（25564）：参数属性不兼容 Node strip-only 直接启动，以及旧 schema 17 断言未更新。显式类属性和 schema 18 断言修正后，上述最终整组全部通过，不把初次失败视为验收成功。一次补丁因 runtime import 上下文不符而整体未应用，核对后重试成功。
+- 覆盖：固定 Git blob 不受工作区改写影响；拒绝 symlink/缺失/超限/非字面命令；双阶段来源引文、过时 request/proposal、独立上下文、三次持久预算、模型忽略取消超时、并发认领/晚到结果、策略身份变化；候选复核生成局部绑定后仍检查自测和独立断言。持久收据不可变，升级旧 dispatch schema 后保留原记录。
+- 映射模型和候选执行结果均使用明确的受控测试端口；Git 来源是真实临时仓库。没有真实语义模型准确率或 Docker 新链路证明。未运行本批全仓 pnpm test、未部署 schema 18、未调用真实凭据/模型/钉钉/在线文档。
+- 后续必验：headless 显式模型配置、从持久映射收据验证最终完成记录、映射等待期间 Owner/Spec/候选漂移、跨进程竞争、缺失测试自动补充及依赖源码语义核对、六类真实群聊场景。Goal 保持 active；20 工具轮后只完成最终验证、记录和本地提交。
+
+
 ## 2026-09-05 Node test 报告器与真实 Docker smoke（最新）
 
 - 最终 `pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-node-reporter-typecheck && git diff --check` 全链通过，82423 exit 0。主 Vitest 256 文件通过 / 1 文件跳过，2415 项通过 / 18 项跳过（2433，总数门禁通过），21:56:38 开始、236.44 秒。broker 7 项、Electron 独立套件 32 项、打包服务无 node_modules 启动和 9 个代理路径检查均通过；类型检查、服务端编译及补丁检查通过。平台跳过项不是跨平台验收通过。

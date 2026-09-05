@@ -103,7 +103,7 @@ function contained(root: string, candidate: string): boolean {
 
 export function validateTargetCommandSpec(commandId: string, spec: TargetCommandSpec): void {
   if (spec.assertionReporter !== undefined) {
-    if (spec.assertionReporter !== "node-test-v1" || !spec.assertionContract) throw new Error("Target command assertion reporter is invalid");
+    if (spec.assertionReporter !== "node-test-v1") throw new Error("Target command assertion reporter is invalid");
     validateNodeTestArgv(spec.argv);
   }
   if (spec.assertionContract !== undefined && !assertionContractSchema.safeParse(spec.assertionContract).success) throw new Error("Target command assertion contract is invalid");
@@ -126,7 +126,7 @@ function evidence(
   containmentFingerprint: string,
   containmentBinding: ContainmentBinding,
 ): TestEvidence {
-  const assertions = spec.assertionContract ? readAssertionReport(result.stdout.toString("utf8"), containmentBinding) : undefined;
+  const assertions = spec.assertionContract || spec.assertionReporter ? readAssertionReport(result.stdout.toString("utf8"), containmentBinding) : undefined;
   return {
     commandId,
     argv: [...spec.argv],
@@ -184,7 +184,7 @@ export async function runTargetTests(input: {
       argv: spec.argv,
       assertionReporter: spec.assertionReporter,
       cwd,
-      environment: spec.assertionContract ? { ...input.environment,
+      environment: spec.assertionContract || spec.assertionReporter ? { ...input.environment,
         OMB_ASSERTION_RUN_ID: containmentBinding.runId, OMB_ASSERTION_NONCE: containmentBinding.nonce,
         ...(spec.assertionReporter ? { OMB_ASSERTION_ROOT: root } : {}) } : input.environment,
       timeoutMs: spec.timeoutMs,

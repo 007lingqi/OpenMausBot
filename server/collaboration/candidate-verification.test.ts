@@ -27,6 +27,8 @@ import type {
 } from "./quality-gate.ts";
 import { startCollaborationService, type CollaborationService } from "./service.ts";
 import { acceptanceConditionHash } from "./acceptance-assertions.ts";
+import { nodeTestAssertionId } from "./node-test-reporter.ts";
+import type { NaturalIntakeModelPort } from "./natural-intake.ts";
 
 const scratch: string[] = [];
 const resources: Array<{ close(): void }> = [];
@@ -133,7 +135,7 @@ interface Fixture {
   commands: Record<string, TargetCommandSpec>;
 }
 
-function fixture(observation = "pnpm test target 验证候选结果", selfReport = true): Fixture {
+function fixture(observation = "pnpm test target 验证候选结果", selfReport = true, mapping = false): Fixture {
   const id = ++sequence;
   const root = mkdtempSync(join(tmpdir(), "openmausbot-verification-"));
   scratch.push(root);
@@ -144,6 +146,7 @@ function fixture(observation = "pnpm test target 验证候选结果", selfReport
   git(repository, ["config", "user.name", "Fixture"]);
   git(repository, ["config", "user.email", "fixture@example.invalid"]);
   writeFileSync(join(repository, "src", "value.txt"), "before\n");
+  if (mapping) writeFileSync(join(repository, "src", "value.test.mjs"), "import test from 'node:test'; import assert from 'node:assert/strict'; import {readFileSync} from 'node:fs'; test('候选值更新',()=>assert.equal(readFileSync('src/value.txt','utf8'),'after\\n'));\n");
   git(repository, ["add", "."]);
   git(repository, ["commit", "-m", "base"]);
   const baseSha = git(repository, ["rev-parse", "HEAD"]);
@@ -203,7 +206,7 @@ function fixture(observation = "pnpm test target 验证候选结果", selfReport
       "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
   ).run(
     `evidence-${id}`, runId, "pnpm test target", JSON.stringify(["node", "test"]), worktree,
-    0, 5, selfReport ? JSON.stringify({ version: 1, runId, nonce: "fixture-self-test-nonce", assertions: [{ id: "value-updated", state: "passed" }] }) : "command passed", "", "target_passed", 3_100,
+    0, 5, selfReport ? JSON.stringify({ version: 1, runId, nonce: "fixture-self-test-nonce", assertions: [{ id: mapping ? nodeTestAssertionId("src/value.test.mjs", "候选值更新") : "value-updated", state: "passed" }] }) : "command passed", "", "target_passed", 3_100,
     JSON.stringify({ runId, nonce: "fixture-self-test-nonce", commandId: "pnpm test target" }),
   );
   return {
@@ -217,7 +220,7 @@ function fixture(observation = "pnpm test target 验证候选结果", selfReport
     database,
     service,
     commands: {
-      "pnpm test target": { argv: [process.execPath, "-e", "process.exit(0)"], timeoutMs: 5_000, maxOutputBytes: 32_000,
+      "pnpm test target": mapping ? { argv: ["node", "--test", "src/value.test.mjs"], timeoutMs: 5000, maxOutputBytes: 32000, assertionReporter: "node-test-v1" } : { argv: [process.execPath, "-e", "process.exit(0)"], timeoutMs: 5_000, maxOutputBytes: 32_000,
         assertionContract: { format: "omb-assertions-v1", bindings: [{ conditionHash: acceptanceConditionHash({ description: "候选值已经更新", observation: "pnpm test target 验证候选结果" }), assertionIds: ["value-updated"] }] } },
     },
   };
@@ -243,6 +246,30 @@ function verify(item: Fixture, runner: SandboxedCommandRunner, now = 4_000, maxA
 }
 
 describe("independent candidate verification", () => {
+  it("automatically binds current source-backed cases and still requires both test stages", async () => {
+    const item = fixture(undefined, true, true);
+    const proposer: NaturalIntakeModelPort = { async complete(input) {
+      const value = JSON.parse(input.user);
+      return { version: 1, requestHash: value.requestHash, bindings: [{ conditionHash: acceptanceConditionHash(value.conditions[0]),
+        commandId: value.sources[0].commandId, file: value.sources[0].file, testName: "候选值更新", startLine: 1,
+        endLine: value.sources[0].text.split("\n").length, quote: value.sources[0].text, rationale: "断言读取值为 after" }] };
+    } };
+    const verifier: NaturalIntakeModelPort = { async complete(input) {
+      const value = JSON.parse(input.user);
+      return { version: 1, requestHash: value.requestHash, proposalHash: value.proposalHash,
+        findings: [{ conditionHash: acceptanceConditionHash(value.request.conditions[0]), state: "covered", reason: "已核对读取断言" }] };
+    } };
+    const runner = new FakeRunner(request => ({ stdout: Buffer.from(JSON.stringify({version:1,runId:request.containmentBinding.runId,nonce:request.containmentBinding.nonce,
+      assertions:[{id:nodeTestAssertionId("src/value.test.mjs", "候选值更新"),state:"passed"}]})),
+      attestation: { sandboxEnforced:true,writableRoot:request.sandbox.writableRoot,deniedPaths:[...request.sandbox.deniedPaths],network:"deny",processIsolated:true,processTreeReaped:true,containmentProof:proof(request.containmentBinding),assertionReporter:"node-test-v1" } }));
+    const coordinator = new CandidateVerificationCoordinator(item.database, { commandRunner: runner, containment: new FakeContainment(), commands:item.commands,
+      dataDirectory:item.dataDirectory, acceptanceMapping: {proposer,verifier,policyId:"fixture-v1"} });
+    const outcome = await coordinator.verify({candidateRunId:item.runId,worktreePath:item.worktree,instance:{ownerId:"instance-1",fence:1},now:4000});
+    expect(outcome.passed).toBe(true);
+    expect(candidateHasPassedMetaReview(item.database,item.runId,item.candidateSha)).toBe(true);
+    expect(item.commands["pnpm test target"].assertionContract).toBeUndefined();
+    expect(item.database.prepare("SELECT count(*) AS count FROM collaboration_acceptance_mapping_results").get()).toEqual({count:1});
+  });
   it("rejects a runner that did not attest the configured trusted reporter", async () => {
     const item = fixture();
     item.commands["pnpm test target"].argv = ["node", "--test", "case.test.mjs"];

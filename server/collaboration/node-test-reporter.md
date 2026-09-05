@@ -4,6 +4,8 @@
 
 受信任目标命令配置保留原来的 `argv: ["node", "--test", "tests/example.test.mjs"]`，增加 `assertionReporter: "node-test-v1"` 和 `assertionContract`。条件哈希使用 `acceptanceConditionHash({ description, observation })`；用例 ID 使用 `nodeTestAssertionId("tests/example.test.mjs", "用例名称")`。映射必须由可信开发/验证流程核对，不从附件里的指令自动接纳，不按名称相似直接放行。
 
+自动模式的运行时接口现可注入 `acceptanceMapping: {proposer, verifier, policyId}`，两个端口必须使用独立上下文；此时 reporter 可暂不带静态 assertionContract，先采集自测断言，由固定候选源码映射与独立复核生成本候选专用契约。没有映射端口或映射不通过仍不能完成。headless 的真实模型配置尚未装配，不应手工借用其他模型凭据或启用未授权付费服务；变更模型/复核规则时需改变可信 policyId。
+
 - 只接受显式相对测试文件，不接受 npm 包装、glob、额外 Node 参数、自定义 reporter 或进程内执行。其他测试框架需另建适配器，不能把任意 stdout 强转为报告。
 - 相对文件路径基于整个候选工作区，不是命令 cwd；名称在同文件必须唯一。改文件路径或用例名称会使旧绑定失效；重名保守拒绝，后续可增加可追溯的完整套件身份。
 - Docker 从控制面源码生成报告器，放在候选外的只读交换挂载中；每次报告绑定 run/nonce。测试 stdout/stderr 事件不构成验收证据，所需用例被跳过不算通过。

@@ -23,6 +23,7 @@ import {
   CandidateVerificationCoordinator,
   type CandidateVerificationOutcome,
 } from "../candidate-verification.ts";
+import type { AcceptanceMappingModels } from "../acceptance-mapping.ts";
 import {
   type ContainmentBinding,
   type ContainmentPort,
@@ -143,6 +144,7 @@ export interface CollaborationHeadlessRuntimeOptions {
   probeOnly?: boolean;
   planner?: PlannerPort;
   naturalIntake?: NaturalIntakeInterpreter;
+  acceptanceMapping?: AcceptanceMappingModels;
   planningPolicy?: PlanningPolicy;
   planningDefaultDefinition?: { repository: string; acceptanceConditions: AcceptanceCondition[] };
   agent?: AgentRunPort;
@@ -1374,6 +1376,7 @@ export class CollaborationHeadlessRuntime {
       commands: configured.targetCommands,
       dataDirectory: this.options.dataDirectory,
       maxAttempts: CANDIDATE_VERIFICATION_MAX_ATTEMPTS,
+      acceptanceMapping: this.options.acceptanceMapping,
     });
   }
 
