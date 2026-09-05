@@ -1124,6 +1124,36 @@ export class CollaborationHeadlessRuntime {
     this.assertAcceptingNewWork();
     if (!this.executionEnabled()) throw new Error("collaboration_execution_not_configured");
     if (this.repositoryVerificationBlocked(workItemId)) throw new Error("verification_repository_unsettled");
+    const row = this.database!.prepare(
+      "SELECT s.repository FROM collaboration_work_items w " +
+      "JOIN collaboration_plan_revisions p ON p.work_item_id=w.id AND p.revision=w.current_plan_revision " +
+      "JOIN collaboration_work_item_snapshots s ON s.work_item_id=w.id AND s.revision=p.snapshot_revision WHERE w.id=?",
+    ).get(workItemId) as { repository: string } | undefined;
+    if (!row) throw new Error("collaboration_execution_target_unavailable");
+    const repository = this.repositoryQueueKey(row.repository);
+    if (this.activeRepositoryExecutions.has(repository) || this.scheduledWorkItems.has(workItemId)) {
+      throw new Error("collaboration_repository_busy");
+    }
+    // Reserve synchronously, before the executor's first asynchronous preparation step.
+    const lifetime = this.verificationAbort;
+    this.activeRepositoryExecutions.add(repository);
+    this.scheduledWorkItems.add(workItemId);
+    try {
+      return await this.executeReservedPlan(workItemId, attempt);
+    } finally {
+      if (lifetime === this.verificationAbort) {
+        this.scheduledWorkItems.delete(workItemId);
+        this.activeRepositoryExecutions.delete(repository);
+        this.scheduleNextQueuedWorkItem(repository);
+      }
+    }
+  }
+
+  /** Only callers holding this runtime's repository slot may enter this method. */
+  private async executeReservedPlan(workItemId: string, attempt?: number): Promise<CandidateExecutionOutcome> {
+    this.assertAcceptingNewWork();
+    if (!this.executionEnabled()) throw new Error("collaboration_execution_not_configured");
+    if (this.repositoryVerificationBlocked(workItemId)) throw new Error("verification_repository_unsettled");
     const execution = this.service!.executeCurrentPlan(workItemId, attempt, this.clock.now());
     this.activeExecutions.add(execution);
     try {
@@ -1340,7 +1370,7 @@ export class CollaborationHeadlessRuntime {
     } catch (error) { this.database.exec("ROLLBACK"); throw error; }
     this.activeRepositoryExecutions.add(repository);
     this.scheduledWorkItems.add(workItemId);
-    void this.executeCurrentPlan(workItemId, attempt)
+    void this.executeReservedPlan(workItemId, attempt)
       .then(async (outcome) => await this.enqueueExecutionStatus(outcome))
       .catch((error: unknown) => {
         if (!this.database || !this.lease) return;

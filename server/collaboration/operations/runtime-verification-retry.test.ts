@@ -109,7 +109,7 @@ interface RetryFixture {
   owner: DingTalkInboundMessage["sender"];
 }
 
-function seedRetryableCandidate(shared?: { dataDirectory: string; repository?: string; baseSha?: string }): RetryFixture {
+function seedRetryableCandidate(shared?: { dataDirectory: string; repository?: string; baseSha?: string }, withCandidate = true): RetryFixture {
   const id = ++sequence;
   const root = mkdtempSync(join(tmpdir(), "openmausbot-runtime-verification-retry-"));
   scratch.push(root);
@@ -172,6 +172,7 @@ function seedRetryableCandidate(shared?: { dataDirectory: string; repository?: s
       "WHERE work_item_id = ? AND plan_revision = 1 AND node_type = 'modify'",
   ).get(accepted.workItemId) as { node_id: string; assigned_agent_id: string };
   const runId = `retry-run-${id}`;
+  if (withCandidate) {
   database.prepare(
     "INSERT INTO collaboration_runs " +
       "(id,work_item_id,plan_revision,node_id,attempt,agent_id,thread_id,turn_id,status,repository_path," +
@@ -196,6 +197,7 @@ function seedRetryableCandidate(shared?: { dataDirectory: string; repository?: s
     `evidence-${id}`, runId, "pnpm test target", JSON.stringify(["node", "test"]), worktree,
     0, 5, "passed", "", "target_passed", 3_100,
   );
+  }
   database.close();
   return {
     dataDirectory,
@@ -282,6 +284,98 @@ async function runningRuntime(item: RetryFixture, runner: FailingVerifierRunner,
 }
 
 describe("runtime Owner verification retry", () => {
+  it.each(["same", "different"])("coordinates startup verification with a new modification in %s repositories", async mode => {
+    const first = seedRetryableCandidate();
+    const second = seedRetryableCandidate(mode === "same" ? first : { dataDirectory: first.dataDirectory }, false);
+    const runner = new FailingVerifierRunner();
+    let release!: () => void;
+    runner.onRun = () => new Promise<void>(resolve => { release = resolve; });
+    const started: string[] = [];
+    const agent: AgentRunPort = {
+      async run(request) {
+        await request.registerContainment(proof(request.containmentBinding));
+        started.push(request.workItemId);
+        return { threadId: request.threadId, turnId: request.turnId, status: "failed", message: "controlled failure",
+          sandboxEnforced: true, containmentProof: proof(request.containmentBinding) };
+      },
+      async interrupt() {},
+    };
+    const { runtime } = configuredRuntime(first, runner, 10000, Date.now(), {
+      agent, autoExecuteReady: true,
+      execution: {
+        managedWorktreeRoot: join(first.dataDirectory, "managed"),
+        repositories: Object.fromEntries([first, second].map(item => [item.repository, {
+          baseSha: item.baseSha, targetCommands: { "pnpm test target": item.command },
+        }])),
+        limits: { maxAttempts: 1, agentTimeoutMs: 2000, maxAgentEventBytes: 16000, interruptGraceMs: 500 },
+      },
+    });
+    try {
+      await runtime.start();
+      await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+      for (let i = 0; i < 3; i++) await runtime.drainOnce();
+      if (mode === "same") expect(started).toEqual([]);
+      else await vi.waitFor(() => expect(started).toEqual([second.workItemId]));
+      release();
+      await vi.waitFor(() => expect(started).toEqual([second.workItemId]));
+      await vi.waitFor(() => expect(runtime["scheduledWorkItems"].size).toBe(0));
+      expect(reviewCount(first)).toBe(1);
+    } finally { release?.(); await runtime.stop(); }
+  });
+
+  it("does not start queued startup verifications after shutdown begins", async () => {
+    const first = seedRetryableCandidate();
+    const second = seedRetryableCandidate(first);
+    const runner = new FailingVerifierRunner();
+    let release!: () => void;
+    runner.onRun = () => new Promise<void>(resolve => { release = resolve; });
+    const { runtime } = configuredRuntime(first, runner);
+    try {
+      await runtime.start();
+      await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+      const stopping = runtime.stop();
+      release();
+      await stopping;
+      expect(runner.requests).toHaveLength(1);
+      expect(reviewCount(second)).toBe(0);
+      expect(runtime.health().state).toBe("stopped");
+    } finally { release?.(); await runtime.stop(); }
+  });
+
+  it("queues an Owner verification retry behind a direct modification of the same repository", async () => {
+    const first = seedRetryableCandidate();
+    const second = seedRetryableCandidate(first, false);
+    const runner = new FailingVerifierRunner();
+    let release!: () => void;
+    const agent: AgentRunPort = {
+      async run(request) {
+        await request.registerContainment(proof(request.containmentBinding));
+        await new Promise<void>(resolve => { release = resolve; });
+        return { threadId: request.threadId, turnId: request.turnId, status: "failed", message: "controlled failure",
+          sandboxEnforced: true, containmentProof: proof(request.containmentBinding) };
+      },
+      async interrupt() { release?.(); },
+    };
+    const { runtime } = configuredRuntime(first, runner, 10000, Date.now(), { agent });
+    let execution: Promise<unknown> | undefined;
+    try {
+      await runtime.start();
+      await vi.waitFor(() => expect(runtime["scheduledWorkItems"].size).toBe(0));
+      expect(reviewCount(first)).toBe(1);
+      execution = runtime.executeCurrentPlan(second.workItemId);
+      void execution.catch(() => undefined);
+      await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+      expect(runtime.performDingTalkOwnerTextCommand(ownerRetry(first, "retry-behind-direct", Date.now())).allowed).toBe(true);
+      for (let i = 0; i < 3; i++) await runtime.drainOnce();
+      expect(runner.requests).toHaveLength(1);
+      release();
+      await execution;
+      await vi.waitFor(() => expect(reviewCount(first)).toBe(2));
+      await vi.waitFor(() => expect(runtime["scheduledWorkItems"].size).toBe(0));
+      expect(runner.requests).toHaveLength(2);
+    } finally { release?.(); await execution?.catch(() => undefined); await runtime.stop(); }
+  });
+
   it("starts and accepts messages, delivers replies and renews its lease while startup verification waits", async () => {
     const item=seedRetryableCandidate(); const runner=new FailingVerifierRunner();
     let release!:()=>void; let now=4000; let deliveries=0;

@@ -269,6 +269,56 @@ async function stopHarness(harness: RuntimeHarness): Promise<void> {
 }
 
 describe("runtime repository single-writer scheduling", () => {
+  it("rejects direct execution while scheduled work is still preparing the same repository", async () => {
+    const repo = createRepository(temporaryDirectory(), "direct-during-preparation");
+    const h = createHarness([repo, repo]);
+    let release!: () => void;
+    const original = WorktreeManager.prototype.prepare;
+    const prepare = vi.spyOn(WorktreeManager.prototype, "prepare").mockImplementationOnce(async function (this: WorktreeManager, ...args) {
+      await new Promise<void>(resolve => { release = resolve; });
+      return original.apply(this, args);
+    });
+    try {
+      await h.runtime.start();
+      await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+      await expect(h.runtime.executeCurrentPlan(h.items[1].workItemId)).rejects.toThrow("collaboration_repository_busy");
+      expect(prepare).toHaveBeenCalledTimes(1);
+      expect(h.agent.startedWorkItems).toEqual([]);
+    } finally {
+      release?.(); h.agent.releaseAll(); await h.runtime.stop(); prepare.mockRestore();
+    }
+  });
+
+  it("holds a direct execution repository through preparation and lets its queued sibling proceed afterwards", async () => {
+    const repo = createRepository(temporaryDirectory(), "direct-before-scheduled");
+    const h = createHarness([repo, repo]);
+    h.options.autoExecuteReady = false;
+    let release!: () => void;
+    const original = WorktreeManager.prototype.prepare;
+    const prepare = vi.spyOn(WorktreeManager.prototype, "prepare").mockImplementationOnce(async function (this: WorktreeManager, ...args) {
+      await new Promise<void>(resolve => { release = resolve; });
+      return original.apply(this, args);
+    });
+    let execution: Promise<unknown> | undefined;
+    try {
+      await h.runtime.start();
+      execution = h.runtime.executeCurrentPlan(h.items[0].workItemId);
+      void execution.catch(() => undefined);
+      await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+      h.options.autoExecuteReady = true;
+      await h.runtime.drainOnce();
+      expect(prepare).toHaveBeenCalledTimes(1);
+      expect(h.agent.startedWorkItems).toEqual([]);
+      release();
+      await vi.waitFor(() => expect(h.agent.startedWorkItems).toContain(h.items[0].workItemId));
+      h.agent.resolve(h.items[0].workItemId, "fail");
+      await execution;
+      await vi.waitFor(() => expect(h.agent.startedWorkItems).toContain(h.items[1].workItemId));
+    } finally {
+      release?.(); h.agent.releaseAll(); await execution?.catch(() => undefined); await h.runtime.stop(); prepare.mockRestore();
+    }
+  });
+
   it.each(["cancel", "new_plan"] as const)("does not publish an old preparation failure after %s", async (change) => {
     const root = temporaryDirectory();
     const repo = createRepository(root, `late-failure-${change}`);

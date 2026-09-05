@@ -1,5 +1,13 @@
 # Meta 协作验证记录
 
+## 2026-09-06 混合队列与直接执行入口（最新）
+
+- 最终 `pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-mixed-repository-typecheck && git diff --check` 全链通过（83130 exit 0）。主 Vitest 261 文件通过 / 1 文件跳过，2475 项通过 / 18 项跳过（2493，总数门禁通过），00:48:27 开始、401.25 秒。broker 7 项、Electron 独立套件 32 项、无 node_modules 的打包服务启动和 9 个代理路径均通过。类型检查和服务端编译通过。
+- 新增 6 项：自动 prepare 期间直接入口拒绝同仓库执行；直接 prepare 期间禁止重复调度并在结束后推进等待事项；复核与新修改在同仓库串行/不同仓库并行；shutdown 不再启动排队候选；Owner 复核重试等待直接修改结束后运行。完整套件内新旧 runtime-repository 21 项与 verification-retry 20 项均通过。
+- 两个入口先行测试失败，分别实际启动到 Agent 超时、prepare 计数由 1 变为 2，证明原公开入口绕过内存占用。修复后针对性 56 项通过，第六项单独通过；两次类型检查暴露测试 spy this 隐式 any，同一问题加显式 WorktreeManager 类型后最终全仓类型检查通过。第一次完整回归权限审查超时未开始，一次重试确认启动后始终跟进同一 83130，没有重复启动或削弱测试。
+- 真实临时 Git/SQLite/prepare 与受控 Agent、runner、containment 验证了 headless 进程内互斥；没有调用真实模型、钉钉群、在线文档或部署 Docker。保留既有平台跳过项，不宣称 Linux 主机重启、独立进程竞争或六类真实群聊通过。
+- 全产品仍未完成：底层 service/executor/coordinator 尚缺统一持久仓库预留、遗留复核受控恢复和真实强制重启证据；在线文档及真实自然会话/六类试点仍依赖授权和实际验收。Goal active。
+
 ## 2026-09-06 启动复核后台化与仓库队列（最新）
 
 - 最终 `pnpm vitest run server/collaboration server/integrations/dingtalk server/collaboration-headless.test.ts && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-background-verification-typecheck && git diff --check` 全链通过（22034 exit 0）：68 文件 / 476 项，00:39:16 开始，54.13 秒。未运行本批全仓 pnpm test。
