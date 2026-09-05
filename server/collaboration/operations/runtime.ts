@@ -653,6 +653,7 @@ export class CollaborationHeadlessRuntime {
   private readonly scheduledWorkItems = new Set<string>();
   private readonly activeRepositoryExecutions = new Set<string>();
   private readonly queuedWorkItems = new Set<string>();
+  private readonly queuedVerifications = new Set<string>();
   private readonly dirtyMetaBundles = new Set<string>();
   private readonly metaBundleFailures = new Map<string, number>();
   private recoveryDecisions: RecoveryDecision[] = [];
@@ -687,6 +688,7 @@ export class CollaborationHeadlessRuntime {
     }
     this.currentState = "starting";
     this.verificationAbort = new AbortController();
+    this.queuedVerifications.clear();
     this.reason = null;
     this.logger.write({ event: "collaboration.runtime.starting", state: this.currentState });
     try {
@@ -766,7 +768,7 @@ export class CollaborationHeadlessRuntime {
       } else {
         await this.recoverAtStartup();
       }
-      if (!this.reason && this.executionEnabled()) await this.verifyPendingCandidatesAtStartup();
+      if (!this.reason && this.executionEnabled()) this.queuePendingCandidatesAtStartup();
       if (!this.reason) {
         enqueuePendingOwnerDecisionCards(this.database, this.options.dingTalk?.cardTemplateId, this.clock.now());
         this.syncAllMetaBundles();
@@ -776,6 +778,7 @@ export class CollaborationHeadlessRuntime {
         this.reason = this.service.health().degradation?.reason ?? "service_not_ready";
       }
       this.currentState = this.reason ? "degraded" : "running";
+      this.drainVerificationQueue();
       this.rebuildNeverStartedQueue();
       this.logger.write({
         event: "collaboration.runtime.started",
@@ -1200,13 +1203,14 @@ export class CollaborationHeadlessRuntime {
   private pendingCandidateVerification(workItemId: string): {
     runId: string;
     worktreePath: string;
+    repository: string;
     planRevision: number;
     candidateSha: string;
     verifierContractAttempts: number;
   } | null {
     if (!this.database) return null;
     const row = this.database.prepare(
-      "SELECT r.id AS run_id,r.worktree_path,r.plan_revision,c.result_sha," +
+      "SELECT r.id AS run_id,r.worktree_path,r.repository_path,r.plan_revision,c.result_sha," +
         "COALESCE((SELECT count(*) FROM collaboration_candidate_reviews review " +
         "WHERE review.candidate_run_id = r.id AND review.stage = 'verifier' " +
         "AND review.spec_hash = (SELECT latest_review.spec_hash FROM collaboration_candidate_reviews latest_review " +
@@ -1216,6 +1220,7 @@ export class CollaborationHeadlessRuntime {
         "JOIN collaboration_runs r ON r.work_item_id = w.id AND r.plan_revision = w.current_plan_revision " +
         "JOIN collaboration_candidates c ON c.run_id = r.id " +
         "WHERE w.id = ? AND w.definition_status = 'ready_for_execution' AND w.control_state = 'active' " +
+        "AND w.status NOT IN ('accepted','cancelled') " +
         "AND r.status = 'succeeded' AND c.state = 'target_tests_passed' AND c.result_sha IS NOT NULL " +
         "AND r.attempt = (SELECT MAX(latest.attempt) FROM collaboration_runs latest " +
         "WHERE latest.work_item_id = w.id AND latest.plan_revision = w.current_plan_revision) " +
@@ -1223,6 +1228,7 @@ export class CollaborationHeadlessRuntime {
     ).get(workItemId) as {
       run_id: string;
       worktree_path: string;
+      repository_path: string;
       plan_revision: number;
       result_sha: string;
       verifier_contract_attempts: number;
@@ -1231,18 +1237,31 @@ export class CollaborationHeadlessRuntime {
     return {
       runId: row.run_id,
       worktreePath: row.worktree_path,
+      repository: row.repository_path,
       planRevision: row.plan_revision,
       candidateSha: row.result_sha,
       verifierContractAttempts: row.verifier_contract_attempts,
     };
   }
 
-  private scheduleReadyExecution(workItemId: string): void {
+  private scheduleReadyExecution(workItemId: string, verificationOnly = false): void {
     if (!this.executionEnabled() || this.options.probeOnly || !this.health().ready || this.scheduledWorkItems.has(workItemId) || !this.database) return;
-    if (this.repositoryVerificationBlocked(workItemId)) return;
     const pendingVerification = this.pendingCandidateVerification(workItemId);
     if (pendingVerification) {
-      if (pendingVerification.verifierContractAttempts >= CANDIDATE_VERIFICATION_MAX_ATTEMPTS) return;
+      if (pendingVerification.verifierContractAttempts >= CANDIDATE_VERIFICATION_MAX_ATTEMPTS) {
+        this.queuedVerifications.delete(workItemId);
+        return;
+      }
+      const repository = this.repositoryQueueKey(pendingVerification.repository);
+      if (this.activeRepositoryExecutions.has(repository)) {
+        this.queuedVerifications.add(workItemId);
+        return;
+      }
+      // An old, unconfirmed session is not an in-memory queue slot we can release.
+      if (this.repositoryVerificationBlocked(workItemId)) return;
+      this.queuedVerifications.delete(workItemId);
+      this.queuedWorkItems.delete(workItemId);
+      this.activeRepositoryExecutions.add(repository);
       this.scheduledWorkItems.add(workItemId);
       const lifetime = this.verificationAbort;
       void this.verifyCandidate(pendingVerification.runId, pendingVerification.worktreePath)
@@ -1271,9 +1290,13 @@ export class CollaborationHeadlessRuntime {
           if (lifetime !== this.verificationAbort) return;
           this.syncMetaBundleBestEffort(workItemId, true);
           this.scheduledWorkItems.delete(workItemId);
+          this.activeRepositoryExecutions.delete(repository);
+          this.scheduleNextQueuedWorkItem(repository);
         });
       return;
     }
+    this.queuedVerifications.delete(workItemId);
+    if (verificationOnly) return;
     const ready = this.database
       .prepare(
         "SELECT w.current_plan_revision AS plan_revision,s.repository,max(COALESCE((" +
@@ -1304,6 +1327,7 @@ export class CollaborationHeadlessRuntime {
       this.queuedWorkItems.add(workItemId);
       return;
     }
+    if (this.repositoryVerificationBlocked(workItemId)) return;
     this.queuedWorkItems.delete(workItemId);
     if (!this.lease) return;
     this.database.exec("BEGIN IMMEDIATE");
@@ -1335,6 +1359,9 @@ export class CollaborationHeadlessRuntime {
   }
 
   private scheduleNextQueuedWorkItem(repository: string): void {
+    if (!this.health().ready) return;
+    this.drainVerificationQueue();
+    if (this.activeRepositoryExecutions.has(repository)) return;
     for (const workItemId of this.queuedWorkItems) {
       const row = this.database?.prepare(
         "SELECT s.repository FROM collaboration_work_items w " +
@@ -1465,7 +1492,13 @@ export class CollaborationHeadlessRuntime {
     finally { this.activeVerifications.delete(verification); }
   }
 
-  private async verifyPendingCandidatesAtStartup(): Promise<void> {
+  private drainVerificationQueue(): void {
+    for (const workItemId of [...this.queuedVerifications]) {
+      this.scheduleReadyExecution(workItemId, true);
+    }
+  }
+
+  private queuePendingCandidatesAtStartup(): void {
     const rows = this.database!.prepare(
       "SELECT r.id AS run_id,r.worktree_path,r.work_item_id,r.plan_revision " +
         "FROM collaboration_runs r " +
@@ -1480,14 +1513,7 @@ export class CollaborationHeadlessRuntime {
     ).all() as unknown as Array<{ run_id: string; worktree_path: string; work_item_id: string; plan_revision: number }>;
     for (const row of rows) {
       if (this.repositoryVerificationBlocked(row.work_item_id)) continue;
-      const verification = await this.verifyCandidate(row.run_id, row.worktree_path);
-      if (!verification.passed) {
-        this.enqueueVerificationFailure({
-          runId: row.run_id,
-          workItemId: row.work_item_id,
-          planRevision: row.plan_revision,
-        }, verification);
-      }
+      this.queuedVerifications.add(row.work_item_id);
     }
   }
 
@@ -1765,7 +1791,10 @@ export class CollaborationHeadlessRuntime {
     }
     if (serviceReady) this.retryDirtyMetaBundles();
     if (serviceReady && !this.options.probeOnly) this.recoverInterruptedPreparations();
-    if (serviceReady) this.rebuildNeverStartedQueue();
+    if (serviceReady) {
+      this.drainVerificationQueue();
+      this.rebuildNeverStartedQueue();
+    }
     if (serviceReady && this.options.naturalIntake && !this.naturalIntakeTask) {
       // Do not block lease renewal, Stream maintenance or other group messages on model latency.
       this.naturalIntakeTask = this.service!.processNaturalIntake(now).then(workItemId => {

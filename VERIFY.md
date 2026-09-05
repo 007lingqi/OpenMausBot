@@ -1,5 +1,12 @@
 # Meta 协作验证记录
 
+## 2026-09-06 启动复核后台化与仓库队列（最新）
+
+- 最终 `pnpm vitest run server/collaboration server/integrations/dingtalk server/collaboration-headless.test.ts && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-background-verification-typecheck && git diff --check` 全链通过（22034 exit 0）：68 文件 / 476 项，00:39:16 开始，54.13 秒。未运行本批全仓 pnpm test。
+- 针对性 runtime / repository serialization / verification retry 三文件 51 项和 typecheck 通过（39813）。新增三个场景：startup 复核等待时 start 返回、入站消息写入/回复 sent/租约续期；同仓库两候选依次运行；不同仓库两候选同时等待。后两场景还检查失败后多次 drain 不额外执行，review 各一条。
+- 先行测试确认 startup 被阻塞。共享会话夹具第二条进入 ambiguous 归属，并非产品并发失败；改用独立会话测试调度，补齐 teardown 释放后来进入的 runner。首轮整组 475 passed / 1 failed（59177），唯一失败为 loopback listen EPERM；申请本机端口测试权限后完整重跑通过，没有跳过或削弱 HTTP 测试。
+- Git、SQLite 为真实临时夹具；runner/containment/Outbox 为受控端口，消息接收走运行时 API，不冒充真实 Stream 群聊。未部署 Docker、调用真实模型/在线文档、改变凭据或原试点容器。仍缺复核与修改混合队列专门测试、强制重启/跨进程压力、遗留 session 受控恢复、全仓测试及六类真实试点；Goal active。
+
 ## 2026-09-06 持久复核运行与仓库占用（最新）
 
 - 最终 `pnpm vitest run server/collaboration server/integrations/dingtalk server/collaboration-headless.test.ts && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-verifier-ledger-typecheck && git diff --check` 全链通过（53653 exit 0）：68 文件 / 473 项，00:16:39 开始、57.18 秒。覆盖协作/钉钉/headless；本批未运行全仓 pnpm test。

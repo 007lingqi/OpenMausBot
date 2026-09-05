@@ -27,7 +27,7 @@ import { startCollaborationService } from "../service.ts";
 import { CommandCleanupError } from "../execution-limits.ts";
 import { currentInstanceLease } from "../leases.ts";
 import { reserveVerification, hasUnsettledVerification } from "../verification-lifecycle.ts";
-import { CollaborationHeadlessRuntime } from "./runtime.ts";
+import { CollaborationHeadlessRuntime, type CollaborationHeadlessRuntimeOptions } from "./runtime.ts";
 
 const scratch: string[] = [];
 let sequence = 0;
@@ -109,12 +109,13 @@ interface RetryFixture {
   owner: DingTalkInboundMessage["sender"];
 }
 
-function seedRetryableCandidate(): RetryFixture {
+function seedRetryableCandidate(shared?: { dataDirectory: string; repository?: string; baseSha?: string }): RetryFixture {
   const id = ++sequence;
   const root = mkdtempSync(join(tmpdir(), "openmausbot-runtime-verification-retry-"));
   scratch.push(root);
-  const repository = join(root, "repository");
+  const repository = shared?.repository ?? join(root, "repository");
   const worktree = join(root, "candidate-worktree");
+  if (!shared?.repository) {
   mkdirSync(join(repository, "src"), { recursive: true });
   git(root, ["init", "-b", "main", repository]);
   git(repository, ["config", "user.name", "Fixture"]);
@@ -122,13 +123,14 @@ function seedRetryableCandidate(): RetryFixture {
   writeFileSync(join(repository, "src", "value.txt"), "before\n");
   git(repository, ["add", "."]);
   git(repository, ["commit", "-m", "base"]);
-  const baseSha = git(repository, ["rev-parse", "HEAD"]);
+  }
+  const baseSha = shared?.baseSha ?? git(repository, ["rev-parse", "HEAD"]);
   git(repository, ["worktree", "add", "-b", `candidate-${id}`, worktree, baseSha]);
   writeFileSync(join(worktree, "src", "value.txt"), "after\n");
   git(worktree, ["add", "."]);
   git(worktree, ["commit", "-m", "candidate"]);
   const candidateSha = git(worktree, ["rev-parse", "HEAD"]);
-  const dataDirectory = join(root, "data");
+  const dataDirectory = shared?.dataDirectory ?? join(root, "data");
   const service = startCollaborationService({
     dataDirectory,
     planning: {
@@ -142,17 +144,17 @@ function seedRetryableCandidate(): RetryFixture {
     senderId: "owner-sender-1",
     displayName: "Owner",
   };
-  service.bootstrapOwnerLocally({ senderCorpId: owner.senderCorpId, senderStaffId: owner.senderStaffId, now: 500 });
+  if (!shared) service.bootstrapOwnerLocally({ senderCorpId: owner.senderCorpId, senderStaffId: owner.senderStaffId, now: 500 });
   const accepted = new FakeDingTalkAdapter((message) => service.ingestDingTalkMessage(message)).receive({
     sourceEventId: `seed-${id}`,
     transportMessageId: `seed-transport-${id}`,
-    conversationId: "retry-conversation",
+    conversationId: shared ? `retry-conversation-${id}` : "retry-conversation",
     addressedToBot: true,
-    text: "更新候选值",
+    text: `创建新任务：更新候选值 ${id}`,
     sender: owner,
     receivedAt: 1_000,
   });
-  if (!accepted.accepted || !accepted.workItemId) throw new Error("Expected Work Item");
+  if (!accepted.accepted || !accepted.workItemId) throw new Error(`Expected Work Item: ${JSON.stringify(accepted)}`);
   service.reviseWorkItemDefinition(accepted.workItemId, {
     goal: "将候选值更新为 after",
     goalConfirmed: true,
@@ -245,7 +247,8 @@ function runCount(item: RetryFixture): number {
   return row.count;
 }
 
-async function runningRuntime(item: RetryFixture, runner: FailingVerifierRunner, shutdownTimeoutMs = 10_000, now = 4_000) {
+function configuredRuntime(item: RetryFixture, runner: FailingVerifierRunner, shutdownTimeoutMs = 10_000, now: number | (() => number) = 4_000,
+  extra: Partial<CollaborationHeadlessRuntimeOptions> = {}) {
   const agent: AgentRunPort = {
     run: vi.fn(async () => { throw new Error("modify_must_not_run_for_verification_retry"); }),
     interrupt: vi.fn(async () => undefined),
@@ -255,7 +258,7 @@ async function runningRuntime(item: RetryFixture, runner: FailingVerifierRunner,
     ownerId: `runtime-${sequence}`,
     shutdownTimeoutMs,
     platform: "linux",
-    clock: { now: () => now },
+    clock: { now: typeof now === "function" ? now : () => now },
     agent,
     containment: new FakeContainment(),
     commandRunner: runner,
@@ -266,13 +269,69 @@ async function runningRuntime(item: RetryFixture, runner: FailingVerifierRunner,
       },
       limits: { maxAttempts: 3, agentTimeoutMs: 2_000, maxAgentEventBytes: 16_000, interruptGraceMs: 500 },
     },
+    ...extra,
   });
+  return {runtime,agent};
+}
+
+async function runningRuntime(item: RetryFixture, runner: FailingVerifierRunner, shutdownTimeoutMs = 10_000, now = 4_000) {
+  const {runtime,agent}=configuredRuntime(item,runner,shutdownTimeoutMs,now);
   await runtime.start();
-  expect(reviewCount(item)).toBe(1);
+  await vi.waitFor(()=>{expect(reviewCount(item)).toBe(1);expect(runtime["scheduledWorkItems"].size).toBe(0);});
   return { runtime, agent };
 }
 
 describe("runtime Owner verification retry", () => {
+  it("starts and accepts messages, delivers replies and renews its lease while startup verification waits", async () => {
+    const item=seedRetryableCandidate(); const runner=new FailingVerifierRunner();
+    let release!:()=>void; let now=4000; let deliveries=0;
+    runner.onRun=()=>new Promise<void>(resolve=>{release=resolve;});
+    const {runtime}=configuredRuntime(item,runner,10000,()=>now,{outboxDelivery:{async deliver(){deliveries++;return {outcome:"sent"};}}});
+    let started=false; const starting=runtime.start().then(()=>{started=true;});
+    try {
+      await vi.waitFor(()=>expect(started).toBe(true));
+      await vi.waitFor(()=>expect(release).toBeTypeOf("function"));
+      expect(reviewCount(item)).toBe(0);
+      const received=runtime.ingestDingTalkMessage({sourceEventId:"while-verifying",transportMessageId:"while-verifying",conversationId:"retry-conversation",
+        addressedToBot:true,text:"登录失败时的提示需要调整",sender:item.owner,receivedAt:20000});
+      expect(received.accepted).toBe(true);
+      now=25000;
+      for(let i=0;i<8;i++) await runtime.drainOnce();
+      expect(deliveries).toBeGreaterThan(0); expect(runtime.health().ready).toBe(true);
+      const db=new DatabaseSync(join(item.dataDirectory,"collaboration","collaboration.sqlite"));
+      try {
+        expect(currentInstanceLease(db)?.expiresAt).toBe(55000);
+        expect(db.prepare("SELECT delivery_state FROM collaboration_outbox WHERE source_event_id='while-verifying'").get()).toEqual({delivery_state:"sent"});
+      } finally {db.close();}
+    } finally {release?.();await starting;await runtime.stop();}
+  });
+  it.each(["same","different"])("schedules startup verification for %s repositories with the correct concurrency", async mode=>{
+    const first=seedRetryableCandidate();
+    const second=seedRetryableCandidate(mode==="same"?first:{dataDirectory:first.dataDirectory});
+    const runner=new FailingVerifierRunner(); const releases:Array<()=>void>=[];
+    let closing = false;
+    runner.onRun=()=>new Promise<void>(resolve=>{releases.push(resolve);if(closing) resolve();});
+    const {runtime}=configuredRuntime(first,runner,10000,4000,{execution:{managedWorktreeRoot:join(first.dataDirectory,"managed"),
+      repositories:Object.fromEntries([first,second].map(item=>[item.repository,{baseSha:item.baseSha,targetCommands:{"pnpm test target":item.command}}])),
+      limits:{maxAttempts:3,agentTimeoutMs:2000,maxAgentEventBytes:16000,interruptGraceMs:500}}});
+    let started=false;const starting=runtime.start().then(()=>{started=true;});
+    try {
+      await vi.waitFor(()=>expect(started).toBe(true));
+      await vi.waitFor(()=>expect(releases).toHaveLength(mode==="same"?1:2));
+      for(let i=0;i<3;i++) await runtime.drainOnce();
+      expect(runner.requests).toHaveLength(mode==="same"?1:2);
+      if(mode==="same") {
+        releases[0]();
+        await vi.waitFor(()=>expect(releases).toHaveLength(2));
+      }
+      for (const release of releases) release();
+      await vi.waitFor(()=>expect(runtime["scheduledWorkItems"].size).toBe(0));
+      for(let i=0;i<3;i++) await runtime.drainOnce();
+      expect(runner.requests).toHaveLength(2);
+      expect(reviewCount(first)).toBe(1);
+      expect(reviewCount(second)).toBe(1);
+    } finally {closing=true;for(const release of releases) release();await starting;await runtime.stop();}
+  });
   it("keeps an unconfirmed verifier and its proof across lease expiry and a replacement runtime", async () => {
     const item=seedRetryableCandidate(); const runner=new FailingVerifierRunner();
     const {runtime}=await runningRuntime(item,runner);
