@@ -106,7 +106,7 @@ export class RecoveryCoordinator {
     if (!Number.isInteger(maxAttempts) || maxAttempts < 1) throw new Error("maxAttempts must be positive");
   }
 
-  async scan(instance: Pick<InstanceLease, "ownerId" | "fence">, now: number): Promise<RecoveryDecision[]> {
+  async scan(instance: Pick<InstanceLease, "ownerId" | "fence">, now: number, options: { skipDurableExecutions?: boolean } = {}): Promise<RecoveryDecision[]> {
     assertCurrentInstanceLease(this.database, instance, now);
     assertLedgerArmed(this.database);
     const rows = this.database
@@ -122,6 +122,7 @@ export class RecoveryCoordinator {
           "LEFT JOIN collaboration_work_nodes n ON n.work_item_id = r.work_item_id " +
           "AND n.plan_revision = r.plan_revision AND n.node_id = r.node_id " +
           "WHERE r.status = 'running' " +
+          (options.skipDurableExecutions ? "AND NOT EXISTS(SELECT 1 FROM collaboration_execution_sessions e WHERE e.id=r.id) " : "") +
           "ORDER BY r.started_at, r.id",
       )
       .all() as unknown as RecoverableRunRow[];

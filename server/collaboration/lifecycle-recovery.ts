@@ -17,6 +17,20 @@ export interface LifecycleRecoveryOutcome {
   workItemId: string | null;
 }
 
+/** Only passive authority reads may be abandoned. The old read cannot persist or launch work. */
+async function observe<T>(read: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  signal?.throwIfAborted();
+  if (!signal) return await read();
+  let onAbort!: () => void;
+  try {
+    return await new Promise<T>((resolve, reject) => {
+      onAbort = () => reject(new Error("recovery_cancelled"));
+      signal.addEventListener("abort", onAbort, { once: true });
+      Promise.resolve().then(() => { signal.throwIfAborted(); return read(); }).then(resolve, reject);
+    });
+  } finally { signal.removeEventListener("abort", onAbort); }
+}
+
 /** Passive recovery: no kill, deletion, retry, approval, or trust in terminal Run labels. */
 export async function recoverLifecycleSession(db: DatabaseSync, input: LifecycleRecoveryInput): Promise<LifecycleRecoveryOutcome> {
   const kind = input.kind === "execution" ? "execution" : "verification";
@@ -53,10 +67,10 @@ export async function recoverLifecycleSession(db: DatabaseSync, input: Lifecycle
       const proof = JSON.parse(command.proof_json) as ContainmentProof;
       if (binding.instanceOwner !== row.instance_owner || binding.instanceFence !== row.instance_fence ||
         (kind === "execution" ? binding.runId !== row.run_id : !binding.runId.startsWith(`${row.run_id}:verifier:`))) return blocked("process_binding_mismatch");
-      const verified = await verifyContainmentProof(input.containment, proof, binding);
+      const verified = await observe(() => verifyContainmentProof(input.containment, proof, binding), input.signal);
       assertCurrent();
       if (!verified.verified) return blocked("process_proof_rejected");
-      const state = await input.containment.inspect(proof.identity);
+      const state = await observe(() => input.containment.inspect(proof.identity), input.signal);
       assertCurrent();
       if (state.state !== "empty" || state.fingerprint !== verified.fingerprint) return blocked("process_exit_unconfirmed");
       evidence.push({ ordinal: command.ordinal, fingerprint: verified.fingerprint, state: "empty" });

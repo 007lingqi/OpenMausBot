@@ -34,6 +34,7 @@ import type { CandidateExecutorOptions, CandidateExecutionOutcome } from "../exe
 import { authorizedPreparationRetrySql, preparationDispatchAllowed, recordPreparationResult } from "../execution-preparation.ts";
 import { CommandCleanupError } from "../execution-limits.ts";
 import { hasUnsettledRepositoryActivity } from "../repository-occupancy.ts";
+import { recoverLifecycleSession, type LifecycleRecoveryOutcome } from "../lifecycle-recovery.ts";
 import type { PlanningPolicy } from "../graph.ts";
 import type { InboundMessageOutcome } from "../inbound.ts";
 import { assertCurrentInstanceLease, InstanceLeaseCoordinator, StaleFenceError, type InstanceLease } from "../leases.ts";
@@ -136,6 +137,8 @@ export interface CollaborationHeadlessRuntimeOptions {
   ownerId?: string;
   instanceLeaseTtlMs?: number;
   shutdownTimeoutMs?: number;
+  /** Upper bound for one passive recovery inspection, not a process-kill timeout. */
+  lifecycleRecoveryTimeoutMs?: number;
   clock?: RuntimeClock;
   logger?: RuntimeLogger;
   platform?: NodeJS.Platform;
@@ -628,6 +631,7 @@ export class CollaborationHeadlessRuntime {
   private readonly ownerId: string;
   private readonly leaseTtlMs: number;
   private readonly shutdownTimeoutMs: number;
+  private readonly lifecycleRecoveryTimeoutMs: number;
   private readonly clock: RuntimeClock;
   private readonly logger: RuntimeLogger;
   private readonly platform: NodeJS.Platform;
@@ -644,6 +648,7 @@ export class CollaborationHeadlessRuntime {
   private stream: RuntimeStream | null = null;
   private dingTalkState: CollaborationRuntimeHealth["dingtalk"]["state"];
   private naturalIntakeTask: Promise<void> | null = null;
+  private lifecycleRecoveryTask: Promise<void> | null = null;
   private verificationAbort = new AbortController();
   private verificationCleanupUnconfirmed = false;
   private drainPromise: Promise<DrainOutcome> | null = null;
@@ -663,6 +668,7 @@ export class CollaborationHeadlessRuntime {
     this.ownerId = options.ownerId?.trim() || `headless:${randomUUID()}`;
     this.leaseTtlMs = positiveInteger(options.instanceLeaseTtlMs ?? 30_000, "instanceLeaseTtlMs");
     this.shutdownTimeoutMs = positiveInteger(options.shutdownTimeoutMs ?? 10_000, "shutdownTimeoutMs");
+    this.lifecycleRecoveryTimeoutMs = positiveInteger(options.lifecycleRecoveryTimeoutMs ?? 5_000, "lifecycleRecoveryTimeoutMs");
     this.clock = options.clock ?? SYSTEM_CLOCK;
     this.logger = options.logger ?? NULL_LOGGER;
     this.platform = options.platform ?? process.platform;
@@ -681,6 +687,7 @@ export class CollaborationHeadlessRuntime {
   }
 
   async start(): Promise<CollaborationRuntimeHealth> {
+    if (this.lifecycleRecoveryTask) throw new Error("collaboration_recovery_still_settling");
     if (this.verificationCleanupUnconfirmed) throw new Error("verification_containment_unconfirmed");
     if (this.activeVerifications.size) throw new Error("collaboration_verification_still_settling");
     if (this.currentState !== "stopped" || this.service || this.database) {
@@ -778,6 +785,7 @@ export class CollaborationHeadlessRuntime {
         this.reason = this.service.health().degradation?.reason ?? "service_not_ready";
       }
       this.currentState = this.reason ? "degraded" : "running";
+      this.startLifecycleRecovery();
       this.drainVerificationQueue();
       this.rebuildNeverStartedQueue();
       this.logger.write({
@@ -1205,6 +1213,11 @@ export class CollaborationHeadlessRuntime {
         releaseLease = false;
         this.reason = "shutdown_verification_unsettled";
       }
+      if (this.lifecycleRecoveryTask && !(await waitBounded(this.lifecycleRecoveryTask, Math.max(1, deadline - Date.now())))) {
+        this.reason = "shutdown_recovery_unsettled";
+        // Passive inspection cannot launch processes; durable occupancy remains,
+        // and its captured abort signal prevents any late writes after closure.
+      }
       if (this.verificationCleanupUnconfirmed) {
         releaseLease = false;
         this.reason = "verification_containment_unconfirmed";
@@ -1331,7 +1344,8 @@ export class CollaborationHeadlessRuntime {
       .prepare(
         "SELECT w.current_plan_revision AS plan_revision,s.repository,max(COALESCE((" +
           "SELECT MAX(previous.attempt) FROM collaboration_runs previous WHERE previous.work_item_id = w.id" +
-          "), 0),COALESCE((SELECT MAX(d.attempt) FROM collaboration_execution_dispatches d WHERE d.work_item_id=w.id),0)) AS previous_attempt FROM collaboration_work_items w " +
+          "), 0),COALESCE((SELECT MAX(d.attempt) FROM collaboration_execution_dispatches d WHERE d.work_item_id=w.id),0)," +
+          "COALESCE((SELECT MAX(e.attempt) FROM collaboration_execution_sessions e WHERE e.work_item_id=w.id),0)) AS previous_attempt FROM collaboration_work_items w " +
           "JOIN collaboration_plan_revisions p ON p.work_item_id = w.id AND p.revision = w.current_plan_revision " +
           "JOIN collaboration_work_item_snapshots s ON s.work_item_id = w.id AND s.revision = p.snapshot_revision " +
           "WHERE w.id = ? AND w.definition_status = 'ready_for_execution' AND w.control_state = 'active' " +
@@ -1422,9 +1436,11 @@ export class CollaborationHeadlessRuntime {
       "WHERE w.definition_status='ready_for_execution' AND w.control_state='active' AND w.status NOT IN ('accepted','cancelled') " +
       currentExecutionSpecSql +
       "AND max(COALESCE((SELECT MAX(r.attempt) FROM collaboration_runs r WHERE r.work_item_id=w.id),0)," +
-      "COALESCE((SELECT MAX(d.attempt) FROM collaboration_execution_dispatches d WHERE d.work_item_id=w.id),0)) < ? " +
+      "COALESCE((SELECT MAX(d.attempt) FROM collaboration_execution_dispatches d WHERE d.work_item_id=w.id),0)," +
+      "COALESCE((SELECT MAX(e.attempt) FROM collaboration_execution_sessions e WHERE e.work_item_id=w.id),0)) < ? " +
       "AND p.status='published' AND NOT EXISTS (SELECT 1 FROM collaboration_runs r WHERE r.work_item_id=w.id AND r.plan_revision=w.current_plan_revision) " +
-      "AND (NOT EXISTS (SELECT 1 FROM collaboration_execution_dispatches d WHERE d.work_item_id=w.id AND d.plan_revision=w.current_plan_revision) " +
+      "AND ((NOT EXISTS (SELECT 1 FROM collaboration_execution_dispatches d WHERE d.work_item_id=w.id AND d.plan_revision=w.current_plan_revision) " +
+      "AND NOT EXISTS (SELECT 1 FROM collaboration_execution_sessions e WHERE e.work_item_id=w.id AND e.plan_revision=w.current_plan_revision)) " +
       "OR EXISTS (SELECT 1 FROM collaboration_execution_dispatches d WHERE d.work_item_id=w.id AND d.plan_revision=w.current_plan_revision " +
       "AND d.attempt=(SELECT MAX(latest.attempt) FROM collaboration_execution_dispatches latest WHERE latest.work_item_id=w.id) AND " + authorizedPreparationRetrySql + ")) " +
       (excluded.length ? `AND w.id NOT IN (${excluded.map(() => "?").join(",")}) ` : "") +
@@ -1503,9 +1519,9 @@ export class CollaborationHeadlessRuntime {
     }
   }
 
-  private queuePendingCandidatesAtStartup(): void {
+  private queuePendingCandidatesAtStartup(repository?: string): void {
     const rows = this.database!.prepare(
-      "SELECT r.id AS run_id,r.worktree_path,r.work_item_id,r.plan_revision " +
+      "SELECT r.id AS run_id,r.worktree_path,r.work_item_id,r.plan_revision,r.repository_path " +
         "FROM collaboration_runs r " +
         "JOIN collaboration_work_items w ON w.id = r.work_item_id AND w.current_plan_revision = r.plan_revision " +
         "JOIN collaboration_candidates c ON c.run_id = r.id " +
@@ -1515,8 +1531,9 @@ export class CollaborationHeadlessRuntime {
         "AND r.attempt = (SELECT MAX(latest.attempt) FROM collaboration_runs latest " +
         "WHERE latest.work_item_id = w.id AND latest.plan_revision = w.current_plan_revision) " +
         "ORDER BY r.finished_at,r.id",
-    ).all() as unknown as Array<{ run_id: string; worktree_path: string; work_item_id: string; plan_revision: number }>;
+    ).all() as unknown as Array<{ run_id: string; worktree_path: string; work_item_id: string; plan_revision: number; repository_path: string }>;
     for (const row of rows) {
+      if (repository && this.repositoryQueueKey(row.repository_path) !== this.repositoryQueueKey(repository)) continue;
       if (this.repositoryVerificationBlocked(row.work_item_id)) continue;
       this.queuedVerifications.add(row.work_item_id);
     }
@@ -1614,11 +1631,113 @@ export class CollaborationHeadlessRuntime {
         containment,
         candidates,
         positiveInteger(this.options.recoveryMaxAttempts ?? 3, "recoveryMaxAttempts"),
-      ).scan(this.lease!, this.clock.now());
+      ).scan(this.lease!, this.clock.now(), { skipDurableExecutions: true });
       this.recoverInterruptedPreparations();
     } catch {
       this.reason = "recovery_failed";
     }
+  }
+
+  private startLifecycleRecovery(): void {
+    if (this.options.probeOnly || this.currentState !== "running" || !this.database || !this.lease || this.lifecycleRecoveryTask) return;
+    const db = this.database;
+    const lease = this.lease;
+    const lifetime = this.verificationAbort;
+    const live = () => !lifetime.signal.aborted && lifetime === this.verificationAbort && this.database === db && this.currentState === "running";
+    const containment = this.options.containment ?? new UnavailableContainmentSupervisor();
+    // Snapshot only old sessions once. Never poll unknown evidence or sweep newly
+    // created sessions into this pass. Settlements retain original immutable IDs.
+    const rows = db.prepare(
+      "SELECT 'execution' AS kind,s.id,s.work_item_id,s.plan_revision,s.repository_path,f.session_id IS NOT NULL AS recovered FROM collaboration_execution_sessions s " +
+      "LEFT JOIN collaboration_execution_settlements f ON f.session_id=s.id " +
+      "WHERE (s.instance_owner<>? OR s.instance_fence<>?) AND (f.session_id IS NULL OR " +
+      "(json_type(f.evidence_json,'$.recoveredBy')='object' AND NOT EXISTS(SELECT 1 FROM collaboration_outbox o WHERE o.source='dingtalk' AND o.source_event_id='lifecycle-recovery:execution:'||s.id||':recovered'))) " +
+      "UNION ALL SELECT 'verification' AS kind,s.id,r.work_item_id,s.plan_revision,s.repository_path,f.session_id IS NOT NULL AS recovered FROM collaboration_verification_sessions s " +
+      "JOIN collaboration_runs r ON r.id=s.candidate_run_id " +
+      "LEFT JOIN collaboration_verification_settlements f ON f.session_id=s.id " +
+      "WHERE (s.instance_owner<>? OR s.instance_fence<>?) AND (f.session_id IS NULL OR " +
+      "(json_type(f.evidence_json,'$.recoveredBy')='object' AND NOT EXISTS(SELECT 1 FROM collaboration_outbox o WHERE o.source='dingtalk' AND o.source_event_id='lifecycle-recovery:verification:'||s.id||':recovered')))",
+    ).all(lease.ownerId, lease.fence, lease.ownerId, lease.fence) as unknown as Array<{
+      kind: "execution" | "verification"; id: string; work_item_id: string; plan_revision: number; repository_path: string; recovered: number;
+    }>;
+    if (!rows.length) return;
+    const byRepository = new Map<string, typeof rows>();
+    for (const row of rows) {
+      const group = byRepository.get(row.repository_path) ?? [];
+      group.push(row); byRepository.set(row.repository_path, group);
+    }
+    const groups = [...byRepository.values()];
+    let next = 0;
+    const worker = async () => {
+      while (next < groups.length) for (const row of groups[next++]) {
+        if (!live()) return;
+        const timeout = new AbortController();
+        const timer = setTimeout(() => timeout.abort(), this.lifecycleRecoveryTimeoutMs);
+        let outcome: LifecycleRecoveryOutcome;
+        try {
+          outcome = await recoverLifecycleSession(db, {
+            kind: row.kind, sessionId: row.id, instance: lease, containment,
+            now: () => this.clock.now(), signal: AbortSignal.any([lifetime.signal, timeout.signal]),
+          });
+        } finally { clearTimeout(timer); }
+        if (!live()) return;
+        assertCurrentInstanceLease(db, lease, this.clock.now());
+        // A crash between settlement and Outbox enqueue leaves a durable receipt.
+        // Repair only that delivery debt; ordinary terminal sessions are not scanned.
+        if (outcome.state === "already_settled" && row.recovered) outcome = { ...outcome, state: "recovered" };
+        this.enqueueLifecycleRecoveryNotice(row, outcome);
+        if (outcome.state === "blocked") continue;
+        if (this.executionEnabled()) this.queuePendingCandidatesAtStartup(row.repository_path);
+        enqueuePendingOwnerDecisionCards(db, this.options.dingTalk?.cardTemplateId, this.clock.now());
+        this.drainVerificationQueue();
+        this.rebuildNeverStartedQueue();
+      }
+    };
+    const task = Promise.resolve().then(async () => {
+      // Bounded concurrency across repositories; serial evidence checks within one.
+      const results = await Promise.allSettled(Array.from({ length: Math.min(4, groups.length) }, () => worker()));
+      if (live() && results.some(result => result.status === "rejected")) {
+        this.logger.write({ event: "collaboration.recovery.interrupted", code: "lifecycle_recovery_unavailable" });
+      }
+    }).catch(() => {
+      if (live()) this.logger.write({ event: "collaboration.recovery.interrupted", code: "lifecycle_recovery_unavailable" });
+    });
+    this.lifecycleRecoveryTask = task;
+    void task.finally(() => { if (this.lifecycleRecoveryTask === task) this.lifecycleRecoveryTask = null; });
+  }
+
+  private enqueueLifecycleRecoveryNotice(
+    session: { kind: "execution" | "verification"; id: string; work_item_id: string; plan_revision: number; repository_path: string },
+    outcome: LifecycleRecoveryOutcome,
+  ): void {
+    if (!this.database || !this.lease || this.verificationAbort.signal.aborted || outcome.state === "already_settled") return;
+    const db = this.database;
+    const sourceEventId = `lifecycle-recovery:${session.kind}:${session.id}:${outcome.state}`;
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      assertCurrentInstanceLease(db, this.lease, this.clock.now());
+      const current = db.prepare(
+        "SELECT w.version,s.goal FROM collaboration_work_items w " +
+        "JOIN collaboration_plan_revisions p ON p.work_item_id=w.id AND p.revision=w.current_plan_revision " +
+        "JOIN collaboration_work_item_snapshots s ON s.work_item_id=w.id AND s.revision=p.snapshot_revision " +
+        "WHERE w.id=? AND w.current_plan_revision=? AND w.status NOT IN ('accepted','cancelled') AND w.control_state='active' " +
+        currentExecutionSpecSql +
+        "AND NOT EXISTS(SELECT 1 FROM collaboration_outbox WHERE source='dingtalk' AND source_event_id=?)",
+      ).get(session.work_item_id, session.plan_revision, sourceEventId) as { version: number; goal: string } | undefined;
+      if (current) enqueueInboundCard(db, {
+        sourceEventId, aggregateType: "work_item", aggregateId: session.work_item_id, aggregateVersion: current.version,
+        card: renderCommandStatusCard({ command: "status", workItemId: session.work_item_id, outcome: "allowed", presentation: "business",
+          summary: `“${current.goal.slice(0, 200)}”：` + (outcome.state === "blocked"
+            ? "服务已恢复，但还不能确认上次处理是否彻底结束。为避免重复修改，该项目的后续处理暂缓，需要负责人检查。"
+            : hasUnsettledRepositoryActivity(db, session.repository_path)
+              ? "已完成一次恢复检查，但该项目还有处理状态需要核实，暂不启动新的修改。需要负责人检查。"
+              : "已确认上次处理彻底结束，该项目可以继续安排后续工作。修改结果仍以代码和测试核对为准；中断的修改不会擅自重做，需要负责人安排。"),
+        }),
+        supersessionKey: `lifecycle-recovery:${session.kind}:${session.id}`,
+        now: this.clock.now(),
+      });
+      db.exec("COMMIT");
+    } catch (error) { db.exec("ROLLBACK"); throw error; }
   }
 
   private recoverInterruptedPreparations(): void {

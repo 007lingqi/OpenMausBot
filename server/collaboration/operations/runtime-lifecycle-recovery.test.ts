@@ -1,0 +1,173 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { startCollaborationService } from "../service.ts";
+import { policy, validProposal } from "../planner.test-fixtures.ts";
+import { InstanceLeaseCoordinator } from "../leases.ts";
+import { ExecutionLifecycle } from "../execution-lifecycle.ts";
+import { recoverLifecycleSession } from "../lifecycle-recovery.ts";
+import { containmentBindingHash, runtimeIdentityFingerprint, type ContainmentPort, type ContainmentInspection } from "../containment.ts";
+import { CollaborationHeadlessRuntime } from "./runtime.ts";
+import { renderDingTalkSessionMessage } from "../../integrations/dingtalk/session-message.ts";
+
+const roots: string[] = [];
+afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+
+async function fixture() {
+  const root = mkdtempSync(join(tmpdir(), "runtime-lifecycle-recovery-")); roots.push(root);
+  const service = startCollaborationService({ dataDirectory: root, planning: {
+    planner: { propose: validProposal }, policy: { ...policy, allowedRepositories: [root] },
+  } });
+  const item = service.ingestDingTalkMessage({ sourceEventId: "recovery", transportMessageId: "recovery", conversationId: "test",
+    addressedToBot: true, text: "修正保存提示", sender: { senderCorpId: "corp", senderStaffId: "staff", senderId: "sender", displayName: "Test" }, receivedAt: 1000 });
+  service.reviseWorkItemDefinition(item.workItemId!, { goal: "修正保存提示", goalConfirmed: true, repository: root,
+    acceptanceConditions: [{ description: "提示清晰", observation: "pnpm test target" }], blockingAmbiguities: [] }, 2000);
+  service.close();
+  const db = new DatabaseSync(join(root, "collaboration", "collaboration.sqlite"));
+  const leases = new InstanceLeaseCoordinator(db, "old");
+  const lease = leases.acquire(Date.now(), 60000)!;
+  const session = new ExecutionLifecycle(db, "runtime-recovery-execution", lease);
+  session.reserve({ workItemId: item.workItemId!, planRevision: 1, repository: root, baseSha: "a".repeat(40), attempt: 1 });
+  const binding = { runId: session.id, canonicalWorktreePath: root, instanceOwner: lease.ownerId, instanceFence: lease.fence, nonce: "a".repeat(64) };
+  const proof = { identity: { backend: "test_verified_runtime", opaqueId: "recovery-runtime-0001", hostGeneration: "generation-1", verifierVersion: "test-v1" }, receipt: containmentBindingHash(binding) };
+  const containment: ContainmentPort = {
+    async verifyProof(p, b) { return { verified: true, fingerprint: runtimeIdentityFingerprint(p.identity), bindingHash: containmentBindingHash(b) }; },
+    async inspect(identity) { return { state: "active", fingerprint: runtimeIdentityFingerprint(identity) }; },
+    async terminateAndWaitEmpty() { throw new Error("recovery_must_not_kill"); },
+  };
+  session.command(1, binding); session.proof(1, proof);
+  await session.settle(containment);
+  leases.release(lease, Date.now());
+  const runtime = (lifecycleRecoveryTimeoutMs = 5000) => new CollaborationHeadlessRuntime({ dataDirectory: root, containment, shutdownTimeoutMs: 25, platform: "linux", lifecycleRecoveryTimeoutMs });
+  const notices = () => db.prepare("SELECT payload_json FROM collaboration_outbox WHERE source_event_id LIKE 'lifecycle-recovery:%'").all() as Array<{payload_json:string}>;
+  const settled = () => !!db.prepare("SELECT 1 FROM collaboration_execution_settlements WHERE session_id=?").get(session.id);
+  return { root, db, session, binding, proof, containment, runtime, notices, settled, workItemId: item.workItemId! };
+}
+
+describe("runtime passive lifecycle recovery", () => {
+  it("repairs the notification gap after settlement persisted but the previous process stopped before enqueue", async () => {
+    const f = await fixture(); const runtime = f.runtime();
+    f.containment.inspect = async identity => ({ state: "empty", fingerprint: runtimeIdentityFingerprint(identity) });
+    const leases = new InstanceLeaseCoordinator(f.db, "settled-before-crash"); const lease = leases.acquire(Date.now(), 60000)!;
+    expect((await recoverLifecycleSession(f.db, { kind: "execution", sessionId: f.session.id, instance: lease, containment: f.containment, now: Date.now })).state).toBe("recovered");
+    leases.release(lease, Date.now());
+    const inspect = vi.spyOn(f.containment, "inspect");
+    try {
+      expect(f.notices()).toHaveLength(0);
+      await runtime.start();
+      await vi.waitFor(() => expect(f.notices()).toHaveLength(1));
+      expect(inspect).not.toHaveBeenCalled();
+      expect(f.db.prepare("SELECT count(*) AS n FROM collaboration_execution_settlements").get()).toEqual({ n: 1 });
+    } finally { await runtime.stop(); f.db.close(); }
+  });
+  it("starts and maintains the service while inspection waits, then recovers once", async () => {
+    const f = await fixture(); const runtime = f.runtime();
+    let finish!: (state: ContainmentInspection) => void;
+    const inspection = new Promise<ContainmentInspection>(resolve => { finish = resolve; });
+    const inspect = vi.spyOn(f.containment, "inspect").mockReturnValue(inspection);
+    try {
+      expect((await runtime.start()).ready).toBe(true);
+      await vi.waitFor(() => expect(inspect).toHaveBeenCalledTimes(1));
+      await runtime.drainOnce();
+      expect(f.settled()).toBe(false);
+      finish({ state: "empty", fingerprint: runtimeIdentityFingerprint(f.proof.identity) });
+      await vi.waitFor(() => expect(f.settled()).toBe(true));
+      expect(f.notices()).toHaveLength(1);
+      expect(f.notices()[0].payload_json).not.toContain("修改完成");
+      await runtime.drainOnce();
+      expect(inspect).toHaveBeenCalledTimes(1);
+    } finally { finish({ state: "empty", fingerprint: runtimeIdentityFingerprint(f.proof.identity) }); await runtime.stop(); f.db.close(); }
+  });
+
+  it("notifies about unconfirmed work once across repeated drains and service restarts", async () => {
+    const f = await fixture(); const first = f.runtime(); const second = f.runtime();
+    try {
+      await first.start();
+      await vi.waitFor(() => expect(f.notices()).toHaveLength(1));
+      expect(f.settled()).toBe(false);
+      const notice = JSON.parse(f.notices()[0].payload_json);
+      expect(notice.summary).toContain("为避免重复修改");
+      expect(notice.summary).toContain("负责人");
+      expect(notice.summary).not.toMatch(/WI-|execution_|fingerprint|provider_/);
+      const rendered = JSON.stringify(renderDingTalkSessionMessage(notice));
+      expect(rendered).toContain("为避免重复修改");
+      expect(rendered).not.toMatch(/WI-|任务编号|控制状态|业务状态/);
+      await first.drainOnce(); await first.drainOnce();
+      await first.stop(); await second.start(); await second.drainOnce();
+      expect(f.notices()).toHaveLength(1);
+    } finally { await first.stop(); await second.stop(); f.db.close(); }
+  });
+
+  it.each(["stop", "lease_lost", "paused"] as const)("does not publish stale recovery results after %s", async change => {
+    const f = await fixture(); const runtime = f.runtime();
+    let finish!: (state: ContainmentInspection) => void;
+    const inspect = vi.spyOn(f.containment, "inspect").mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    try {
+      await runtime.start(); await vi.waitFor(() => expect(inspect).toHaveBeenCalledTimes(1));
+      if (change === "stop") {
+        await runtime.stop();
+        expect(runtime.health().state).toBe("stopped");
+      } else if (change === "lease_lost") f.db.exec("UPDATE collaboration_instance_lease SET fencing_token=fencing_token+1");
+      else f.db.prepare("UPDATE collaboration_work_items SET control_state='paused' WHERE id=?").run(f.workItemId);
+      finish({ state: "empty", fingerprint: runtimeIdentityFingerprint(f.proof.identity) });
+      await new Promise(resolve => setTimeout(resolve, 50));
+      expect(f.notices()).toHaveLength(0);
+      expect(f.settled()).toBe(change === "paused");
+    } finally { finish({ state: "empty", fingerprint: runtimeIdentityFingerprint(f.proof.identity) }); await runtime.stop(); f.db.close(); }
+  });
+
+  it("times out an unresponsive inspection, sends a bounded notice and ignores late success", async () => {
+    const f = await fixture(); const runtime = f.runtime(20);
+    let finish!: (state: ContainmentInspection) => void;
+    vi.spyOn(f.containment, "inspect").mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    try {
+      await runtime.start();
+      await vi.waitFor(() => expect(f.notices()).toHaveLength(1));
+      expect(f.settled()).toBe(false);
+      finish({ state: "empty", fingerprint: runtimeIdentityFingerprint(f.proof.identity) });
+      await runtime.drainOnce();
+      expect(f.settled()).toBe(false);
+      expect(runtime.health().ready).toBe(true);
+    } finally { finish({ state: "empty", fingerprint: runtimeIdentityFingerprint(f.proof.identity) }); await runtime.stop(); f.db.close(); }
+  });
+
+  it("does not route a durable running execution through blocking legacy startup inspection", async () => {
+    const f = await fixture(); const runtime = f.runtime();
+    const node = f.db.prepare("SELECT node_id,assigned_agent_id FROM collaboration_work_nodes WHERE work_item_id=? AND node_type='modify'").get(f.workItemId) as {node_id:string;assigned_agent_id:string};
+    f.db.prepare("INSERT INTO collaboration_runs (id,work_item_id,plan_revision,node_id,attempt,agent_id,thread_id,turn_id,status,repository_path,worktree_path,branch,base_sha,started_at,instance_owner,instance_fence,containment_binding_json,runtime_identity_json,containment_fingerprint) VALUES (?,?,1,?,1,?,'thread','turn','running',?,?,'candidate',?,3000,?,?,?,?,?)")
+      .run(f.session.id, f.workItemId, node.node_id, node.assigned_agent_id, f.root, f.root, "a".repeat(40), f.binding.instanceOwner, f.binding.instanceFence, JSON.stringify(f.binding), JSON.stringify(f.proof), runtimeIdentityFingerprint(f.proof.identity));
+    let finish!: (state: ContainmentInspection) => void;
+    const inspect = vi.spyOn(f.containment, "inspect").mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    let started = false; const starting = runtime.start().then(() => { started = true; });
+    try {
+      await vi.waitFor(() => expect(started).toBe(true));
+      await vi.waitFor(() => expect(inspect).toHaveBeenCalledTimes(1));
+      expect(runtime.recovery()).toEqual([]);
+    } finally { finish({ state: "empty", fingerprint: runtimeIdentityFingerprint(f.proof.identity) }); await starting; await runtime.stop(); f.db.close(); }
+  });
+
+  it("recovers another repository while the first repository inspection is waiting", async () => {
+    const f = await fixture(); const runtime = f.runtime();
+    const otherRepository = join(f.root, "other");
+    const service = startCollaborationService({ dataDirectory: f.root, planning: { planner: { propose: validProposal }, policy: { ...policy, allowedRepositories: [f.root, otherRepository] } } });
+    const item = service.ingestDingTalkMessage({ sourceEventId: "other", transportMessageId: "other", conversationId: "other", addressedToBot: true, text: "修正另一个提示", sender: { senderCorpId: "corp", senderStaffId: "staff", senderId: "sender", displayName: "Test" }, receivedAt: 4000 });
+    service.reviseWorkItemDefinition(item.workItemId!, { goal: "修正另一个提示", goalConfirmed: true, repository: otherRepository, acceptanceConditions: [{ description: "提示清晰", observation: "pnpm test target" }], blockingAmbiguities: [] }, 4100);
+    service.close();
+    const leases = new InstanceLeaseCoordinator(f.db, "another-old-instance"); const lease = leases.acquire(Date.now(), 60000)!;
+    const session = new ExecutionLifecycle(f.db, "other-recovery-session", lease);
+    session.reserve({ workItemId: item.workItemId!, planRevision: 1, repository: otherRepository, baseSha: "a".repeat(40), attempt: 1 });
+    const binding = { ...f.binding, runId: session.id, canonicalWorktreePath: otherRepository, instanceOwner: lease.ownerId, instanceFence: lease.fence };
+    const proof = { identity: { ...f.proof.identity, opaqueId: "other-runtime-00001" }, receipt: containmentBindingHash(binding) };
+    session.command(1, binding); session.proof(1, proof); await session.settle(f.containment); leases.release(lease, Date.now());
+    let finish!: (state: ContainmentInspection) => void;
+    const pending = new Promise<ContainmentInspection>(resolve => { finish = resolve; });
+    f.containment.inspect = async identity => identity.opaqueId === f.proof.identity.opaqueId ? pending : { state: "empty", fingerprint: runtimeIdentityFingerprint(identity) };
+    try {
+      await runtime.start();
+      await vi.waitFor(() => expect(f.db.prepare("SELECT 1 FROM collaboration_execution_settlements WHERE session_id=?").get(session.id)).toBeDefined());
+      expect(f.settled()).toBe(false);
+    } finally { finish({ state: "empty", fingerprint: runtimeIdentityFingerprint(f.proof.identity) }); await runtime.stop(); f.db.close(); }
+  });
+});

@@ -158,6 +158,9 @@ export function renderDingTalkSessionMessage(payload: unknown): Record<string, u
       }
     }
   } else if (type === "command_status_card") {
+    if (card?.presentation === "business") {
+      lines.push("", text(card?.summary, "任务状态已更新。", 1_000));
+    } else {
     lines.push(
       "",
       text(card?.summary, "命令已处理。", 1_000),
@@ -167,6 +170,7 @@ export function renderDingTalkSessionMessage(payload: unknown): Record<string, u
     if (card?.workItemStatus) lines.push(`- 业务状态：${readableStatus(card.workItemStatus)}`);
     if (card?.definitionStatus) lines.push(`- 计划状态：${readableStatus(card.definitionStatus)}`);
     if (card?.controlState) lines.push(`- 控制状态：${readableStatus(card.controlState)}`);
+    }
   } else if (type === "plan_status_card") {
     if (status === "ready_for_execution") {
       lines.push(

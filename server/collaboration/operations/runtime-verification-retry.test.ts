@@ -25,7 +25,7 @@ import type {
 } from "../quality-gate.ts";
 import { startCollaborationService } from "../service.ts";
 import { CommandCleanupError } from "../execution-limits.ts";
-import { currentInstanceLease } from "../leases.ts";
+import { currentInstanceLease, InstanceLeaseCoordinator } from "../leases.ts";
 import { reserveVerification, hasUnsettledVerification } from "../verification-lifecycle.ts";
 import { CollaborationHeadlessRuntime, type CollaborationHeadlessRuntimeOptions } from "./runtime.ts";
 
@@ -284,6 +284,23 @@ async function runningRuntime(item: RetryFixture, runner: FailingVerifierRunner,
 }
 
 describe("runtime Owner verification retry", () => {
+  it("recovers an abandoned zero-command verifier and queues independent verification without modifying again", async () => {
+    const item = seedRetryableCandidate(); const runner = new FailingVerifierRunner();
+    const db = new DatabaseSync(join(item.dataDirectory, "collaboration", "collaboration.sqlite"));
+    const leases = new InstanceLeaseCoordinator(db, "old-verifier"); const lease = leases.acquire(3000, 500)!;
+    const session = reserveVerification(db, item.runId, lease, 3100);
+    leases.release(lease, 3200);
+    const { runtime, agent } = configuredRuntime(item, runner);
+    try {
+      await runtime.start();
+      await vi.waitFor(() => expect(db.prepare("SELECT 1 FROM collaboration_verification_settlements WHERE session_id=?").get(session)).toBeDefined());
+      await vi.waitFor(() => expect(runner.requests).toHaveLength(1));
+      await vi.waitFor(() => expect(reviewCount(item)).toBe(1));
+      expect(db.prepare("SELECT 1 FROM collaboration_verification_settlements WHERE session_id=?").get(session)).toBeDefined();
+      expect(agent.run).not.toHaveBeenCalled();
+      expect(runCount(item)).toBe(1);
+    } finally { await runtime.stop(); db.close(); }
+  });
   it.each(["same", "different"])("coordinates startup verification with a new modification in %s repositories", async mode => {
     const first = seedRetryableCandidate();
     const second = seedRetryableCandidate(mode === "same" ? first : { dataDirectory: first.dataDirectory }, false);

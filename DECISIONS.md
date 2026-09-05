@@ -1,5 +1,13 @@
 # Meta 协作决策记录
 
+## D-044 — 恢复后台化，但不把退出检查变成自动重做
+
+- startup 的 legacy 扫描排除已有 execution session 的 Run，交由进入 running 后的一次性被动恢复；未持久化旧 Run 的原恢复协议不在本批重写。按 canonical repository 分组，至多四组并发、同组串行，每项五秒超时后停止本次检查。只有被动 authority 读取可放弃等待，绝不能用此取消方法冒充终止 Agent/测试进程。
+- 所有异步等待绑定本次实例、账本和 abort lifetime；关机取消并有界等待，迟到权威读取没有写入和启动工作入口。超时/未知保留占用，定向到事项的业务通知仅在当前 Spec、计划及 active 控制状态下入队，按 session/结果去重；普通用户不见内部编号和状态码。
+- 恢复释放占用后按原完成门禁检查当前候选，重新播种该仓库复核及真正没启动的待办；候选路径比较使用 canonical key，避免 /var 与 /private/var 等符号链接导致漏排。孤立 execution session 计入尝试预算，且不能被 never-started 扫描当作可自动重做。
+- settlement 与 Outbox 不在同一事务，故启动还扫描带 recoveredBy 收据且没有恢复通知的结算，修复崩溃造成的投递缺口；不重复检查已确认的进程，也不重复结算。未通过 Spec/暂停/终态门禁的提示不发送，收据仍保留。
+- 该流程不改变 Owner 权限、旧 Run 状态或候选证据，不生产部署、不调用真实模型/钉钉。仍需补全 legacy 运行隔离、已退出但 running 的运行状态收束、通知投递时的新鲜度门禁及真实 Docker 六场景。
+
 ## D-043 — 恢复同时需要“协调已结束”与“进程已退出”
 
 - 空进程快照不能证明旧协调器不会稍后启动已预留命令，也不能证明未纳入 Agent 隔离的原生工作目录准备已经结束。schema 21 因此追加 execution/verification finalization intent，仅在原协调返回后的 settle 入口、原有效租约下登记固定命令数；触发器禁止改删标记或继续插入命令/证明。

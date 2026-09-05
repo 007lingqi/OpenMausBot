@@ -101,6 +101,8 @@ export interface CommandStatusCard {
   workItemId: string;
   outcome: "allowed" | "denied";
   summary: string;
+  /** Automated business updates omit internal task/control fields in group chat. */
+  presentation?: "business";
   workItemStatus?: string;
   definitionStatus?: string;
   controlState?: string;

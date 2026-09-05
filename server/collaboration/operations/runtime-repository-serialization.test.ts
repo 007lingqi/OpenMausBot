@@ -6,6 +6,8 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WorktreeManager } from "../worktree-manager.ts";
 import { CommandCleanupError } from "../execution-limits.ts";
+import { ExecutionLifecycle } from "../execution-lifecycle.ts";
+import { InstanceLeaseCoordinator } from "../leases.ts";
 
 import type { DingTalkInboundMessage } from "../../integrations/dingtalk/types.ts";
 import {
@@ -269,6 +271,30 @@ async function stopHarness(harness: RuntimeHarness): Promise<void> {
 }
 
 describe("runtime repository single-writer scheduling", () => {
+  it("recovers old occupancy and starts waiting work, never relaunching an orphan execution as new", async () => {
+    const repo = createRepository(temporaryDirectory(), "recovery-queue");
+    const h = createHarness([repo, repo]);
+    h.options.execution!.limits.maxAttempts = 3;
+    const db = new DatabaseSync(h.databaseFile);
+    const leases = new InstanceLeaseCoordinator(db, "old");
+    const lease = leases.acquire(Date.now(), 60000)!;
+    const old = new ExecutionLifecycle(db, "orphan-execution", lease);
+    old.reserve({ workItemId: h.items[0].workItemId, planRevision: 1, repository: repo.path, baseSha: repo.baseSha, attempt: 1 });
+    const binding = { runId: old.id, canonicalWorktreePath: repo.path, instanceOwner: lease.ownerId, instanceFence: lease.fence, nonce: "a".repeat(64) };
+    old.command(1, binding); old.proof(1, proof(binding));
+    await old.settle({ ...new FakeContainment(), verifyProof: new FakeContainment().verifyProof,
+      inspect: async identity => ({ state: "active", fingerprint: runtimeIdentityFingerprint(identity) }),
+      terminateAndWaitEmpty: new FakeContainment().terminateAndWaitEmpty });
+    leases.release(lease, Date.now());
+    try {
+      await h.runtime.start();
+      await waitFor(() => h.agent.startedWorkItems.includes(h.items[1].workItemId), "Waiting repository was not released");
+      expect(h.agent.startedWorkItems).not.toContain(h.items[0].workItemId);
+      expect(db.prepare("SELECT 1 FROM collaboration_execution_dispatches WHERE work_item_id=?").get(h.items[0].workItemId)).toBeUndefined();
+      expect(db.prepare("SELECT count(*) AS n FROM collaboration_execution_sessions WHERE work_item_id=?").get(h.items[0].workItemId)).toEqual({ n: 1 });
+    } finally { await stopHarness(h); db.close(); }
+  });
+
   it("rejects direct execution while scheduled work is still preparing the same repository", async () => {
     const repo = createRepository(temporaryDirectory(), "direct-during-preparation");
     const h = createHarness([repo, repo]);

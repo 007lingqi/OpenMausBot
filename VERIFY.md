@@ -1,5 +1,15 @@
 # Meta 协作验证记录
 
+## 2026-09-06 后台恢复、通知与安全续排（最新）
+
+- 最终全链 `pnpm vitest run server/collaboration/operations/runtime-verification-retry.test.ts -t 'abandoned zero-command' && pnpm typecheck && git diff --check && pnpm vitest run server/collaboration server/integrations/dingtalk server/collaboration-headless.test.ts && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-runtime-lifecycle-recovery-typecheck` 通过（41694 exit 0）。整组 70 文件 / 533 项，02:04:36 开始、63.20 秒；类型检查及服务端编译通过。之后仅更新状态文档，生产代码与测试未再改。未运行本批全仓 pnpm test。
+- 新增九项 runtime 恢复测试：启动/维护不等待权威检查；未知通知跨 drain/重启去重且真实 session 渲染无内部编号；关机/失租/暂停不发迟到提示；检查超时后不接受迟到成功；durable running 不进入阻塞式 legacy 扫描；不同仓库可并行恢复；结算后崩溃漏通知可补回且不重复检查/结算。
+- 仓库集成测试证明：旧孤立执行预留释放后，只启动同仓库另一个未执行事项；即使尝试预算还剩余，也不新增旧事项 dispatch 或重做旧修改。独立复核集成证明零命令旧 verifier 恢复后会再次核对当前候选，不调用修改 Agent、不产生新 Run。
+- 先行五项失败复现后台恢复缺失（25240）；同仓库续排先行失败（39998）；基础接入后 27 项及 typecheck 通过（16663）。追加超时/跨仓库两项先行失败（18720），取消读取与并发分组后 82 项及 typecheck/diff 检查通过（57464）。结算后漏发先行失败（60351），收据补发后通过。
+- 最新 52 项针对性中一项复核续排失败（87838），进一步断言确认 settlement 已落库但 runner 未启动（59048）；原因是 canonical session 路径不能按字符串匹配历史符号链接候选路径。统一 repository key 后单项和最终整组通过。以上失败均已修复，无未解决测试失败。
+- 测试只用临时 Git/SQLite、受控 containment/runner、本机 HTTP 服务和既有独立子进程，没有调用真实模型/群聊/在线正文，也没有更新 Docker 或身份凭据。新通知渲染已验证，不冒充真实群投递。
+- 待续：全仓 pnpm test；确认退出但仍为 running 的旧 Run 的安全状态收束；无生命周期记录的 legacy 运行隔离/启动恢复；通知投递时的最新 Spec/控制状态校验；Docker 强制重启和完整六类真实验收。Goal 保持 active。
+
 ## 2026-09-06 被动恢复证据与收束边界（最新）
 
 - 最终 `pnpm vitest run server/collaboration server/integrations/dingtalk server/collaboration-headless.test.ts && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-lifecycle-recovery-typecheck && git diff --check` 全链通过（13581 exit 0）：69 文件 / 522 项，01:38:10 开始、62.15 秒。生产代码及测试此后未改，仅更新四份状态文档；未运行本批全仓 pnpm test，不用历史全仓证据替代。
