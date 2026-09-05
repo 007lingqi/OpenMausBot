@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -31,7 +32,7 @@ import {
 import type { CandidateExecutorOptions, CandidateExecutionOutcome } from "../executor.ts";
 import type { PlanningPolicy } from "../graph.ts";
 import type { InboundMessageOutcome } from "../inbound.ts";
-import { InstanceLeaseCoordinator, type InstanceLease } from "../leases.ts";
+import { assertCurrentInstanceLease, InstanceLeaseCoordinator, type InstanceLease } from "../leases.ts";
 import { OutboxDispatcher, type DispatchOutcome, type OutboxDispatcherOptions } from "../outbox-dispatcher.ts";
 import { enqueueInboundCard, type OutboxDeliveryPort } from "../outbox.ts";
 import { renderCommandStatusCard, renderPlanStatusCard } from "../message-renderer.ts";
@@ -54,6 +55,17 @@ import {
 import { UnavailableContainmentSupervisor } from "./containment-supervisor.ts";
 
 export type CollaborationRuntimeState = "starting" | "running" | "draining" | "degraded" | "stopped";
+
+// Control-only changes do not invalidate a Spec. Every intervening version must
+// be accounted for; a durable contribution not yet projected must block execution.
+const currentExecutionSpecSql =
+  "AND s.revision=(SELECT MAX(latest.revision) FROM collaboration_work_item_snapshots latest WHERE latest.work_item_id=w.id) " +
+  "AND w.version>=s.source_work_item_version AND w.version-s.source_work_item_version=(" +
+  "SELECT count(DISTINCT c.work_item_version) FROM collaboration_control_events c WHERE c.work_item_id=w.id " +
+  "AND c.work_item_version>s.source_work_item_version AND c.work_item_version<=w.version " +
+  "AND c.action IN ('pause','resume','retry')) " +
+  "AND EXISTS (SELECT 1 FROM collaboration_work_nodes n WHERE n.work_item_id=w.id AND n.plan_revision=w.current_plan_revision " +
+  "AND n.node_type='modify' AND n.active=1 AND n.control_state='active') ";
 
 export interface RuntimeClock {
   now(): number;
@@ -744,6 +756,7 @@ export class CollaborationHeadlessRuntime {
         this.reason = this.service.health().degradation?.reason ?? "service_not_ready";
       }
       this.currentState = this.reason ? "degraded" : "running";
+      this.rebuildNeverStartedQueue();
       this.logger.write({
         event: "collaboration.runtime.started",
         state: this.currentState,
@@ -1195,7 +1208,7 @@ export class CollaborationHeadlessRuntime {
   }
 
   private scheduleReadyExecution(workItemId: string): void {
-    if (!this.executionEnabled() || this.scheduledWorkItems.has(workItemId) || !this.database) return;
+    if (!this.executionEnabled() || this.options.probeOnly || !this.health().ready || this.scheduledWorkItems.has(workItemId) || !this.database) return;
     const pendingVerification = this.pendingCandidateVerification(workItemId);
     if (pendingVerification) {
       if (pendingVerification.verifierContractAttempts >= CANDIDATE_VERIFICATION_MAX_ATTEMPTS) return;
@@ -1224,12 +1237,14 @@ export class CollaborationHeadlessRuntime {
     }
     const ready = this.database
       .prepare(
-        "SELECT w.current_plan_revision AS plan_revision,s.repository,COALESCE((" +
+        "SELECT w.current_plan_revision AS plan_revision,s.repository,max(COALESCE((" +
           "SELECT MAX(previous.attempt) FROM collaboration_runs previous WHERE previous.work_item_id = w.id" +
-          "), 0) AS previous_attempt FROM collaboration_work_items w " +
+          "), 0),COALESCE((SELECT MAX(d.attempt) FROM collaboration_execution_dispatches d WHERE d.work_item_id=w.id),0)) AS previous_attempt FROM collaboration_work_items w " +
           "JOIN collaboration_plan_revisions p ON p.work_item_id = w.id AND p.revision = w.current_plan_revision " +
           "JOIN collaboration_work_item_snapshots s ON s.work_item_id = w.id AND s.revision = p.snapshot_revision " +
           "WHERE w.id = ? AND w.definition_status = 'ready_for_execution' AND w.control_state = 'active' " +
+          "AND w.status NOT IN ('accepted','cancelled') AND p.status='published' " +
+          currentExecutionSpecSql +
           "AND w.current_plan_revision IS NOT NULL AND NOT EXISTS (" +
           "SELECT 1 FROM collaboration_runs r WHERE r.work_item_id = w.id " +
           "AND r.plan_revision = w.current_plan_revision AND r.status IN ('running', 'succeeded'))",
@@ -1240,21 +1255,31 @@ export class CollaborationHeadlessRuntime {
       return;
     }
     const attempt = ready.previous_attempt + 1;
-    if (attempt > this.options.execution!.limits.maxAttempts) return;
-    if (this.activeRepositoryExecutions.has(ready.repository)) {
+    if (attempt > this.options.execution!.limits.maxAttempts) { this.queuedWorkItems.delete(workItemId); return; }
+    const repository = this.repositoryQueueKey(ready.repository);
+    if (this.activeRepositoryExecutions.has(repository)) {
       this.queuedWorkItems.add(workItemId);
       return;
     }
     this.queuedWorkItems.delete(workItemId);
-    this.activeRepositoryExecutions.add(ready.repository);
+    if (!this.lease) return;
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      assertCurrentInstanceLease(this.database, this.lease, this.clock.now());
+      // Reserve before worktree preparation: failures/crashes here must not reset the attempt budget.
+      this.database.prepare("INSERT INTO collaboration_execution_dispatches (work_item_id,plan_revision,attempt,instance_owner,instance_fence,created_at) VALUES (?,?,?,?,?,?)")
+        .run(workItemId, ready.plan_revision, attempt, this.lease.ownerId, this.lease.fence, this.clock.now());
+      this.database.exec("COMMIT");
+    } catch (error) { this.database.exec("ROLLBACK"); throw error; }
+    this.activeRepositoryExecutions.add(repository);
     this.scheduledWorkItems.add(workItemId);
     void this.executeCurrentPlan(workItemId, attempt)
       .then(async (outcome) => await this.enqueueExecutionStatus(outcome))
       .catch(() => this.enqueueExecutionFailure(workItemId, ready.plan_revision))
       .finally(() => {
         this.scheduledWorkItems.delete(workItemId);
-        this.activeRepositoryExecutions.delete(ready.repository);
-        this.scheduleNextQueuedWorkItem(ready.repository);
+        this.activeRepositoryExecutions.delete(repository);
+        this.scheduleNextQueuedWorkItem(repository);
       });
   }
 
@@ -1266,11 +1291,35 @@ export class CollaborationHeadlessRuntime {
           "JOIN collaboration_work_item_snapshots s ON s.work_item_id = w.id AND s.revision = p.snapshot_revision " +
           "WHERE w.id = ?",
       ).get(workItemId) as { repository: string } | undefined;
-      if (!row || row.repository !== repository) continue;
+      if (!row) { this.queuedWorkItems.delete(workItemId); continue; }
+      if (this.repositoryQueueKey(row.repository) !== repository) continue;
       this.queuedWorkItems.delete(workItemId);
       this.scheduleReadyExecution(workItemId);
-      break;
+      if (this.activeRepositoryExecutions.has(repository)) break;
     }
+  }
+
+  private repositoryQueueKey(repository: string): string {
+    try { return realpathSync(repository); } catch { return repository; }
+  }
+
+  private rebuildNeverStartedQueue(): void {
+    if (!this.options.autoExecuteReady || this.options.probeOnly || !this.executionEnabled() || !this.database || !this.health().ready) return;
+    // Revalidate waiting controls on each pass; a paused head must not starve eligible siblings.
+    for (const id of [...this.queuedWorkItems]) this.scheduleReadyExecution(id);
+    const excluded = [...new Set([...this.scheduledWorkItems, ...this.queuedWorkItems])];
+    const rows = this.database.prepare("SELECT w.id FROM collaboration_work_items w " +
+      "JOIN collaboration_plan_revisions p ON p.work_item_id=w.id AND p.revision=w.current_plan_revision " +
+      "JOIN collaboration_work_item_snapshots s ON s.work_item_id=w.id AND s.revision=p.snapshot_revision " +
+      "WHERE w.definition_status='ready_for_execution' AND w.control_state='active' AND w.status NOT IN ('accepted','cancelled') " +
+      currentExecutionSpecSql +
+      "AND max(COALESCE((SELECT MAX(r.attempt) FROM collaboration_runs r WHERE r.work_item_id=w.id),0)," +
+      "COALESCE((SELECT MAX(d.attempt) FROM collaboration_execution_dispatches d WHERE d.work_item_id=w.id),0)) < ? " +
+      "AND p.status='published' AND NOT EXISTS (SELECT 1 FROM collaboration_runs r WHERE r.work_item_id=w.id AND r.plan_revision=w.current_plan_revision) " +
+      "AND NOT EXISTS (SELECT 1 FROM collaboration_execution_dispatches d WHERE d.work_item_id=w.id AND d.plan_revision=w.current_plan_revision) " +
+      (excluded.length ? `AND w.id NOT IN (${excluded.map(() => "?").join(",")}) ` : "") +
+      "ORDER BY p.created_at,w.created_at,w.id LIMIT 64").all(this.options.execution!.limits.maxAttempts, ...excluded) as unknown as Array<{ id: string }>;
+    for (const row of rows) this.scheduleReadyExecution(row.id);
   }
 
   private async enqueueExecutionStatus(outcome: CandidateExecutionOutcome): Promise<void> {
@@ -1391,7 +1440,7 @@ export class CollaborationHeadlessRuntime {
           workItemId,
           planRevision,
           status: "execution_failed",
-          failures: ["隔离执行未完成；证据已保留，可由 Owner 检查后重试。"],
+          failures: ["修改未完成，执行准备或处理发生异常；已停止自动尝试，需要负责人检查执行环境和任务状态后安排恢复。"],
         }),
         supersessionKey: `work-item:${workItemId}:execution-status`,
         now: this.clock.now(),
@@ -1573,6 +1622,7 @@ export class CollaborationHeadlessRuntime {
       maintained = true;
     }
     if (serviceReady) this.retryDirtyMetaBundles();
+    if (serviceReady) this.rebuildNeverStartedQueue();
     if (serviceReady && this.options.naturalIntake && !this.naturalIntakeTask) {
       // Do not block lease renewal, Stream maintenance or other group messages on model latency.
       this.naturalIntakeTask = this.service!.processNaturalIntake(now).then(workItemId => {

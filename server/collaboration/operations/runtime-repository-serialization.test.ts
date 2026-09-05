@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { DingTalkInboundMessage } from "../../integrations/dingtalk/types.ts";
@@ -21,7 +22,7 @@ import type {
   TargetCommandSpec,
 } from "../quality-gate.ts";
 import { startCollaborationService } from "../service.ts";
-import { CollaborationHeadlessRuntime } from "./runtime.ts";
+import { CollaborationHeadlessRuntime, type CollaborationHeadlessRuntimeOptions } from "./runtime.ts";
 
 const scratch: string[] = [];
 
@@ -161,6 +162,8 @@ interface RuntimeHarness {
   runtime: CollaborationHeadlessRuntime;
   agent: DeferredAgent;
   items: SeededWorkItem[];
+  options: CollaborationHeadlessRuntimeOptions;
+  databaseFile: string;
 }
 
 function inbound(input: {
@@ -217,7 +220,7 @@ function createHarness(repositories: Array<{ path: string; baseSha: string }>): 
     timeoutMs: 5_000,
     maxOutputBytes: 32_000,
   };
-  const runtime = new CollaborationHeadlessRuntime({
+  const options: CollaborationHeadlessRuntimeOptions = {
     dataDirectory,
     ownerId: "repository-serialization-runtime",
     platform: "linux",
@@ -235,16 +238,9 @@ function createHarness(repositories: Array<{ path: string; baseSha: string }>): 
       ])),
       limits: { maxAttempts: 1, agentTimeoutMs: 5_000, maxAgentEventBytes: 16_000, interruptGraceMs: 100 },
     },
-  });
-  return { runtime, agent, items };
-}
-
-function trigger(runtime: CollaborationHeadlessRuntime, item: SeededWorkItem, index: number): void {
-  runtime.ingestDingTalkMessage(inbound({
-    sourceEventId: `repository-serialization-run-${index}`,
-    conversationId: item.conversationId,
-    text: `${item.workItemId} 现在执行`,
-  }));
+  };
+  const runtime = new CollaborationHeadlessRuntime(options);
+  return { runtime, agent, items, options, databaseFile: join(dataDirectory, "collaboration", "collaboration.sqlite") };
 }
 
 async function waitFor(condition: () => boolean, message: string, timeoutMs = 2_000): Promise<void> {
@@ -269,6 +265,125 @@ async function stopHarness(harness: RuntimeHarness): Promise<void> {
 }
 
 describe("runtime repository single-writer scheduling", () => {
+  it("recovers work after genuine Owner pause and resume without accepting unprojected contributions", async () => {
+    const root = temporaryDirectory();
+    const repo = createRepository(root, "owner-resume");
+    const h = createHarness([repo, repo]);
+    const service = startCollaborationService({ dataDirectory: h.options.dataDirectory });
+    service.bootstrapOwnerLocally({ senderCorpId: "corp", senderStaffId: "staff", now: Date.now() });
+    const sender = inbound({ sourceEventId: "sender", conversationId: "group", text: "" }).sender;
+    for (const action of ["pause", "resume"] as const) {
+      const result = service.performDirectOwnerAction({ sourceEventId: `owner-${action}`, action,
+        workItemId: h.items[0].workItemId, sender, now: Date.now() });
+      expect(result).toMatchObject({ allowed: true, reason: "owner_action_applied" });
+    }
+    service.close();
+    const db = new DatabaseSync(h.databaseFile);
+    // Models the durable contribution / Spec projection crash boundary.
+    db.prepare("UPDATE collaboration_work_items SET version=version+1 WHERE id=?").run(h.items[1].workItemId);
+    db.close();
+    await h.runtime.start();
+    try {
+      await waitFor(() => h.agent.startedWorkItems.includes(h.items[0].workItemId), "Owner-resumed task was lost");
+      h.agent.resolve(h.items[0].workItemId, "complete");
+      await expectNotStarted(h.agent, h.items[1].workItemId);
+    } finally { await stopHarness(h); }
+  });
+  it("honors disabled automatic execution and probe-only startup", async () => {
+    const root = temporaryDirectory();
+    const h = createHarness([createRepository(root, "no-auto")]);
+    for (const extra of [{ autoExecuteReady: false }, { probeOnly: true }]) {
+      const runtime = new CollaborationHeadlessRuntime({ ...h.options, ...extra });
+      try {
+        await runtime.start();
+        if (!extra.probeOnly) await runtime.drainOnce();
+        await expectNotStarted(h.agent, h.items[0].workItemId);
+        const db = new DatabaseSync(h.databaseFile);
+        expect(db.prepare("SELECT count(*) AS count FROM collaboration_execution_dispatches").get()).toEqual({ count: 0 });
+        db.close();
+      } finally { await runtime.stop(); }
+    }
+  });
+
+  it("defers recovery while disk-gated and starts it after healthy maintenance", async () => {
+    const root = temporaryDirectory();
+    const h = createHarness([createRepository(root, "disk-gated")]);
+    const db = new DatabaseSync(h.databaseFile);
+    db.prepare("UPDATE collaboration_runtime_state SET low_disk=1 WHERE singleton=1").run();
+    await h.runtime.start();
+    try {
+      await expectNotStarted(h.agent, h.items[0].workItemId);
+      db.prepare("UPDATE collaboration_runtime_state SET low_disk=0 WHERE singleton=1").run();
+      await h.runtime.drainOnce();
+      await waitFor(() => h.agent.startedWorkItems.length === 1, "healthy maintenance did not restore work");
+    } finally { db.close(); await stopHarness(h); }
+  });
+  it("restores ready never-started work at startup without a new group message", async () => {
+    const root = temporaryDirectory();
+    const h = createHarness([createRepository(root, "startup")]);
+    await h.runtime.start();
+    try {
+      await waitFor(() => h.agent.startedWorkItems.includes(h.items[0].workItemId), "persisted ready task was lost");
+      await h.runtime.drainOnce(); await h.runtime.drainOnce();
+      expect(h.agent.startedWorkItems).toEqual([h.items[0].workItemId]);
+    } finally { await stopHarness(h); }
+  });
+
+  it("recovers the waiting sibling after shutdown without retrying the interrupted task", async () => {
+    const root = temporaryDirectory();
+    const repo = createRepository(root, "restart-queue");
+    const h = createHarness([repo, repo]);
+    await h.runtime.start();
+    try {
+      await waitFor(() => h.agent.startedWorkItems.includes(h.items[0].workItemId), "first task did not start");
+      await expectNotStarted(h.agent, h.items[1].workItemId);
+      await stopHarness(h);
+      const agent = new DeferredAgent();
+      const runtime = new CollaborationHeadlessRuntime({ ...h.options, agent });
+      try {
+        await runtime.start();
+        await waitFor(() => agent.startedWorkItems.includes(h.items[1].workItemId), "waiting sibling was not recovered");
+        expect(agent.startedWorkItems).toEqual([h.items[1].workItemId]);
+      } finally { agent.releaseAll(); await runtime.stop(); }
+    } finally { await stopHarness(h); }
+  });
+
+  it("does not restart paused work or a paused modify node", async () => {
+    const root = temporaryDirectory();
+    const repo = createRepository(root, "paused-queue");
+    const h = createHarness([repo, repo, repo]);
+    const db = new DatabaseSync(h.databaseFile);
+    db.prepare("UPDATE collaboration_work_items SET control_state='paused' WHERE id=?").run(h.items[0].workItemId);
+    db.prepare("UPDATE collaboration_work_nodes SET control_state='paused' WHERE work_item_id=? AND node_type='modify'").run(h.items[1].workItemId);
+    db.close();
+    await h.runtime.start();
+    try {
+      await waitFor(() => h.agent.startedWorkItems.includes(h.items[2].workItemId), "eligible task behind paused work did not start");
+      expect(h.agent.startedWorkItems).toEqual([h.items[2].workItemId]);
+    } finally { await stopHarness(h); }
+  });
+
+  it("persists a pre-run dispatch attempt so preparation failures do not repeat on every drain or restart", async () => {
+    const root = temporaryDirectory();
+    const repo = createRepository(root, "preparation-failure");
+    const h = createHarness([repo]);
+    // A wrong trusted base SHA fails preparation before an Agent or collaboration_run can start.
+    h.options.execution!.repositories = { ...h.options.execution!.repositories,
+      [repo.path]: { ...h.options.execution!.repositories[repo.path], baseSha: "0".repeat(40) } };
+    await h.runtime.start();
+    const db = new DatabaseSync(h.databaseFile);
+    try {
+      await waitFor(() => Number((db.prepare("SELECT count(*) AS count FROM collaboration_execution_dispatches").get() as { count: number }).count) === 1, "dispatch was not durably reserved");
+      await h.runtime.drainOnce(); await h.runtime.drainOnce();
+      await stopHarness(h);
+      const next = new CollaborationHeadlessRuntime(h.options);
+      try { await next.start(); await next.drainOnce(); } finally { await next.stop(); }
+      expect(h.agent.startedWorkItems).toEqual([]);
+      expect(db.prepare("SELECT count(*) AS count FROM collaboration_execution_dispatches").get()).toEqual({ count: 1 });
+      expect(db.prepare("SELECT count(*) AS count FROM collaboration_runs").get()).toEqual({ count: 0 });
+      expect(() => db.prepare("DELETE FROM collaboration_execution_dispatches").run()).toThrow("immutable");
+    } finally { db.close(); await stopHarness(h); }
+  });
   it("does not start a second ready Work Item until the first execution for the same repository ends", async () => {
     const root = temporaryDirectory();
     const repository = createRepository(root, "shared-repository");
@@ -276,10 +391,8 @@ describe("runtime repository single-writer scheduling", () => {
     const [first, second] = harness.items;
     await harness.runtime.start();
     try {
-      trigger(harness.runtime, first, 1);
       await waitFor(() => harness.agent.startedWorkItems.includes(first.workItemId), "first Work Item did not start");
 
-      trigger(harness.runtime, second, 2);
       await expectNotStarted(harness.agent, second.workItemId);
 
       harness.agent.resolve(first.workItemId, "complete");
@@ -299,10 +412,8 @@ describe("runtime repository single-writer scheduling", () => {
     const [first, second] = harness.items;
     await harness.runtime.start();
     try {
-      trigger(harness.runtime, first, 3);
       await waitFor(() => harness.agent.startedWorkItems.includes(first.workItemId), "first repository did not start");
 
-      trigger(harness.runtime, second, 4);
       await waitFor(
         () => harness.agent.startedWorkItems.includes(second.workItemId),
         "different repository was incorrectly serialized",
@@ -322,10 +433,8 @@ describe("runtime repository single-writer scheduling", () => {
     const [first, second] = harness.items;
     await harness.runtime.start();
     try {
-      trigger(harness.runtime, first, 5);
       await waitFor(() => harness.agent.startedWorkItems.includes(first.workItemId), "first Work Item did not start");
 
-      trigger(harness.runtime, second, 6);
       await expectNotStarted(harness.agent, second.workItemId);
 
       harness.agent.resolve(first.workItemId, "fail");

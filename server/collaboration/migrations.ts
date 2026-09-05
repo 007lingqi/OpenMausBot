@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { OPENMAUSBOT_SOURCE_BASELINE } from "./config.ts";
 
-export const COLLABORATION_SCHEMA_VERSION = 14;
+export const COLLABORATION_SCHEMA_VERSION = 15;
 
 interface Migration {
   version: number;
@@ -1001,6 +1001,25 @@ const migrations: readonly Migration[] = [
     apply(database) { database.exec(`
       ALTER TABLE collaboration_natural_association_jobs ADD COLUMN projection_attempts INTEGER NOT NULL DEFAULT 0
         CHECK(projection_attempts BETWEEN 0 AND 3);
+    `); },
+  },
+  {
+    version: 15, name: "durable-execution-dispatch", checksum: "v15:pre-run-attempt-reservation",
+    apply(database) { database.exec(`
+      CREATE TABLE collaboration_execution_dispatches (
+        work_item_id TEXT NOT NULL,
+        plan_revision INTEGER NOT NULL,
+        attempt INTEGER NOT NULL CHECK(attempt > 0),
+        instance_owner TEXT NOT NULL,
+        instance_fence INTEGER NOT NULL CHECK(instance_fence > 0),
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY(work_item_id,attempt),
+        FOREIGN KEY(work_item_id,plan_revision) REFERENCES collaboration_plan_revisions(work_item_id,revision)
+      ) STRICT;
+      CREATE TRIGGER collaboration_execution_dispatch_no_update BEFORE UPDATE ON collaboration_execution_dispatches
+        BEGIN SELECT RAISE(ABORT,'execution dispatch is immutable'); END;
+      CREATE TRIGGER collaboration_execution_dispatch_no_delete BEFORE DELETE ON collaboration_execution_dispatches
+        BEGIN SELECT RAISE(ABORT,'execution dispatch is immutable'); END;
     `); },
   },
 ];
