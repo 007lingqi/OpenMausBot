@@ -101,7 +101,7 @@ describe("AttachmentIngestionCoordinator", () => {
     const coordinator = new AttachmentIngestionCoordinator({
       ...setup,
       downloader: { download },
-      onEvidence: (notification) => notifications.push(notification),
+      onEvidence: (notification) => { notifications.push(notification); },
     });
 
     await expect(coordinator.process([capability()], 1_000)).resolves.toEqual({
@@ -207,7 +207,7 @@ describe("AttachmentIngestionCoordinator", () => {
     const restarted = new AttachmentIngestionCoordinator({
       ...setup,
       downloader: { download },
-      onEvidence: (notification) => replayed.push(notification),
+      onEvidence: (notification) => { replayed.push(notification); },
     });
     await expect(restarted.process([], 2_000)).resolves.toEqual({
       processed: 0,

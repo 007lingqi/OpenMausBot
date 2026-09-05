@@ -11,6 +11,7 @@ import type { DingTalkStreamEnvelope } from "./types.ts";
 export interface DingTalkStreamClientPort {
   connected: boolean;
   reconnecting: boolean;
+  registered: boolean;
   registerCallbackListener(topic: string, callback: (message: DWClientDownStream) => void): void;
   connect(): Promise<void>;
   disconnect(): void;
@@ -23,6 +24,7 @@ export type DingTalkStreamClientFactory = (options: {
   clientSecret: string;
   debug: boolean;
   keepAlive: boolean;
+  autoReconnect: boolean;
 }) => DingTalkStreamClientPort;
 
 function envelope(message: DWClientDownStream): DingTalkStreamEnvelope {
@@ -38,7 +40,7 @@ function envelope(message: DWClientDownStream): DingTalkStreamEnvelope {
   };
 }
 
-/** The only vendor import; the wrapper adds liveness recovery around the SDK's reconnect backoff. */
+/** The runtime maintenance loop owns recovery; never race a vendor reconnect timer. */
 export class RealDingTalkStreamSdk implements DingTalkStreamSdkPort {
   private readonly client: DingTalkStreamClientPort;
   private readonly subscriptions = new Set<"robot" | "card">();
@@ -46,6 +48,9 @@ export class RealDingTalkStreamSdk implements DingTalkStreamSdkPort {
   private reconnectPromise: Promise<{ connected: boolean }> | null = null;
   private stopped = true;
   private lifecycleGeneration = 0;
+  private nextAttemptAt = 0;
+  private failedAttempts = 0;
+  private registrationStartedAt = 0;
 
   constructor(
     credentials: { clientId: string; clientSecret: string },
@@ -58,6 +63,7 @@ export class RealDingTalkStreamSdk implements DingTalkStreamSdkPort {
       clientSecret: credentials.clientSecret,
       debug: false,
       keepAlive: true,
+      autoReconnect: false,
     });
     const vendorOnSystem = this.client.onSystem.bind(this.client);
     this.client.onSystem = (message) => {
@@ -75,31 +81,53 @@ export class RealDingTalkStreamSdk implements DingTalkStreamSdkPort {
     });
   }
 
-  async connect(): Promise<{ connected: boolean }> {
-    const generation = ++this.lifecycleGeneration;
-    this.stopped = false;
-    await this.client.connect();
-    if (this.stopped || generation !== this.lifecycleGeneration) {
-      this.client.disconnect();
-      return { connected: false };
+  connect(): Promise<{ connected: boolean }> {
+    if (this.stopped) {
+      this.lifecycleGeneration += 1;
+      this.stopped = false;
+      this.nextAttemptAt = 0;
+      this.failedAttempts = 0;
     }
-    return { connected: this.state() === "connected" };
+    return this.reconnect();
   }
 
   reconnect(): Promise<{ connected: boolean }> {
     if (this.stopped) return Promise.resolve({ connected: false });
     if (this.reconnectPromise) return this.reconnectPromise;
+    if (this.state() === "connected") {
+      this.failedAttempts = 0;
+      return Promise.resolve({ connected: true });
+    }
+    const now = Date.now();
+    if (this.client.connected) {
+      // WebSocket open is not subscription registration. Give REGISTERED time to arrive.
+      if (now - this.registrationStartedAt < 30_000) return Promise.resolve({ connected: false });
+      this.client.disconnect();
+    }
+    if (now < this.nextAttemptAt) return Promise.resolve({ connected: false });
     const generation = this.lifecycleGeneration;
     this.reconnectPromise = Promise.resolve()
-      .then(() => this.client.connect())
+      .then(() => {
+        if (!this.stopped && generation === this.lifecycleGeneration) return this.client.connect();
+      })
       .then(() => {
         if (this.stopped || generation !== this.lifecycleGeneration) {
           this.client.disconnect();
           return { connected: false };
         }
-        return { connected: this.state() === "connected" };
+        if (this.client.connected) {
+          this.registrationStartedAt = Date.now();
+          this.nextAttemptAt = 0;
+        } else {
+          // The pinned SDK may swallow connection errors rather than reject.
+          this.deferRetry();
+        }
+        const connected = this.state() === "connected";
+        if (connected) this.failedAttempts = 0;
+        return { connected };
       })
       .catch((error: unknown) => {
+        if (!this.stopped && generation === this.lifecycleGeneration) this.deferRetry();
         this.onHandlerError(error);
         return { connected: false };
       })
@@ -111,7 +139,12 @@ export class RealDingTalkStreamSdk implements DingTalkStreamSdkPort {
 
   state(): "connected" | "reconnecting" | "stopped" {
     if (this.stopped) return "stopped";
-    return this.client.connected && !this.client.reconnecting ? "connected" : "reconnecting";
+    return this.client.connected && this.client.registered ? "connected" : "reconnecting";
+  }
+
+  private deferRetry(): void {
+    this.nextAttemptAt = Date.now() + Math.min(60_000, 1_000 * 2 ** Math.min(this.failedAttempts, 6));
+    this.failedAttempts += 1;
   }
 
   disconnect(): void {
@@ -128,6 +161,9 @@ export class RealDingTalkStreamSdk implements DingTalkStreamSdkPort {
     try {
       this.client.socketCallBackResponse(transportMessageId, { status: "SUCCESS" });
     } catch (error) {
+      // An open flag can be stale when socket.send fails. Close before retrying.
+      this.client.disconnect();
+      this.nextAttemptAt = 0;
       void this.reconnect();
       throw error;
     }

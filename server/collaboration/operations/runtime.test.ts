@@ -468,6 +468,31 @@ describe("production-isomorphic collaboration runtime", () => {
     await runtime.stop();
   });
 
+  it("recovers from initial registration delay without leaving intake and outbox gated", async () => {
+    let streamState: "connected" | "reconnecting" = "reconnecting";
+    const delivered: string[] = [];
+    const runtime = new CollaborationHeadlessRuntime({
+      dataDirectory: temporaryDirectory(),
+      platform: "linux",
+      outboxDelivery: { async deliver(item) { delivered.push(item.id); return { outcome: "sent" }; } },
+      dingTalk: {
+        enabled: true,
+        credentials: { load: () => ({ clientId: "id", clientSecret: "secret" }) },
+        createStream: () => ({ start: async () => streamState, stop() {}, state: () => streamState,
+          maintain: async () => streamState }),
+      },
+    });
+    try {
+      expect(await runtime.start()).toMatchObject({ ready: false, reason: "dingtalk_reconnecting" });
+      streamState = "connected";
+      await runtime.drainOnce();
+      expect(runtime.health()).toMatchObject({ ready: true, status: "healthy" });
+      runtime.ingestDingTalkMessage(message("after-registration"));
+      expect((await runtime.drainOnce()).dispatched?.state).toBe("sent");
+      expect(delivered).toHaveLength(1);
+    } finally { await runtime.stop(); }
+  });
+
   it("reports live Stream degradation and maintains reconnection from the runtime loop", async () => {
     let streamState = "connected";
     const maintain = vi.fn(async () => streamState);

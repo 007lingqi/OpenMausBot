@@ -242,7 +242,7 @@ describe("independent candidate verification", () => {
   it("does not produce Meta approval when no verifier runner is available", async () => {
     const item = fixture();
     // SAFETY: This deliberate contract violation exercises the runtime's unavailable-runner fail-closed path.
-    const unavailableRunner = undefined as SandboxedCommandRunner;
+    const unavailableRunner = undefined as unknown as SandboxedCommandRunner;
     const outcome = await verify(item, unavailableRunner);
     expect(outcome.passed).toBe(false);
     expect(outcome.reasons).toContain("sandboxed command runner unavailable");

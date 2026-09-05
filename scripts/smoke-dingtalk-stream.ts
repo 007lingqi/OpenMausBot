@@ -45,7 +45,10 @@ if (configuration.state !== "ready") {
   );
   const state = await adapter.start();
   console.info(JSON.stringify({ smoke: "dingtalk-stream", state, configured: true, mode: "receive-only" }));
+  // The wrapper owns retry/backoff; this standalone host must drive maintenance too.
+  const maintenance = setInterval(() => { void adapter.maintain().catch(() => undefined); }, 1_000);
   const shutdown = () => {
+    clearInterval(maintenance);
     adapter.stop();
     actionLedger.close();
     service.close();

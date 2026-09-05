@@ -1447,7 +1447,8 @@ export class CollaborationHeadlessRuntime {
       );
       const state = await this.stream.start();
       this.dingTalkState = state;
-      if (state !== "connected") this.reason = "dingtalk_reconnecting";
+      // Transient connection state is computed live by health(). Persisting it in
+      // reason would keep intake/outbox disabled even after Stream recovers.
     } catch {
       this.stream = null;
       this.reason = "dingtalk_connection_failed";

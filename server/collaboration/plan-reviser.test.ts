@@ -146,7 +146,7 @@ describe("definition readiness and immutable plan revisions", () => {
     });
     const adapter = new FakeDingTalkAdapter((event) => service.ingestDingTalkMessage(event));
     const first = adapter.receive(inboundMessage());
-    if (!first.workItemId) throw new Error("Expected a Work Item");
+    if (!first.accepted || !first.workItemId) throw new Error("Expected a Work Item");
     const clarification = [
       first.workItemId,
       "确认目标：是",
@@ -293,7 +293,7 @@ describe("definition readiness and immutable plan revisions", () => {
       text: "收到 1 个附件，内容待安全读取。",
       resources: [{ capabilityRef: "b".repeat(64), kind: "file", name: "缺陷清单.csv", mimeType: "text/csv" }],
     });
-    if (!result.workItemId) throw new Error("Expected Work Item");
+    if (!result.accepted || !result.workItemId) throw new Error("Expected Work Item");
     const db = database(directory);
     const attachment = db.prepare(
       "SELECT id FROM collaboration_attachments LIMIT 1",
@@ -321,7 +321,7 @@ describe("definition readiness and immutable plan revisions", () => {
     ).run(result.workItemId, attachment.id, "c".repeat(64));
     db.close();
 
-    const acceptedEvidence = {
+    const acceptedEvidence: Parameters<typeof service.observeAttachmentEvidence>[1] = {
       attachmentId: attachment.id,
       sourceEventId: "event-plan-1",
       contentHash: "c".repeat(64),
@@ -337,7 +337,7 @@ describe("definition readiness and immutable plan revisions", () => {
       }],
       truncated: false,
       warnings: [],
-    } as const;
+    };
     service.observeAttachmentEvidence(result.workItemId, acceptedEvidence, 3_000);
     expect(service.observeAttachmentEvidence(result.workItemId, acceptedEvidence, 4_000)).toBeNull();
 
