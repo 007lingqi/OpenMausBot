@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { OPENMAUSBOT_SOURCE_BASELINE } from "./config.ts";
 
-export const COLLABORATION_SCHEMA_VERSION = 16;
+export const COLLABORATION_SCHEMA_VERSION = 17;
 
 interface Migration {
   version: number;
@@ -1039,6 +1039,23 @@ const migrations: readonly Migration[] = [
         BEGIN SELECT RAISE(ABORT,'preparation result is immutable'); END;
       CREATE TRIGGER collaboration_preparation_no_delete BEFORE DELETE ON collaboration_execution_preparation_results
         BEGIN SELECT RAISE(ABORT,'preparation result is immutable'); END;
+    `); },
+  },
+  {
+    version: 17, name: "sent-association-choice-provenance", checksum: "v17:immutable-delivered-choice-order",
+    apply(database) { database.exec(`
+      ALTER TABLE collaboration_outbox ADD COLUMN delivery_sequence INTEGER;
+      CREATE UNIQUE INDEX collaboration_outbox_delivery_sequence ON collaboration_outbox(delivery_sequence) WHERE delivery_sequence IS NOT NULL;
+      CREATE TABLE collaboration_sent_association_choices (
+        outbox_id TEXT PRIMARY KEY REFERENCES collaboration_outbox(id),
+        external_event_id TEXT NOT NULL REFERENCES collaboration_external_events(id),
+        payload_json TEXT NOT NULL CHECK(json_valid(payload_json)),
+        sent_at INTEGER NOT NULL
+      ) STRICT;
+      CREATE TRIGGER collaboration_sent_choices_no_update BEFORE UPDATE ON collaboration_sent_association_choices
+        BEGIN SELECT RAISE(ABORT,'sent choices are immutable'); END;
+      CREATE TRIGGER collaboration_sent_choices_no_delete BEFORE DELETE ON collaboration_sent_association_choices
+        BEGIN SELECT RAISE(ABORT,'sent choices are immutable'); END;
     `); },
   },
 ];

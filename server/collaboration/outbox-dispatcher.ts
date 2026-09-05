@@ -54,6 +54,7 @@ export class OutboxDispatcher {
     const row = this.claim(instance, now);
     if (!row) return null;
     if (!this.isLatestClaim(instance, row, now)) return { id: row.id, state: "superseded", attempt: row.attempt };
+    const transportStartedAt = Date.now();
     let result: Awaited<ReturnType<OutboxDeliveryPort["deliver"]>>;
     try {
       result = await this.transport.deliver({
@@ -69,7 +70,7 @@ export class OutboxDispatcher {
     } catch (error) {
       result = { outcome: "unknown", error: message(error) };
     }
-    return this.complete(instance, row, result, now);
+    return this.complete(instance, row, result, now, now + Math.max(0, Date.now() - transportStartedAt));
   }
 
   private claim(instance: Pick<InstanceLease, "ownerId" | "fence">, now: number): DispatchRow | null {
@@ -153,6 +154,7 @@ export class OutboxDispatcher {
     row: DispatchRow,
     result: Awaited<ReturnType<OutboxDeliveryPort["deliver"]>>,
     now: number,
+    deliveredAt: number,
   ): DispatchOutcome {
     this.database.exec("BEGIN IMMEDIATE");
     try {
@@ -195,6 +197,15 @@ export class OutboxDispatcher {
           .run(row.id, instance.ownerId, instance.fence);
         if (superseded.changes !== 1) throw new StaleFenceError("Outbox completion is stale");
         state = "superseded";
+      }
+      if (state === "sent") {
+        this.database.prepare("UPDATE collaboration_outbox SET sent_at=?,delivery_sequence=(SELECT COALESCE(MAX(delivery_sequence),0)+1 FROM collaboration_outbox) WHERE id=?")
+          .run(deliveredAt, row.id);
+      }
+      if (state === "sent" && row.kind === "association_choice_card" && row.aggregate_type === "association") {
+        // Save exactly the payload handed to transport, never a subsequently reordered candidate list.
+        this.database.prepare("INSERT INTO collaboration_sent_association_choices (outbox_id,external_event_id,payload_json,sent_at) VALUES (?,?,?,?)")
+          .run(row.id, row.aggregate_id, row.payload_json, deliveredAt);
       }
       this.database.exec("COMMIT");
       return { id: row.id, state, attempt: row.attempt };

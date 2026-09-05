@@ -1288,7 +1288,7 @@ export class CollaborationHeadlessRuntime {
             state: error instanceof CommandCleanupError ? "unsettled" : "failed", lease: this.lease,
             maxAttempts: this.options.execution!.limits.maxAttempts, now: this.clock.now() })) return;
         } catch { /* A stale scheduler must not publish a new completion claim. */ return; }
-        this.enqueueExecutionFailure(workItemId, ready.plan_revision);
+        this.enqueueExecutionFailure(workItemId, ready.plan_revision, attempt);
       })
       .finally(() => {
         this.scheduledWorkItems.delete(workItemId);
@@ -1443,10 +1443,21 @@ export class CollaborationHeadlessRuntime {
     }
   }
 
-  private enqueueExecutionFailure(workItemId: string, planRevision: number): void {
-    if (!this.database) return;
+  private enqueueExecutionFailure(workItemId: string, planRevision: number, attempt: number): void {
+    if (!this.database || !this.lease) return;
     this.database.exec("BEGIN IMMEDIATE");
     try {
+      assertCurrentInstanceLease(this.database, this.lease, this.clock.now());
+      // A late failure belongs to its original attempt, not to a cancelled task or a new plan.
+      const current = this.database.prepare(
+        "SELECT 1 FROM collaboration_work_items w JOIN collaboration_plan_revisions p ON p.work_item_id=w.id AND p.revision=w.current_plan_revision " +
+        "JOIN collaboration_work_item_snapshots s ON s.work_item_id=w.id AND s.revision=p.snapshot_revision " +
+        "WHERE w.id=? AND w.current_plan_revision=? AND w.status NOT IN ('accepted','cancelled') " +
+        currentExecutionSpecSql +
+        "AND ?=(SELECT MAX(d.attempt) FROM collaboration_execution_dispatches d WHERE d.work_item_id=w.id) " +
+        "AND NOT EXISTS (SELECT 1 FROM collaboration_outbox o WHERE o.source='dingtalk' AND o.source_event_id=?)",
+      ).get(workItemId, planRevision, attempt, `execution:${workItemId}:plan:${planRevision}:failed`);
+      if (!current) { this.database.exec("COMMIT"); return; }
       enqueueInboundCard(this.database, {
         sourceEventId: `execution:${workItemId}:plan:${planRevision}:failed`,
         aggregateType: "plan",

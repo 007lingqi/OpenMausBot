@@ -228,6 +228,7 @@ export class InboundMessageProcessor {
         input.association.workItemIds,
         input.association.candidateWorkItems,
       );
+      if (this.naturalAssociation) card.allowOrdinalSelection = true;
     } else {
       state = "invalid_reference";
       card = renderInvalidReferenceCard(input.association.reference);

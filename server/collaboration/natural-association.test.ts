@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { startCollaborationService } from "./service.ts";
 import { policy, validProposal } from "./planner.test-fixtures.ts";
 import { NaturalAssociationCoordinator, type NaturalAssociationRequest } from "./natural-association.ts";
+import { OutboxDispatcher } from "./outbox-dispatcher.ts";
+import { InstanceLeaseCoordinator } from "./leases.ts";
 const paths: string[] = [];
 afterEach(() => { for (const path of paths.splice(0)) rmSync(path, { force: true, recursive: true }); });
 function message(id: string, text: string) { return { sourceEventId: id, transportMessageId: id, conversationId: "group", addressedToBot: true,
@@ -21,6 +23,110 @@ function setup(associate: (request: NaturalAssociationRequest) => Promise<unknow
     db: new DatabaseSync(join(directory, "collaboration", "collaboration.sqlite")) };
 }
 describe("natural group association before requirement interpretation", () => {
+  it.each(["unsent", "other_person", "other_group", "expired", "multiple", "closed", "out_of_range", "intervening_question"] as const)("does not apply an ungrounded ordinal: %s", async (mode) => {
+    const h = setup(async request => ({ version: 1, sourceEventId: request.sourceEventId, decision: "clarify", workItemId: null, quote: request.text, confidence: "uncertain" }));
+    try {
+      h.service.ingestDingTalkMessage(message("first", "登录失败提示不准确"));
+      h.service.ingestDingTalkMessage(message("second", "新任务：导出日期不准确"));
+      const original = h.service.ingestDingTalkMessage(message("which", "错误时也要显示处理建议"));
+      await h.service.processNaturalIntake();
+      if (mode === "multiple") {
+        h.service.ingestDingTalkMessage(message("which-again", "还需要核对日期"));
+        await h.service.processNaturalIntake();
+      }
+      if (mode !== "unsent") {
+        const lease = new InstanceLeaseCoordinator(h.db, "fixture").acquire(Date.now(), 120000)!;
+        const dispatcher = new OutboxDispatcher(h.db, { async deliver() { return { outcome: "sent" as const }; } },
+          { maxAttempts: 3, claimTtlMs: 10000, baseBackoffMs: 100, maxBackoffMs: 1000 });
+        for (let i=0;i<20;i++) if (!await dispatcher.dispatchOne(lease, Date.now())) break;
+      }
+      if (mode === "closed" && original.card.type === "association_choice_card") h.db.prepare("UPDATE collaboration_work_items SET status='cancelled' WHERE id=?").run(original.card.candidateWorkItems[1].id);
+      if (mode === "intervening_question" && original.card.type === "association_choice_card") {
+        await new Promise(resolve => setTimeout(resolve, 5));
+        const { enqueueInboundCard } = await import("./outbox.ts");
+        enqueueInboundCard(h.db, { sourceEventId: "new-question", aggregateType: "work_item", aggregateId: original.card.candidateWorkItems[0].id,
+          aggregateVersion: 1, now: Date.now(), card: { type: "clarification_card", headline: "需要澄清", workItemId: original.card.candidateWorkItems[0].id,
+            snapshotRevision: 1, questions: [{ id: "other", title: "另一个选择", question: "先处理登录还是导出？", recommendedAnswer: "请说明" }] } });
+        const lease = new InstanceLeaseCoordinator(h.db, "fixture").acquire(Date.now(), 120000)!;
+        const dispatcher = new OutboxDispatcher(h.db, { async deliver() { return { outcome: "sent" as const }; } },
+          { maxAttempts: 3, claimTtlMs: 10000, baseBackoffMs: 100, maxBackoffMs: 1000 });
+        await dispatcher.dispatchOne(lease, Date.now());
+      }
+      const selection = message("choice", mode === "out_of_range" ? "第三个" : "第二个");
+      if (mode === "other_person") selection.sender = { ...selection.sender, senderStaffId: "other", senderId: "other" };
+      if (mode === "other_group") {
+        selection.conversationId = "other-group";
+        h.service.ingestDingTalkMessage({ ...message("foreign", "另一个群的任务"), conversationId: "other-group" });
+      }
+      if (mode === "expired") selection.receivedAt += 31 * 60_000;
+      h.service.ingestDingTalkMessage(selection);
+      for (let i=0;i<4;i++) await h.service.processNaturalIntake();
+      for (const source of ["which", "choice"]) expect(h.db.prepare("SELECT work_item_id FROM collaboration_external_events WHERE source_event_id=?").get(source)).toEqual({ work_item_id: null });
+    } finally { h.service.close(); h.db.close(); }
+  });
+  it("resolves the actually delivered second choice and the original message after restart without model guessing", async () => {
+    let calls = 0;
+    const h = setup(async request => { calls++; return { version: 1, sourceEventId: request.sourceEventId, decision: "clarify", workItemId: null,
+      quote: request.text, confidence: "uncertain" }; });
+    const first = h.service.ingestDingTalkMessage(message("first", "登录失败提示不准确"));
+    const second = h.service.ingestDingTalkMessage(message("second", "新任务：导出日期不准确"));
+    // Finish earlier requirement questions before asking the attribution question.
+    // Otherwise "second" is genuinely ambiguous, as covered by intervening_question.
+    for (let i=0;i<4;i++) await h.service.processNaturalIntake();
+    const original = h.service.ingestDingTalkMessage(message("which", "错误时也要显示处理建议"));
+    await h.service.processNaturalIntake();
+    const card = original.card;
+    if (card.type !== "association_choice_card") throw new Error("expected choices");
+    const chosen = card.candidateWorkItems[1].id;
+    expect([first.workItemId, second.workItemId]).toContain(chosen);
+    const lease = new InstanceLeaseCoordinator(h.db, "fixture").acquire(Date.now(), 120000)!;
+    const dispatcher = new OutboxDispatcher(h.db, { async deliver() { return { outcome: "sent" as const }; } },
+      { maxAttempts: 3, claimTtlMs: 10000, baseBackoffMs: 100, maxBackoffMs: 1000 });
+    for (let i=0;i<20;i++) if (!await dispatcher.dispatchOne(lease, Date.now())) break;
+    expect(h.db.prepare("SELECT id FROM collaboration_outbox WHERE sent_at IS NOT NULL AND kind IN ('association_choice_card','clarification_card') ORDER BY delivery_sequence DESC LIMIT 1").get()).toEqual({ id: original.outboxId });
+    // Recency and ordering change after the actual question was sent.
+    h.db.prepare("UPDATE collaboration_work_items SET updated_at=? WHERE id=?").run(Date.now()+1000, chosen);
+    h.service.close();
+    const restarted = startCollaborationService(h.options);
+    try {
+      const selection = message("choice", "第二个");
+      restarted.ingestDingTalkMessage(selection);
+      const callsBeforeChoice = calls;
+      for (let i=0;i<5;i++) await restarted.processNaturalIntake();
+      expect(calls).toBe(callsBeforeChoice);
+      for (const source of ["which", "choice"]) expect(h.db.prepare("SELECT work_item_id FROM collaboration_external_events WHERE source_event_id=?").get(source))
+        .toEqual({ work_item_id: chosen });
+      expect(h.db.prepare("SELECT count(*) n FROM collaboration_work_item_events e JOIN collaboration_external_events x ON x.id=e.external_event_id WHERE x.source_event_id='which'").get()).toEqual({ n: 1 });
+      expect(h.db.prepare("SELECT status FROM collaboration_natural_association_jobs j JOIN collaboration_external_events e ON e.id=j.event_id WHERE e.source_event_id='which'").get()).toEqual({ status: "projected" });
+      expect(h.db.prepare("SELECT source_event_id FROM collaboration_natural_intake_jobs WHERE source_event_id IN ('which','choice') ORDER BY source_event_id").all())
+        .toEqual([{ source_event_id: "choice" }, { source_event_id: "which" }]);
+      expect(() => h.db.prepare("UPDATE collaboration_sent_association_choices SET payload_json='{}'").run()).toThrow("immutable");
+      const before = h.db.prepare("SELECT version FROM collaboration_work_items WHERE id=?").get(chosen);
+      restarted.ingestDingTalkMessage(selection);
+      await restarted.processNaturalIntake();
+      expect(h.db.prepare("SELECT version FROM collaboration_work_items WHERE id=?").get(chosen)).toEqual(before);
+    } finally { restarted.close(); h.db.close(); }
+  });
+  it("does not use a prompt whose delivery was confirmed only after the selection arrived", async () => {
+    const h = setup(async request => ({ version: 1, sourceEventId: request.sourceEventId, decision: "clarify", workItemId: null, quote: request.text, confidence: "uncertain" }));
+    try {
+      h.service.ingestDingTalkMessage(message("first", "登录失败提示"));
+      h.service.ingestDingTalkMessage(message("second", "新任务：导出失败"));
+      h.service.ingestDingTalkMessage(message("which", "需要说明处理方式"));
+      await h.service.processNaturalIntake();
+      const lease = new InstanceLeaseCoordinator(h.db, "fixture").acquire(Date.now(), 120000)!;
+      const dispatcher = new OutboxDispatcher(h.db, { async deliver(input) {
+        if (input.kind === "association_choice_card") {
+          h.service.ingestDingTalkMessage(message("early-choice", "第二个"));
+          await new Promise(resolve => setTimeout(resolve, 30));
+        }
+        return { outcome: "sent" as const };
+      } }, { maxAttempts: 3, claimTtlMs: 10000, baseBackoffMs: 100, maxBackoffMs: 1000 });
+      for (let i=0;i<20;i++) if (!await dispatcher.dispatchOne(lease, Date.now())) break;
+      for (let i=0;i<4;i++) await h.service.processNaturalIntake();
+      expect(h.db.prepare("SELECT work_item_id FROM collaboration_external_events WHERE source_event_id='early-choice'").get()).toEqual({ work_item_id: null });
+    } finally { h.service.close(); h.db.close(); }
+  });
   it("bounds projection failures across restarts and durably reports the interruption once", async () => {
     const associate = async (request: NaturalAssociationRequest) => ({ version: 1, sourceEventId: request.sourceEventId,
       decision: "associate", workItemId: request.candidates[0].id, quote: request.text, confidence: "high" });

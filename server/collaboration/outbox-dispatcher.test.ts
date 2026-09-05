@@ -41,6 +41,17 @@ function enqueue(db: DatabaseSync, version: number, now: number): string {
 }
 
 describe("fenced outbox dispatcher", () => {
+  it("does not record a displayed choice when delivery was rejected", async () => {
+    const db = database();
+    enqueueInboundCard(db, { sourceEventId: "failed-choice", aggregateType: "association", aggregateId: "unrelated", aggregateVersion: 1,
+      card: { type: "association_choice_card", headline: "请选择问题归属", acknowledgement: "", candidateWorkItemIds: [], candidateWorkItems: [] }, now: 1000 });
+    const lease = new InstanceLeaseCoordinator(db, "scheduler").acquire(1000, 1000)!;
+    const dispatcher = new OutboxDispatcher(db, { async deliver() { return { outcome: "permanent_failure", error: "business_rejected" }; } },
+      { maxAttempts: 3, claimTtlMs: 100, baseBackoffMs: 10, maxBackoffMs: 100 });
+    expect(await dispatcher.dispatchOne(lease, 1001)).toMatchObject({ state: "dead_letter" });
+    expect(db.prepare("SELECT count(*) AS count FROM collaboration_sent_association_choices").get()).toEqual({ count: 0 });
+    db.close();
+  });
   it("suppresses obsolete aggregate versions and delivers only the newest", async () => {
     const db = database();
     const oldId = enqueue(db, 1, 1_000);

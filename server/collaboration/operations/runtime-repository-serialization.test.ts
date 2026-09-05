@@ -269,6 +269,33 @@ async function stopHarness(harness: RuntimeHarness): Promise<void> {
 }
 
 describe("runtime repository single-writer scheduling", () => {
+  it.each(["cancel", "new_plan"] as const)("does not publish an old preparation failure after %s", async (change) => {
+    const root = temporaryDirectory();
+    const repo = createRepository(root, `late-failure-${change}`);
+    const h = createHarness([repo]);
+    let fail: ((error: Error) => void) | undefined;
+    const prepare = vi.spyOn(WorktreeManager.prototype, "prepare").mockImplementationOnce(() => new Promise((_, reject) => { fail = reject; }));
+    const service = startCollaborationService({ dataDirectory: h.options.dataDirectory,
+      planning: { planner: h.options.planner!, policy: h.options.planningPolicy! } });
+    const db = new DatabaseSync(h.databaseFile);
+    await h.runtime.start();
+    try {
+      await waitFor(() => Boolean(fail), "preparation did not start");
+      if (change === "cancel") {
+        service.bootstrapOwnerLocally({ senderCorpId: "corp", senderStaffId: "staff", now: Date.now() });
+        expect(service.performDirectOwnerAction({ sourceEventId: "cancel-pending", action: "cancel", workItemId: h.items[0].workItemId,
+          sender: inbound({ sourceEventId: "sender", conversationId: "group", text: "" }).sender, now: Date.now() }).allowed).toBe(true);
+      } else {
+        service.reviseWorkItemDefinition(h.items[0].workItemId, { goal: "按更新后的需求修改", goalConfirmed: true,
+          repository: repo.path, acceptanceConditions: [{ description: "新需求完成", observation: "pnpm test target" }], blockingAmbiguities: [] }, Date.now());
+        expect(db.prepare("SELECT current_plan_revision FROM collaboration_work_items WHERE id=?").get(h.items[0].workItemId)).toEqual({ current_plan_revision: 2 });
+      }
+      fail!(new Error("late preparation failure"));
+      await expectNotStarted(h.agent, h.items[0].workItemId);
+      expect(db.prepare("SELECT count(*) AS count FROM collaboration_outbox WHERE source_event_id=?").get(`execution:${h.items[0].workItemId}:plan:1:failed`)).toEqual({ count: 0 });
+      expect(db.prepare("SELECT count(*) AS count FROM collaboration_execution_preparation_results").get()).toEqual({ count: 0 });
+    } finally { fail?.(new Error("fixture cleanup")); prepare.mockRestore(); service.close(); db.close(); await stopHarness(h); }
+  });
   it("refuses Owner retry when preparation process cleanup could not be confirmed", async () => {
     const root = temporaryDirectory();
     const h = createHarness([createRepository(root, "unsettled-preparation")]);
@@ -348,12 +375,12 @@ describe("runtime repository single-writer scheduling", () => {
     const h = createHarness([createRepository(root, "schema-15-preparation")]);
     const db = new DatabaseSync(h.databaseFile);
     // Reconstruct the exact v15 delta in this disposable fixture only.
-    db.exec("DROP TABLE collaboration_execution_preparation_results; DELETE FROM collaboration_schema_migrations WHERE version=16; PRAGMA user_version=15");
+    db.exec("DROP INDEX collaboration_outbox_delivery_sequence; ALTER TABLE collaboration_outbox DROP COLUMN delivery_sequence; DROP TABLE collaboration_sent_association_choices; DROP TABLE collaboration_execution_preparation_results; DELETE FROM collaboration_schema_migrations WHERE version>=16; PRAGMA user_version=15");
     db.prepare("INSERT INTO collaboration_execution_dispatches (work_item_id,plan_revision,attempt,instance_owner,instance_fence,created_at) VALUES (?,1,1,'dead-instance',1,1)").run(h.items[0].workItemId);
     const original = db.prepare("SELECT * FROM collaboration_execution_dispatches").get();
     await h.runtime.start();
     try {
-      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 16 });
+      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 17 });
       expect(db.prepare("SELECT * FROM collaboration_execution_dispatches").get()).toEqual(original);
       expect(db.prepare("SELECT state FROM collaboration_execution_preparation_results").get()).toEqual({ state: "interrupted" });
     } finally { db.close(); await stopHarness(h); }

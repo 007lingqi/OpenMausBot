@@ -175,6 +175,7 @@ describe("DingTalk session sender", () => {
     await sender.send("https://api.dingtalk.com/session-webhook", {
       type: "association_choice_card",
       headline: "请选择问题归属",
+      allowOrdinalSelection: true,
       acknowledgement: "internal acknowledgement",
       candidateWorkItemIds: ["WI-SECRET-1", "WI-SECRET-2"],
       candidateWorkItems: [
@@ -186,6 +187,9 @@ describe("DingTalk session sender", () => {
     expect(markdown).toContain("登录失败时给出清晰提示");
     expect(markdown).toContain("支付页按钮样式调整");
     expect(markdown).toContain("这是新问题");
+    expect(markdown).toContain("第二个");
+    expect(markdown).toContain("不用重复刚才的内容");
+    expect(markdown).not.toContain("补充：具体内容");
     expect(markdown).not.toContain("WI\\-SECRET");
     expect(markdown).not.toContain("internal acknowledgement");
   });

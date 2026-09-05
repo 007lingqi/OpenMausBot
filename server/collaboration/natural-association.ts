@@ -7,6 +7,7 @@ import { redactSensitiveText } from "./sensitive-text.ts";
 import { assertLedgerArmed } from "./restore-guard.ts";
 import { enqueueInboundCard } from "./outbox.ts";
 import { renderPrimaryStatusCard, renderClarificationCard } from "./message-renderer.ts";
+import { routeDisplayedChoice } from "./displayed-choice.ts";
 
 export interface NaturalAssociationRequest {
   sourceEventId: string;
@@ -36,7 +37,7 @@ export function interpretNaturalAssociation(model: NaturalIntakeModelPort, reque
   ].join("\n") });
 }
 
-interface EventRow { id: string; source_event_id: string; conversation_id: string; principal_id: string; normalized_json: string; work_item_id: string | null }
+interface EventRow { id: string; source_event_id: string; conversation_id: string; principal_id: string; normalized_json: string; work_item_id: string | null; received_at: number }
 interface Job extends EventRow { attempts: number; status: string }
 export class NaturalAssociationCoordinator {
   private readonly db: DatabaseSync;
@@ -68,6 +69,11 @@ export class NaturalAssociationCoordinator {
     const controller = new AbortController(); this.controllers.add(controller);
     const timer = setTimeout(() => controller.abort(), 90_000);
     try {
+      const choice = routeDisplayedChoice(this.db, job, token, now);
+      if (choice) {
+        if (choice === "clarify") this.db.prepare("UPDATE collaboration_natural_association_jobs SET status='clarify',claim_token=NULL,lease_until=NULL WHERE event_id=? AND claim_token=?").run(job.id, token);
+        return; // Both the original contribution and its selection have durable projection jobs.
+      }
       const rows = this.db.prepare("SELECT id,title,version FROM collaboration_work_items WHERE conversation_id=? AND status NOT IN ('cancelled','accepted') ORDER BY updated_at DESC,id LIMIT 21")
         .all(job.conversation_id) as unknown as Array<{ id: string; title: string; version: number }>;
       const history = this.db.prepare("SELECT * FROM collaboration_external_events WHERE conversation_id=? ORDER BY received_at DESC,rowid DESC LIMIT 13")
