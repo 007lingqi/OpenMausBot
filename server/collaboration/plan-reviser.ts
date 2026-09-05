@@ -196,9 +196,16 @@ export class PlanningCoordinator {
         this.database.exec("COMMIT");
         return null;
       }
+      if (projection?.natural && this.database.prepare("SELECT 1 FROM collaboration_natural_intake_jobs WHERE work_item_id=? AND source_event_id<>? AND status IN ('pending','running','failed')")
+        .get(workItemId, projection.natural.sourceEventId)) {
+        const ambiguities = patch.blockingAmbiguities ?? readLatestWorkItemSnapshot(this.database, workItemId)?.blockingAmbiguities ?? [];
+        patch = { ...patch, blockingAmbiguities: [...ambiguities.filter(q => typeof q === "string" || q.id !== "natural-input-pending"), {
+          id: "natural-input-pending", question: "还有前面的补充需要整理，我会一起核对后再开始修改。", dependsOn: [],
+          recommendedAnswer: "不需要重复发送；整理遇到问题时会说明。",
+        }] };
+      }
       snapshots = appendWorkItemSnapshot(this.database, workItemId, patch, now);
       if (projection?.enqueueNaturalEvent) {
-        this.database.prepare("UPDATE collaboration_natural_intake_jobs SET status='superseded' WHERE work_item_id=? AND status='pending'").run(workItemId);
         this.database.prepare("INSERT INTO collaboration_natural_intake_jobs (source_event_id,work_item_id,status,base_revision,created_at) " +
           "VALUES (?,?,'pending',?,?)").run(projection.enqueueNaturalEvent, workItemId, snapshots.current.revision, now);
       }

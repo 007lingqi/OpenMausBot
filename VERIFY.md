@@ -1,5 +1,12 @@
 # Meta 协作验证记录
 
+## 2026-09-06 长会话增量上下文与逐条队列（最新）
+
+- 先行 `pnpm vitest run server/collaboration/natural-intake.test.ts`：4752 exit 1，2 失败 / 16 通过，分别证明超过 12 条永久 contextTruncated 和当前消息末尾要求截断。首修后 30981 exit 0，18 项及类型检查通过。
+- 突发逐条队列测试 39744 exit 1：上一条任务被 supersede 且未保留 pending 门禁。修复后 natural-intake/natural-association/attachment-completeness 三文件 59 项及 typecheck 通过（59177 exit 0）。早期输入失败、后续成功时缺通知的测试 12633 exit 1，按同事项失败收据修复后纳入最终整组。
+- 最终命令：`pnpm vitest run server/collaboration server/integrations/dingtalk server/collaboration-headless.test.ts --exclude server/collaboration/operations/natural-intake-model.test.ts && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-natural-context-typecheck && git diff --check`。13822 exit 0，70 文件 / 616 项，Vitest 68.62 秒。当前业务源码的相关测试、类型、服务端编译和 diff 检查全部实际通过；无运行中句柄。
+- 未运行完整 pnpm test；端口依赖模型测试仍因已有执行权限阻碍排除。没有真实模型语义评分、钉钉收发、Docker 解析或六类真实试点证明。旧版无覆盖收据/已替代历史的补偿、需求解释停止恢复、机器人出站引用仍未完成。
+
 ## 2026-09-06 Owner 附件整理恢复（最新）
 
 - 接续 Stream 三条短句 TDD 为 3 失败 / 14 通过；初轮集成新增 1 失败 / 58 通过，系夹具使用错误审计表名，修正后 59 项/typecheck 通过（31383 exit 0）。

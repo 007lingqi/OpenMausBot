@@ -9,6 +9,7 @@ import { readLatestWorkItemSnapshot } from "./snapshot.ts";
 import { clarificationRecipient } from "./clarification-recipients.ts";
 import { renderDingTalkSessionMessage } from "../integrations/dingtalk/session-message.ts";
 import { ModelNaturalIntakeInterpreter, validateNaturalIntakeProposal, type NaturalIntakeRequest, type NaturalIntakeInterpreter } from "./natural-intake.ts";
+import { readNaturalIntakeContext } from "./natural-intake-context.ts";
 
 const scratch: string[] = [];
 afterEach(() => { for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true }); });
@@ -31,6 +32,113 @@ function harness(interpreter: NaturalIntakeInterpreter) {
 }
 
 describe("durable source-bound natural requirement intake", () => {
+  it("keeps a bounded incremental context after more than twelve interpreted messages and restart", async () => {
+    const requests: NaturalIntakeRequest[] = [];
+    const h = harness({ async interpret(request) {
+      requests.push(request);
+      return { ...proposal(request), acceptance: [{ description: request.event.text, observation: request.event.text, quote: request.event.text }] };
+    } });
+    try {
+      const first = h.service.ingestDingTalkMessage(message("increment-0", "登录失败需提示原因"));
+      await h.service.processNaturalIntake();
+      for (let i = 1; i < 14; i++) {
+        h.service.ingestDingTalkMessage({ ...message(`increment-${i}`, `验收场景 ${i} 仍需保留`, "increment-0"),
+          sender: { senderCorpId: "corp", senderStaffId: `person-${i % 3}`, senderId: `person-${i % 3}`, displayName: "同事" } });
+        await h.service.processNaturalIntake();
+      }
+      h.service.close();
+      const resumed = startCollaborationService(h.options);
+      try {
+        resumed.ingestDingTalkMessage(message("increment-final", "补充最后一项要求", "increment-0"));
+        await resumed.processNaturalIntake();
+        expect(requests).toHaveLength(15);
+        expect(requests.every(request => !request.contextTruncated && request.history.length <= 12)).toBe(true);
+        expect(requests.at(-1)!.history.some(row => row.sourceEventId === "increment-0")).toBe(true);
+        expect(readLatestWorkItemSnapshot(h.db, first.workItemId!)!.acceptanceConditions).toHaveLength(15);
+        expect(readLatestWorkItemSnapshot(h.db, first.workItemId!)!.blockingAmbiguities.map(q => q.id)).not.toContain("natural-context-incomplete");
+        // A receipt for different content cannot justify omitting that source from the next context.
+        h.db.prepare("UPDATE collaboration_external_events SET normalized_json=? WHERE source_event_id='increment-3'").run(JSON.stringify({ text: "改写的历史必须重新核对" }));
+        const context = readNaturalIntakeContext(h.db, readLatestWorkItemSnapshot(h.db, first.workItemId!)!, "increment-final");
+        expect(context.history.some(row => row.sourceEventId === "increment-3" && row.text === "改写的历史必须重新核对")).toBe(true);
+      } finally { resumed.close(); }
+    } finally { h.service.close(); h.db.close(); }
+  });
+
+  it("reads the complete current message beyond 2000 characters without losing its final requirement", async () => {
+    let seen!: NaturalIntakeRequest;
+    const h = harness({ async interpret(request) { seen = request; return { ...proposal(request),
+      acceptance: [{ description: "保留末尾要求", observation: "末尾要求进入验收", quote: "不得重复扣款" }] }; } });
+    try {
+      const first = h.service.ingestDingTalkMessage(message("long-current", `${"业务背景。".repeat(500)}不得重复扣款`));
+      await h.service.processNaturalIntake();
+      expect(seen.event.text).toContain("不得重复扣款");
+      expect(seen.contextTruncated).toBe(false);
+      expect(readLatestWorkItemSnapshot(h.db, first.workItemId!)!.acceptanceConditions).toContainEqual({ description: "保留末尾要求", observation: "末尾要求进入验收" });
+    } finally { h.service.close(); h.db.close(); }
+  });
+
+  it("drains burst messages in order, preserving all requirements and blocking planning until the last input", async () => {
+    let seen!: NaturalIntakeRequest;
+    const order: string[] = [];
+    const h = harness({ async interpret(request) { seen = request; order.push(request.event.sourceEventId); return { ...proposal(request),
+      acceptance: [{ description: request.event.text, observation: request.event.text, quote: request.event.text }] }; } });
+    try {
+      const now = Date.now();
+      const first = h.service.ingestDingTalkMessage({ ...message("burst-0", "第一条要求不能被丢弃"), receivedAt: now });
+      for (let i = 1; i < 15; i++) h.service.ingestDingTalkMessage({ ...message(`burst-${i}`, `补充 ${i}`, "burst-0"), receivedAt: now });
+      await h.service.processNaturalIntake();
+      expect(seen.contextTruncated).toBe(true);
+      expect(readLatestWorkItemSnapshot(h.db, first.workItemId!)!.blockingAmbiguities.map(q => q.id)).toContain("natural-context-incomplete");
+      for (let i = 1; i < 15; i++) {
+        expect(readLatestWorkItemSnapshot(h.db, first.workItemId!)!.blockingAmbiguities.map(q => q.id)).toContain("natural-input-pending");
+        await h.service.processNaturalIntake();
+      }
+      expect(seen.contextTruncated).toBe(false);
+      expect(readLatestWorkItemSnapshot(h.db, first.workItemId!)!.acceptanceConditions).toHaveLength(15);
+      expect(readLatestWorkItemSnapshot(h.db, first.workItemId!)!.blockingAmbiguities.map(q => q.id)).not.toContain("natural-input-pending");
+      expect(readLatestWorkItemSnapshot(h.db, first.workItemId!)!.blockingAmbiguities.map(q => q.id)).not.toContain("natural-context-incomplete");
+      expect(h.db.prepare("SELECT count(*) n FROM collaboration_natural_intake_jobs WHERE status='applied'").get()).toEqual({ n: 15 });
+      expect(order).toEqual(Array.from({ length: 15 }, (_, i) => `burst-${i}`));
+    } finally { h.service.close(); h.db.close(); }
+  });
+  it("reports a failed earlier contribution even after a later message was interpreted", async () => {
+    const h = harness({ async interpret(request) {
+      if (request.event.sourceEventId === "failed-earlier") throw new Error("synthetic failure");
+      return proposal(request);
+    } });
+    try {
+      const first = h.service.ingestDingTalkMessage(message("failed-earlier", "这条不能静默丢弃"));
+      h.service.ingestDingTalkMessage(message("later-ok", "补充另一条", "failed-earlier"));
+      for (let i = 0; i < 5; i++) await h.service.processNaturalIntake();
+      expect(h.db.prepare("SELECT status,attempts FROM collaboration_natural_intake_jobs WHERE source_event_id='failed-earlier'").get()).toEqual({ status: "failed", attempts: 3 });
+      expect(readLatestWorkItemSnapshot(h.db, first.workItemId!)!.blockingAmbiguities.map(q => q.id)).toContain("natural-input-pending");
+      expect(h.service.pendingOutbox().filter(row => row.sourceEventId === "natural-intake-failed:failed-earlier")).toHaveLength(1);
+    } finally { h.service.close(); h.db.close(); }
+  });
+  it("serializes interpretation within an item and resumes its remaining queue after restart", async () => {
+    let release!: () => void;
+    const calls: string[] = [];
+    const h = harness({ async interpret(request) {
+      calls.push(request.event.sourceEventId);
+      if (calls.length === 1) await new Promise<void>(resolve => { release = resolve; });
+      return proposal(request);
+    } });
+    try {
+      h.service.ingestDingTalkMessage(message("queued-first", "先处理这条"));
+      h.service.ingestDingTalkMessage(message("queued-next", "还有这条", "queued-first"));
+      const pending = h.service.processNaturalIntake();
+      await h.service.processNaturalIntake();
+      expect(calls).toEqual(["queued-first"]);
+      release(); await pending;
+      h.service.close();
+      const restarted = startCollaborationService(h.options);
+      try {
+        await restarted.processNaturalIntake();
+        expect(calls).toEqual(["queued-first", "queued-next"]);
+        expect(h.db.prepare("SELECT count(*) n FROM collaboration_natural_intake_jobs WHERE status='applied'").get()).toEqual({ n: 2 });
+      } finally { restarted.close(); }
+    } finally { h.service.close(); h.db.close(); }
+  });
   it("does not resolve cross-task or ambiguous staff identities into notification targets", () => {
     const h = harness({ async interpret(request) { return proposal(request); } });
     try {
@@ -258,7 +366,7 @@ describe("durable source-bound natural requirement intake", () => {
       release({ ...proposal(request), goal: { text: "修复登录", confirmed: true, quote: "修复登录" } });
       await pending;
       expect(readLatestWorkItemSnapshot(h.db, first.workItemId!)?.goalConfirmed).toBe(false);
-      expect(h.db.prepare("SELECT status FROM collaboration_natural_intake_jobs WHERE source_event_id = 'first'").get()).toEqual({ status: "superseded" });
+      expect(h.db.prepare("SELECT status FROM collaboration_natural_intake_jobs WHERE source_event_id = 'first'").get()).toEqual({ status: "pending" });
     } finally { h.service.close(); h.db.close(); }
   });
 
