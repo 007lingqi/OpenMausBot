@@ -20,6 +20,7 @@ import { assertLedgerArmed } from "./restore-guard.ts";
 import { assertionCoverage, readAssertionReport, type CoverageCommand, type CoverageItem } from "./acceptance-assertions.ts";
 import { AcceptanceMappingCoordinator, readApprovedAcceptanceMapping, type AcceptanceMappingModels } from "./acceptance-mapping.ts";
 import { collectAcceptanceMappingRequest } from "./acceptance-source.ts";
+import { verificationRuntimePolicyAllows, verificationRuntimePolicyHash } from "./verification-runtime-policy.ts";
 
 const VERIFIER_AGENT_ID = "deterministic-verifier-v1";
 const META_AGENT_ID = "meta-acceptance-gate-v1";
@@ -296,6 +297,9 @@ function latestPassedReviewPair(
   const specIdentityHash = hash(verificationSpec(row));
   if (reviewVerdict(verifier)?.specIdentityHash !== specIdentityHash ||
     reviewVerdict(meta)?.specIdentityHash !== specIdentityHash) return null;
+  const runtimePolicyHash = reviewVerdict(verifier)?.runtimePolicyHash;
+  if (reviewVerdict(meta)?.runtimePolicyHash !== runtimePolicyHash ||
+    !verificationRuntimePolicyAllows(database, row.repository_path, runtimePolicyHash)) return null;
   const conditions = acceptance(row.acceptance_json);
   const commands = reviewVerdict(verifier)?.commands;
   const savedCoverage = reviewVerdict(meta)?.coverage;
@@ -504,6 +508,8 @@ export class CandidateVerificationCoordinator {
     let evidence: TestEvidence[] = [];
     let reasons: string[] = [];
     let commands = this.options.commands;
+    const runtimePolicyHash = verificationRuntimePolicyHash(commands, this.options.acceptanceMapping?.policyId);
+    if (!verificationRuntimePolicyAllows(this.database, row.repository_path, runtimePolicyHash)) reasons.push("verification_runtime_policy_changed");
     let mapping: { requestHash: string; policyId: string } | undefined;
     if (before.head !== row.result_sha || before.status) reasons.push("candidate_worktree_not_clean");
     if (!reasons.length && this.options.acceptanceMapping && commandIds.some(id => !commands[id]?.assertionContract)) {
@@ -583,6 +589,7 @@ export class CandidateVerificationCoordinator {
           candidateRunId: input.candidateRunId,
           contractSchemaVersion: VERIFICATION_CONTRACT_SCHEMA_VERSION,
           specIdentityHash: hash(verificationSpec(row)),
+          runtimePolicyHash,
           reasons,
           commands: publicEvidence(evidence, commands),
           ...(mapping ? { mapping } : {}),
@@ -699,6 +706,7 @@ export class CandidateVerificationCoordinator {
           candidateRunId: row.candidate_run_id,
           contractSchemaVersion: VERIFICATION_CONTRACT_SCHEMA_VERSION,
           specIdentityHash: hash(verificationSpec(row)),
+          runtimePolicyHash: verificationRuntimePolicyHash(this.options.commands, this.options.acceptanceMapping?.policyId),
           reasons,
           verifierAttempt,
           coverage,

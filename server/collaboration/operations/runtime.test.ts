@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { assertionReviewFixture } from "../assertion-review.test-fixtures.ts";
+import { verificationRuntimePolicyHash } from "../verification-runtime-policy.ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -106,6 +107,16 @@ function seedRunningRun(dataDirectory: string, ownerId: string): { proof: Contai
 }
 
 describe("production-isomorphic collaboration runtime", () => {
+  it.each([false, true])("publishes an empty execution policy only outside probe mode (probe=%s)", async probeOnly => {
+    const dataDirectory = temporaryDirectory();
+    const runtime = new CollaborationHeadlessRuntime({ dataDirectory, platform: "linux", probeOnly });
+    await runtime.start();
+    const db = new DatabaseSync(join(dataDirectory, "collaboration", "collaboration.sqlite"));
+    try {
+      const rows = db.prepare("SELECT policies_json FROM collaboration_verification_runtime_policies").all();
+      expect(rows).toEqual(probeOnly ? [] : [{ policies_json: "{}" }]);
+    } finally { db.close(); await runtime.stop(); }
+  });
   it("stops the drain when maintenance returns after lease expiry", async () => {
     let now = 1000;
     const runtime = new CollaborationHeadlessRuntime({ dataDirectory: temporaryDirectory(), platform: "linux",
@@ -258,6 +269,8 @@ describe("production-isomorphic collaboration runtime", () => {
   });
 
   it("idempotently recovers an Owner decision card and accepts a high-risk candidate by plain command", async () => {
+    const targetCommands = { pilot: { argv: ["node", "--test", "pilot.test.mjs"] as const, timeoutMs: 1000, maxOutputBytes: 32000 } };
+    const runtimePolicyHash = verificationRuntimePolicyHash(targetCommands);
     const repository = temporaryDirectory();
     execFileSync("git", ["init", "-q", repository]);
     execFileSync("git", ["-C", repository, "config", "user.name", "Pilot Test"]);
@@ -329,12 +342,12 @@ describe("production-isomorphic collaboration runtime", () => {
       "INSERT INTO collaboration_candidate_reviews " +
         "(id,candidate_run_id,stage,attempt,status,agent_id,snapshot_revision,spec_hash,candidate_sha,verdict_json,created_at) " +
         "VALUES ('verifier-review-existing','run-existing','verifier',1,'passed','deterministic-verifier-v1',1,'spec-hash',?,?,2)",
-    ).run(resultSha, JSON.stringify(assertionReviewFixture(database, workItemId, "pilot").verifier));
+    ).run(resultSha, JSON.stringify(assertionReviewFixture(database, workItemId, "pilot", runtimePolicyHash).verifier));
     database.prepare(
       "INSERT INTO collaboration_candidate_reviews " +
         "(id,candidate_run_id,stage,attempt,status,agent_id,snapshot_revision,spec_hash,candidate_sha,verdict_json,created_at) " +
         "VALUES ('meta-review-existing','run-existing','meta',1,'passed','meta-acceptance-gate-v1',1,'spec-hash',?,?,2)",
-    ).run(resultSha, JSON.stringify(assertionReviewFixture(database, workItemId, "pilot").meta));
+    ).run(resultSha, JSON.stringify(assertionReviewFixture(database, workItemId, "pilot", runtimePolicyHash).meta));
     expect(enqueuePendingOwnerDecisionCards(database, "template-1", 1_000)).toBe(1);
     expect(enqueuePendingOwnerDecisionCards(database, "template-1", 2_000)).toBe(0);
     const row = database.prepare(
@@ -367,7 +380,15 @@ describe("production-isomorphic collaboration runtime", () => {
     ).get()).toEqual({ count: 1 });
     database.close();
 
-    const runtime = new CollaborationHeadlessRuntime({ dataDirectory, platform: "linux" });
+    const unexpectedExecution = vi.fn(async () => { throw new Error("approval_fixture_must_not_execute"); });
+    const runtime = new CollaborationHeadlessRuntime({ dataDirectory, platform: "linux",
+      agent: { run: unexpectedExecution, interrupt: unexpectedExecution },
+      commandRunner: { run: unexpectedExecution },
+      containment: { verifyProof: unexpectedExecution, inspect: unexpectedExecution, terminateAndWaitEmpty: unexpectedExecution },
+      execution: {
+      managedWorktreeRoot: join(dataDirectory, "worktrees"), repositories: { [repository]: { baseSha, targetCommands } },
+      limits: { maxAttempts: 1, agentTimeoutMs: 1000, maxAgentEventBytes: 32000, interruptGraceMs: 1000 },
+    } });
     await runtime.start();
     const refreshRequest = { transportEventId: "durable-refresh", transportMessageId: "durable-refresh", conversationId: "conversation",
       command: "refresh_approval" as const, workItemId, sender: message("owner-refresh").sender, receivedAt: 4500 };
@@ -420,6 +441,7 @@ describe("production-isomorphic collaboration runtime", () => {
     expect(JSON.parse(response.payload_json)).toMatchObject({ status: "owner_accepted" });
     expect(response.payload_json).not.toContain("actionToken");
     approvedDb.close();
+    expect(unexpectedExecution).not.toHaveBeenCalled();
     await runtime.stop();
   });
 
@@ -788,6 +810,9 @@ describe("production-isomorphic collaboration runtime", () => {
     expect(await runtime.drainOnce()).toEqual({ dispatched: null, maintained: false });
     expect(deliver).not.toHaveBeenCalled();
     expect(maintain).not.toHaveBeenCalled();
+    const reviewed = new DatabaseSync(join(dataDirectory, "collaboration", "collaboration.sqlite"));
+    expect(reviewed.prepare("SELECT count(*) AS n FROM collaboration_verification_runtime_policies").get()).toEqual({ n: 0 });
+    reviewed.close();
     await runtime.stop();
   });
 

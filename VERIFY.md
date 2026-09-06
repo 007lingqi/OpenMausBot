@@ -1,5 +1,18 @@
 # Meta 协作验证记录
 
+## 2026-09-06 运行配置批次完整回归终态
+
+- 10722/72b0ff exit0：pnpm vitest run server/env-path.test.ts，13通过7平台跳过。后台探测允许5000ms而断言默认等待更短是静态线索，但未取得失败时探测时序，不能确认为根因。没有改动PATH代码或测试，没有放宽断言。
+- 完整复测首次cell238权限审核超时未启动；cell239唯一重试成功启动88277。88277/a3ced9 exit0：`pnpm vitest run server/env-path.test.ts && pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-runtime-policy-typecheck && git diff --check`。包含主集、broker、桌面、普通打包无node_modules启动/9代理和headless健康/运行/SIGTERM；全部命令终态通过。输出截断不补造新测试总数。
+- 该完整通过证据替代本批33396失败后的未验证状态，但保留其PATH间歇失败记录。业务代码/测试在完整运行期间固定，所有句柄终态。未调用真实模型、改Docker/网络/凭据或发钉钉消息；OpenCodex gpt-6-astra/medium和完整产品验收范围不变。
+
+## 2026-09-06 运行配置快照验证
+
+- TDD32120/487868 exit1为4项预期失败；94985/c80849 exit1为62通过2失败（旧审批夹具与恢复待审接线）；96347/b0ab53 exit1为195通过1失败（审批夹具execution依赖不齐）。保留权限断言，补齐会抛错且断言不调用的执行端口，恢复账本只在live时发布。
+- 19926/108718 exit0：10文件199项、pnpm typecheck及git diff --check通过。覆盖匹配策略的生产协调器双收据正例、换模型直接完成拒绝、独立连接、旧实例/移除仓库、probe/禁用执行/待审恢复、schema28到29和Owner审批幂等。
+- 完整回归33396/c41865 exit1，必须检查失败后再提交。
+- 本批未调用真实模型；沿用OpenCodex gpt-6-astra/medium，无需密钥。自动测试不替代真实群/文档/Docker六场景与Owner验收。
+
 ## 2026-09-06 源码上下文真实模型验证与直接验收漂移修复
 
 - 5cccaa exit1：默认沙箱最小loopback bind检查返回EPERM，因此未将默认沙箱当作可运行完整端口测试。没有开启常驻监听、外部网络或Docker通道。

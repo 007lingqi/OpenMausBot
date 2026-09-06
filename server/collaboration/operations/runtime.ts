@@ -63,6 +63,8 @@ import {
   type CollaborationService,
   type CollaborationServiceOptions,
 } from "../service.ts";
+import { publishVerificationRuntimePolicy } from "../verification-runtime-policy.ts";
+import { readRestoreGuard } from "../restore-guard.ts";
 import { UnavailableContainmentSupervisor } from "./containment-supervisor.ts";
 
 export type CollaborationRuntimeState = "starting" | "running" | "draining" | "degraded" | "stopped";
@@ -735,6 +737,10 @@ export class CollaborationHeadlessRuntime {
       this.leaseCoordinator = new InstanceLeaseCoordinator(this.database, this.ownerId);
       this.lease = this.leaseCoordinator.acquire(this.clock.now(), this.leaseTtlMs);
       if (!this.lease) throw new Error("instance_lease_unavailable");
+      if (readRestoreGuard(this.database).state === "live") {
+        publishVerificationRuntimePolicy(this.database, { instance: this.lease, now: this.clock.now(),
+          repositories: this.options.execution?.repositories ?? {}, mappingPolicy: this.options.acceptanceMapping?.policyId });
+      }
       this.maintenance = this.options.maintenanceFactory
         ? this.options.maintenanceFactory({ database: this.database, dataDirectory: this.options.dataDirectory })
         : (this.options.maintenance ?? null);

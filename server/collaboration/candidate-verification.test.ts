@@ -33,6 +33,7 @@ import { InstanceLeaseCoordinator } from "./leases.ts";
 import { hasUnsettledVerification } from "./verification-lifecycle.ts";
 import { CommandCleanupError } from "./execution-limits.ts";
 import { completeVerifiedLowRiskCandidate } from "./candidate-approval.ts";
+import { publishVerificationRuntimePolicy } from "./verification-runtime-policy.ts";
 
 const scratch: string[] = [];
 const resources: Array<{ close(): void }> = [];
@@ -274,6 +275,24 @@ function mappingHarness(item: Fixture) {
 }
 
 describe("independent candidate verification", () => {
+  it("verifies and reads both review stages under a matching published runtime policy", async () => {
+    const item = fixture(undefined, true, true); const h = mappingHarness(item);
+    publishVerificationRuntimePolicy(item.database, { instance: { ownerId: "instance-1", fence: 1 }, now: Date.now(),
+      repositories: { [item.repository]: { targetCommands: item.commands } }, mappingPolicy: "fixture-v1" });
+    expect((await h.coordinator.verify({ candidateRunId: item.runId, worktreePath: item.worktree,
+      instance: { ownerId: "instance-1", fence: 1 }, now: 4000 })).passed).toBe(true);
+    expect(candidateHasPassedMetaReview(item.database, item.runId, item.candidateSha)).toBe(true);
+  });
+  it("revokes direct completion when the active runtime uses a different model policy, without re-running verification", async () => {
+    const item = fixture(undefined, true, true); const h = mappingHarness(item);
+    expect((await h.coordinator.verify({ candidateRunId: item.runId, worktreePath: item.worktree,
+      instance: { ownerId: "instance-1", fence: 1 }, now: 4000 })).passed).toBe(true);
+    publishVerificationRuntimePolicy(item.database, { instance: { ownerId: "instance-1", fence: 1 }, now: Date.now(),
+      repositories: { [item.repository]: { targetCommands: item.commands } }, mappingPolicy: "different-model-policy" });
+    expect(candidateHasPassedMetaReview(item.database, item.runId, item.candidateSha)).toBe(false);
+    expect(completeVerifiedLowRiskCandidate(item.database, { workItemId: item.workItemId, runId: item.runId,
+      sourceEventId: "changed-model-completion", now: 5000 }).completed).toBe(false);
+  });
   it.each(["read_scope_json", "deny_scope_json"] as const)("rejects a cached review through the completion gate when %s changes before another verification", async scope => {
     const item = fixture(undefined, true, true);
     item.commands["pnpm test target"].acceptanceSourceFiles = ["src/value.mjs"];

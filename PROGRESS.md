@@ -1,5 +1,19 @@
 # Meta 协作实施进度
 
+## 最新接续：运行配置批次完整验证通过（2026-09-06，优先于下方）
+
+- 上轮progress，本轮progress。10722/72b0ff exit0：PATH独立复测13通过7跳过；相同权限的复测也通过。本轮未改PATH代码或测试，未放宽断言；此前33396/c41865唯一失败的根因仍未确认，不能称其已修复。
+- cell238权限审核超时，未启动命令；cell239唯一重试获准，88277/a3ced9 exit0：PATH定向、完整pnpm test、typecheck、独立编译至/tmp/openmausbot-runtime-policy-typecheck及diff全部通过，含普通打包无node_modules/9代理、headless健康/运行/SIGTERM。验证期间源码与测试固定。所有句柄终态，不再轮询。
+- schema29运行策略快照及双收据门禁完成本批验证；只保存本批15个代码/测试文件及四份状态文档，本地提交结果以Git为准，不push。用户AGENTS.md/outputs不动。
+- Goal仍active，完整目标未达成。下一步需Owner明确授权指定Docker试点到宿主OpenCodex的受限本机模型通道；现有安全拒绝不可绕过，不伪造Host/放宽全局认证/暴露公网。继续保留真实文档/群六场景、Linux强隔离与独立supervisor、主机重启恢复和最终Owner人工验收，不能把本次自动回归当线上闭环。
+
+## 最新接续：运行配置快照（2026-09-06，优先于下方）
+
+- 基线302b5d8；本轮有实质实现进展，Goal active，未完成。schema29及不可变fence快照接入正常headless启动、两阶段收据和直接验收。边界详见SPEC/D-093，未变更模型、权限、网络或容器。
+- 定向19926/108718 exit0：199项/typecheck/diff通过；96347已终态，不再轮询。完整回归33396/c41865 exit1，必须检查失败后再提交。
+- 尚未完整验证，不提交。本批15个代码/测试文件及四份状态文档保留；下轮先完成上述验证，再按归属提交，不push。用户AGENTS.md及outputs保持不动。
+- 下一步：完成当前批次收束；Docker调用宿主OpenCodex的受限本机通道仍待Owner明确授权，不伪造Host/放宽认证/暴露公网。真实文档/群六场景、Linux隔离与独立supervisor、重启恢复及最终Owner人工验收继续保留，不能据本批测试标整个目标完成。
+
 ## 当前状态
 
 - 最新接续（2026-09-06，优先于下方）：上一轮progress，本轮progress。5cccaa最小只读权限诊断确认默认沙箱loopback bind报EPERM，未盲启全量。随后真实模型探测唯一重试获准，95749/367859 exit0：固定Git测试+实现源码经生产采集器送真实Astra/medium两角色，映射approved，SQLite收据重读及重放不新增模型调用。仅合成函数契约，无候选执行/群交付。

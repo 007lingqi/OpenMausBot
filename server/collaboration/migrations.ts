@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { OPENMAUSBOT_SOURCE_BASELINE } from "./config.ts";
 
-export const COLLABORATION_SCHEMA_VERSION = 28;
+export const COLLABORATION_SCHEMA_VERSION = 29;
 
 interface Migration {
   version: number;
@@ -1346,6 +1346,25 @@ const migrations: readonly Migration[] = [
           BEGIN SELECT RAISE(ABORT,'delivery query evidence is immutable'); END;
         CREATE TRIGGER delivery_queries_no_delete BEFORE DELETE ON collaboration_delivery_queries
           BEGIN SELECT RAISE(ABORT,'delivery query evidence cannot be deleted'); END;
+      `);
+    },
+  },
+  {
+    version: 29,
+    name: "bind-verification-to-fenced-runtime-policy",
+    checksum: "v29:immutable-fenced-runtime-verification-policy-hashes",
+    apply(database) {
+      database.exec(`
+        CREATE TABLE collaboration_verification_runtime_policies (
+          instance_fence INTEGER PRIMARY KEY CHECK(instance_fence > 0),
+          instance_owner TEXT NOT NULL,
+          policies_json TEXT NOT NULL,
+          configured_at INTEGER NOT NULL
+        ) STRICT;
+        CREATE TRIGGER verification_runtime_policies_immutable BEFORE UPDATE ON collaboration_verification_runtime_policies
+          BEGIN SELECT RAISE(ABORT,'runtime verification policy is immutable'); END;
+        CREATE TRIGGER verification_runtime_policies_no_delete BEFORE DELETE ON collaboration_verification_runtime_policies
+          BEGIN SELECT RAISE(ABORT,'runtime verification policy cannot be deleted'); END;
       `);
     },
   },

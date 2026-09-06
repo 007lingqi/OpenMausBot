@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { acceptanceConditionHash, assertionCoverage, type CoverageCommand } from "./acceptance-assertions.ts";
 
 /** Synthetic v3 reviews for policy-only tests; not evidence from a real verification run. */
-export function assertionReviewFixture(database: DatabaseSync, workItemId: string, commandId: string) {
+export function assertionReviewFixture(database: DatabaseSync, workItemId: string, commandId: string, runtimePolicyHash?: string) {
   const row = database.prepare("SELECT p.revision AS plan_revision,p.snapshot_revision,p.proposal_hash," +
     "v.read_scope_json,v.deny_scope_json,s.goal,s.facts_json,s.assumptions_json,s.acceptance_json,s.blocking_ambiguities_json " +
     "FROM collaboration_work_items w JOIN collaboration_plan_revisions p ON p.work_item_id=w.id AND p.revision=w.current_plan_revision " +
@@ -21,7 +21,8 @@ export function assertionReviewFixture(database: DatabaseSync, workItemId: strin
   const commands: CoverageCommand[] = [{ commandId, state: "target_passed",
     assertionContract: { format: "omb-assertions-v1", bindings: conditions.map((condition, index) => ({ conditionHash: acceptanceConditionHash(condition), assertionIds: [`criterion-${index}`] })) },
     assertions: conditions.map((_, index) => ({ id: `criterion-${index}`, state: "passed" })) }];
-  return { verifier: { contractSchemaVersion: 3, specIdentityHash, commands },
-    meta: { contractSchemaVersion: 3, specIdentityHash, verifierAttempt: 1, coverage: assertionCoverage(conditions, commands),
+  const runtime = runtimePolicyHash ? { runtimePolicyHash } : {};
+  return { verifier: { contractSchemaVersion: 3, specIdentityHash, ...runtime, commands },
+    meta: { contractSchemaVersion: 3, specIdentityHash, ...runtime, verifierAttempt: 1, coverage: assertionCoverage(conditions, commands),
       selfCommands: commands, selfCoverage: assertionCoverage(conditions, commands) } };
 }
