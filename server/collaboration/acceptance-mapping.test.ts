@@ -32,6 +32,60 @@ function models(options: { reject?: boolean; malformed?: boolean } = {}) {
 function ledger() { const root = mkdtempSync(join(tmpdir(), "omb-mapping-")); roots.push(root); const store = openCollaborationLedger(root); store.close(); const database = new DatabaseSync(store.filePath); database.exec("PRAGMA foreign_keys=ON"); resources.push(database); return { database, filePath: store.filePath }; }
 
 describe("source-grounded acceptance mapping", () => {
+  it("instructs both roles to explain assertions without repeating credential examples", async () => {
+    const model = models();
+    expect((await new AcceptanceMappingCoordinator(ledger().database, model).map(request, 1000)).status).toBe("approved");
+    for (const call of model.calls) {
+      expect(call.system).toContain("说明文字仅描述输入类别、断言关系和业务结果");
+      expect(call.system).toContain("不要复述密码、密钥或令牌的具体示例值");
+      expect(call.system).toContain("不能还原脱敏内容");
+    }
+  });
+
+  it.each(["proposer", "verifier"] as const)("rejects credential-like %s explanations without retaining their values", async role => {
+    const store = ledger(); const model = models();
+    const original = model[role].complete.bind(model[role]);
+    const synthetic = "synthetic-sensitive-fixture-value";
+    model[role].complete = async input => {
+      const output = await original(input) as ReturnType<typeof proposal> & { findings?: Array<{ reason: string }> };
+      if (role === "proposer") output.bindings[0].rationale = `密码 ${synthetic}`;
+      else output.findings![0].reason = `密码 ${synthetic}`;
+      return output;
+    };
+    const result = await new AcceptanceMappingCoordinator(store.database, model).map(request, 1000);
+    expect(result.status).toBe("failed");
+    expect(result.contracts).toBeUndefined();
+    const receipts = store.database.prepare("SELECT receipt_json FROM collaboration_acceptance_mapping_results").all();
+    expect(JSON.stringify(receipts)).not.toContain(synthetic);
+  });
+
+  it("supplies computed condition identities to both models instead of requiring them to invent hashes", async () => {
+    const store = ledger();
+    const input = { ...request, conditions: [condition, { description: "保存失败", observation: "失败时显示原因" }] };
+    const observed: unknown[] = [];
+    const model = {
+      policyId: "provided-identities-v1",
+      proposer: { async complete(call: Parameters<NaturalIntakeModelPort["complete"]>[0]) {
+        const data = JSON.parse(call.user); observed.push(data.conditions);
+        return { version: 1, requestHash: data.requestHash, bindings: data.conditions.map((c: { conditionHash: string }) => ({
+          ...proposal().bindings[0], conditionHash: c.conditionHash,
+        })) };
+      } },
+      verifier: { async complete(call: Parameters<NaturalIntakeModelPort["complete"]>[0]) {
+        const data = JSON.parse(call.user); observed.push(data.request.conditions);
+        return { version: 1, requestHash: data.requestHash, proposalHash: data.proposalHash,
+          findings: data.request.conditions.map((c: { conditionHash: string }) => ({ conditionHash: c.conditionHash, state: "covered", reason: "合成端口仅验证身份传递" })) };
+      } },
+    };
+    const result = await new AcceptanceMappingCoordinator(store.database, model).map(input, 1000);
+    expect(result.status).toBe("approved");
+    const enriched = input.conditions.map(c => ({ ...c, conditionHash: acceptanceConditionHash(c) }));
+    expect(observed).toEqual([enriched, enriched]);
+    expect(input.conditions[0]).not.toHaveProperty("conditionHash");
+    expect(readApprovedAcceptanceMapping(store.database, { requestHash: result.requestHash, policyId: model.policyId,
+      candidateSha: input.candidateSha, specHash: input.specHash, conditions: input.conditions })).toEqual(result.contracts);
+  });
+
   it.each(["proposer", "verifier"] as const)("cancels a waiting %s without writing a late receipt or starting another model", async stage => {
     const store = ledger(); const model = models(); const controller = new AbortController();
     let release!: (value: unknown) => void;

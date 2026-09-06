@@ -2,6 +2,23 @@
 
 ## 当前状态
 
+- 最新验证收束（2026-09-06，优先于下方）：上轮progress，本轮先verified wait，现取得完整终态证据，分类progress。53277/d40579 exit0，pnpm test/typecheck/独立服务端编译至/tmp/openmausbot-mapping-explanations-typecheck/diff完整链通过；打包无node_modules启动及9代理路径通过。整个重跑期间没有改业务或测试代码。所有验证句柄现终态。
+- 前一次固定版本61336/5b2f08 exit1：唯一失败是未修改的env-path等待断言（274文件/2961项通过，1项失败，18跳过，430.51秒）。19540/c94e6d独立复测13通过/7跳过，类型和独立编译通过；同代码完整重跑通过。未改路径实现、未放宽断言/超时，根因未知，保留失败历史，不宣称彻底消除偶发性。
+- 已验证批次：系统向两角色提供条件校验标识、安全解释文案契约、敏感输出拒绝/收据不保留示例值及相关测试。真实模型证据仍以已记录的精确函数正例、弱断言/业务覆盖不足/脱敏缺失负例为准，不作为真实产品交付完成。完成后仅本地提交六个本任务文件，不push，提交结果以Git为准；用户AGENTS.md/outputs不动。
+- 下一恢复入口：源码脱敏可能破坏比较表达式、显式测试文件采集缺少被测依赖，均未修复。先设计固定候选内、声明读取范围和禁止路径约束下的语法感知源码处理/依赖上下文，先补测试；不要继续扩大提示文案来替代实际源码支持。Docker模型受限通道仍待Owner明确批准，真实群/文档入口、隔离/六类试点和最终Owner验收仍未完成。Goal保持active。
+
+- 最新批次（2026-09-06，优先于下方）：上一轮及本轮均 progress，原生Goal active。新增两个角色共享的安全说明契约，不复述凭据样式测试值、不还原脱敏内容；原敏感输出拒绝和失败收据不保留原文的规则不变。TDD1551/4dc256一项预期失败，42491/a065f7两文件48项/typecheck通过。
+- 真实语义结果：38354/1bdc1a拒绝把局部函数当完整保存业务覆盖，说明先前正例预期过宽，未改模型让它强行通过。随后16859/e1c32b：精确函数契约由真实Proposer+Verifier批准，收据重读/重复调用不变；弱断言由合成Proposer提议、真实Verifier判missing并rejected。该脚本末尾脱敏负例60秒传输超时，整次exit1，不把超时当拒绝通过；单独重试73694/ad7e5f exit0，真实Verifier判uncertain并rejected。
+- 尚未解决的实质产品缺口：faf403证明自然文本脱敏会破坏源码中的password比较运算符；acceptance-source.ts仅采集显式Node测试文件，不提供被测实现/依赖。精确函数合成正例只验证映射机制，不替代真实保存流程/界面或完整交付；后续需在固定候选、只读、禁密钥/符号链接/越界的边界内补依赖上下文与语法感知脱敏。
+- 完整验证：旧11392/e5e1b5 exit1（274文件通过/1失败/1跳过，2961项通过/1失败/18跳过，357.27秒），该运行期间新增TDD捕获旧模型说明，不能代表当前固定版本。最终重跑61336仍活跃，最近6aad6e有session_id无退出码；cell149首次审批超时未启动，唯一重试成功。下次先轮询61336，勿重复启动或套用旧结果。
+- 本批六个任务文件未提交未部署；真实探测脚本/tmp/openmausbot-astra-mapping-cases.mjs保留（无参三例或redacted单例），所有真实模型句柄已终态，只有完整回归61336在运行。其完整命令是pnpm test/typecheck/独立编译到/tmp/openmausbot-mapping-explanations-typecheck/diff。全量通过后再本地提交，不push、不包含用户AGENTS.md/outputs。Docker受限模型通道仍待Owner明确批准；真实群/文档、隔离和六场景验收继续保留，Goal不标完成。
+
+- 最新接续（2026-09-06）：容器受限模型通道尚无 Owner 明确答复，未执行。本轮转向原授权内真实验收映射验证，上一轮/本轮均为 progress，Goal active，不因单个待授权事项停止所有安全本地工作。
+- 发现并修复映射身份缺失：生产端要求 conditionHash 但原请求只提供条件文本；合成模型端口 89644/913f87 复现失败，真实 Astra 26471/95404e 自行生成了错误标识。现为 Proposer/Verifier 同时附加由主程序计算的条件标识，不改 canonical request、哈希算法、来源和候选门禁。2626/45b798 exit0，三文件50项及typecheck通过。
+- 真实复测 7823/cae783 exit1：Proposer 使用正确 conditionHash，但仍未完成整条映射。其 rationale 含“错误密码 \"wrong\"”，会触发既有敏感输出判定；下一步核对并解决模型说明文案与防泄漏约束的契约，不删敏感检查，不把合成口令外推为允许输出真实凭据。此运行未取得独立 Verifier 返回，不可声称独立映射通过。
+- 全量运行 session 11392 已启动，最近 cfe8dc 仍有 session_id/无退出码；首次 cell139 审批超时未启动，唯一重试 cell140 成功。下次轮询原句柄，勿重启全量。命令 pnpm test/typecheck/独立编译到 /tmp/openmausbot-mapping-identities-typecheck/diff。本批到工具轮预算收束，保留未提交改动，真实映射仍失败，不自动commit。
+- 临时 /tmp/openmausbot-astra-mapping-probe.mjs 使用生产工厂/协调器与临时SQLite，只有合成需求和测试源码，不执行测试代码或发送群消息。两次真实探测终态；其他运行仅上述全量句柄。后续需增加合成弱断言反例复核，随后恢复 Docker/真实文档与六场景完整验收；全目标不缩减、不标complete。
+
 - 最新验证收束（2026-09-06，优先于下方）：接续原 session 57677，d17126 确认 exit 0；主集 275 文件通过/1 跳过、2958 项通过/18 跳过，457.59 秒；broker/桌面/打包无 node_modules 启动、9 代理路径、pnpm typecheck、独立服务端编译和 diff 全通过。原完整运行已终态，不再轮询或重启。上轮为 progress，本轮完成终态验证并查明 Docker 拒绝原因，原生 Goal active。
 - 自然需求原文契约与可回答问题 schema 修复已由完整回归及前轮真实模型/SQLite 入账、重放、重启、澄清回答证据覆盖。保存本地批次，不 push；以 Git 实际提交结果为准。此前真实调用偶发失败原因仍未知，不据成功重试宣称稳定性问题永久消失。
 - Docker 只读核实 d2a44a：已授权 colima-openmausbot-pilot 中主 pilot healthy，其他历史容器已退出，未动任何容器。93213d：模型目录 HTTP403/error.code=origin_rejected，正文 cross-origin data-plane request blocked。已安装 OpenCodex auth-cors.ts 的无认证策略检查 Host 为 loopback；host.docker.internal 不符合。health 可达不代表数据 API 有权限。

@@ -1,5 +1,28 @@
 # Meta 协作验证记录
 
+## 2026-09-06 验收映射批次完整验证通过
+
+- 53277/d40579 exit0：`pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-mapping-explanations-typecheck && git diff --check`。主集、broker、updater、desktop-viewer、package-link、save-file、打包无node_modules启动及9代理路径、类型/独立编译全部经过命令串终态验证。终态输出较长被截断，不补造未保留的新统计值。代码和测试在整次运行保持固定。
+- 前序61336/5b2f08 exit1：env-path.test.ts第95行等待合成login-shell结果未在默认等待内完成；274文件/2961项通过，1失败，18跳过，430.51秒。19540/c94e6d exit0独立复测13项通过/7跳过，加typecheck/独立编译/diff通过；再进行上述完整重跑。未改该不在本批的路径代码或测试，未放宽断言，根因未确认。
+- 本批基于67a941c加acceptance-mapping.ts/test.ts和四份状态文档，完成自动化及已记真实模型合成正反例验证后本地保存，不push或部署。全部句柄终态；下一轮不要再轮询61336/53277或重复尚未开始的运行。
+- 产品级缺口继续存在：语法感知源码脱敏、被测依赖源码、Docker授权通道和真实文档/群/六场景验收。函数级模型正例仅覆盖声明的机制测试；不据此缩小完整业务目标。
+
+## 2026-09-06 安全说明契约与真实独立复核正反例
+
+- 1551/4dc256 exit1：模型未收到安全说明契约的新增测试失败，15项通过（含两个角色输出凭据样式示例会失败且收据不保存示例值）。修复后42491/a065f7 exit0，两文件48项及pnpm typecheck通过，未改既有安全拒绝。
+- 38354/1bdc1a：真实Astra/medium Proposer提议局部saveStatus测试覆盖完整保存显示流程，独立Verifier返回missing，协调器rejected；原探测期望approved，因此exit1。这是探测预期过宽，不能改模型判定迁就。完整业务条件仍未证实。
+- 16859/e1c32b：将另一正例明确限定为saveStatus(true)函数返回值契约，真实两角色输出approved，当前收据重读及缓存幂等核对通过；不等于真实保存/界面或开发执行验收。弱断言负例使用合成Proposer强行绑定两个固定文案相等的断言，真实Verifier识别未调用被测函数，missing/rejected且无contracts。第三个脱敏负例Verifier在60001ms报natural_model_transport_unavailable，整次exit1；失败不算安全通过。
+- 73694/ad7e5f exit0：仅重试脱敏负例，真实Verifier在26073ms给uncertain/rejected，指出关键判断已脱敏且无实际登录/界面来源，不以局部辅助函数推断完整业务满足。该负例Proposer为合成端口，Verifier为真实本机模型，角色证据不混淆。
+- faf403只读探测证实redactSensitiveText将password ===中的比较运算符替换成隐藏标记；源码采集器仅收集显式测试文件。两个限制尚未修复，不能将不完整上下文带来的拒绝说成上线可用。保护Secret、固定Git对象、依赖上下文与完整业务目标必须一起满足。
+- 旧全量11392/e5e1b5 exit1：274文件通过/1失败/1跳过，2961项通过/1失败/18跳过，357.27秒；运行期间插入了TDD，失败项仍使用旧说明，需固定最终版本重跑。61336最终全量已启动仍活跃，最近6aad6e无退出码，命令`pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-mapping-explanations-typecheck && git diff --check`。cell149首次审批超时未运行，唯一重试成功。未提交，恢复先轮询原句柄。
+
+## 2026-09-06 验收映射条件身份真实接线
+
+- 测试先行 89644/913f87 exit1：只依据实际模型输入生成输出的合成端口无法获取 conditionHash，原实现失败；旧测试直接从测试进程预计算标识，未覆盖该真实边界。补模型视图的条件标识后 2626/45b798 exit0，三文件50项与pnpm typecheck通过；canonical request、映射哈希和读取收据验证保持不变。
+- 原真实请求 26471/95404e exit1：模型选对连续测试行4–6和确切名称，但返回的条件标识以 c0f416 开头，而主程序 8fcb9e 计算值以 c5c89f 开头，未到独立复核即 failed。入口仅已授权本机 OpenCodex Astra/medium，初次执行审批 cell135 超时未启动，唯一重试成功。
+- 修复后 7823/cae783 exit1：条件标识正确、行引用正确，但 rationale 含“错误密码 \"wrong\"”，既有敏感文本规则会改变该文案，validateProposal 会拒绝敏感输出。未拿到独立复核结果，本次不能记approved。不要把该合成字符串当真实Secret，也不能据此移除真实防泄漏门禁；后续对齐模型输出说明与安全契约。
+- 全量 11392 正在运行，最近 cfe8dc 无退出码；`pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-mapping-identities-typecheck && git diff --check`。cell139审批超时未启动，cell140唯一重试启动成功。未提交未部署，下次先取该句柄终态。
+
 ## 2026-09-06 自然需求契约完整验证终态与 Docker 拒绝原因
 
 - 57677/d17126 exit 0：完整命令为 `pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-natural-answer-contract-typecheck && git diff --check`。275 文件通过/1 跳过，2958 项通过/18 跳过，2976 注册，457.59 秒；broker7、updater15、viewer5、package-link2、save-file10、打包无 node_modules 启动及9代理路径通过，后续类型与独立编译全部完成。存 natural-answer-full-final，原句柄终态。
