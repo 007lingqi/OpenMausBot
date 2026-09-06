@@ -14,6 +14,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { openSse } from "./testing/sse.ts";
 import { IMAGE_MAX_BYTES } from "./attachments.ts";
+import { instanceConfigs } from "./config.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SERVER_DIR, "..");
@@ -68,7 +69,9 @@ beforeAll(async () => {
   home = mkdtempSync(join(tmpdir(), "omb-api-test-"));
   staticDir = join(home, "static");
   fakeClaudeDump = join(home, "fake-claude-dump.json");
-  // a fleet of exactly one unknown driver: no CLI probes, no network
+  // The product expands a map containing "claude" with newly shipped engines.
+  // Pin those additions to unavailable shadows so this real HTTP fixture never
+  // probes developer-installed CLIs. The configured Claude stays a real fake CLI.
   mkdirSync(join(home, ".openmausbot"), { recursive: true });
   mkdirSync(join(staticDir, "assets"), { recursive: true });
   writeFileSync(join(staticDir, "index.html"), "<!doctype html><title>Packaged OpenMausBot</title>");
@@ -77,6 +80,8 @@ beforeAll(async () => {
     join(home, ".openmausbot", "config.json"),
     JSON.stringify({
       instances: {
+        ...Object.fromEntries(Object.keys(instanceConfigs({ instances: { claude: { driver: "claudeAgent" } } }))
+          .map(id => [id, { driver: "not-a-real-driver" }])),
         ghost: { driver: "not-a-real-driver", displayName: "Ghost" },
         claude: { driver: "claudeAgent", displayName: "Fixture Claude", config: { cli: FAKE_CLAUDE_CLI } },
       },
@@ -497,6 +502,12 @@ describe("harness HTTP API", () => {
   it("describes the configured fleet, shadows included", async () => {
     const { status, body } = await api("GET", "/api/instances");
     expect(status).toBe(200);
+    for (const instance of body.instances) {
+      if (instance.instanceId !== "claude") {
+        expect(instance.driverKind).toBe("not-a-real-driver");
+        expect(instance.snapshot.state).toBe("unavailable");
+      }
+    }
     const ghost = body.instances.find((instance: { instanceId: string }) => instance.instanceId === "ghost");
     expect(ghost).toMatchObject({
       instanceId: "ghost",

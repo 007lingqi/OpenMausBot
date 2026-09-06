@@ -1,5 +1,30 @@
 # Meta 协作验证记录
 
+## 2026-09-06 多群路由及 API 隔离最终完整验证（当前批）
+
+- `pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-delivery-routing-typecheck && git diff --check`，获得本地监听所需沙箱外权限后启动 13203，最终 exit 0（9e00ed）。期间始终等待同一会话，无超时误重启。
+- 主集 270 文件通过 / 1 跳过；2756 项通过 / 18 跳过，2774 注册，343.32 秒。原 index.test.ts Chief 用例 430ms，全部 88 项 API 通过，完整 product-fleet 配置与新增路由覆盖未删减。
+- broker 7、updater 15、desktop-viewer 5、package-link 2、save-file 10 全通过；packaged-server 构建并在无 node_modules 可访问情况下启动，9 路 spawned proxy 路径通过；后续 typecheck、独立服务端编译、diff 均通过。
+- 这是当前 8 个任务文件对应的完整本地验证；前轮 EPERM/Chief 超时和主动诊断失败均保留历史，本次不沿用它们的失败/未验证结论。所有测试句柄终态。comms 个别用例本次接近时限但通过，不外推为全套性能稳定性已证明。
+- 尚未部署/验证真实钉钉或模型/在线文档/Docker 六类场景，未改变凭据/Owner，不能将本地通过等同真实试点通过。
+
+## 2026-09-06 回归超时定位与夹具隔离（当前批）
+
+- 时序诊断 43610 exit 1（868336）：原 Chief 用例 20012ms 超时，POST /api/bots 两次分别 8040/8031ms。直接模拟 CLI 探测 eaae09 exit 0：version 60ms、auth 55ms。
+- 只读/单创建诊断 94704（e00f68）、58337（69b04c）、85713（b2feb5）均 exit 0，耗时波动且未展示完整诊断日志，不据此宣称修复。63079 exit 1（e98cb9）为专门临时诊断主动抛错，展示正式服务的非 fake CLI 探测，配合 instanceConfigs 产品默认补齐逻辑定位夹具泄漏；不是新增产品断言失败。诊断用例和 procs/index 临时日志已全部移除。
+- 修复只在 index.test.ts 固定自动补齐项为 unavailable shadow，模拟 Claude 和全部原业务断言不变，新增 fixture 隔离断言；生产默认引擎行为不变。
+- `pnpm vitest run server/index.test.ts server/config.test.ts server/collaboration/delivery-routing.test.ts && pnpm typecheck && git diff --check`，53158 exit 0（046931）：3 文件 / 146 项通过，总 9.62s，typecheck/diff 通过。原 88 项 HTTP API 全部运行通过，不调高超时、不筛掉失败用例。
+- 此候选尚未跑完整 pnpm test、附属/打包服务链和独立服务端编译，不继承前轮代码的完整通过结论；当前无运行中验证。下批需沙箱外本地端口权限重跑完整链，不提交/部署当前未全量验证的候选。
+
+## 2026-09-06 多群备用投递来源绑定（当前批）
+
+- 先行 `pnpm vitest run server/collaboration/delivery-routing.test.ts`，0184f9 exit 1：3 失败 / 1 通过，使用生产装配、SQLite 和受控 fetch/合成凭据；未调用真实钉钉。
+- 初修 66998 exit 0（2092b7）：5 文件 / 60 项及 typecheck/diff 通过。扩展 20073 exit 0（a7568b）：8 文件 / 124 项，覆盖路由/Owner 查询/Stream/Outbox/runtime/恢复/headless/router，typecheck/diff 通过。
+- 全量 `git diff --check && pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-delivery-routing-typecheck`，89823 exit 1（c631ea）：29 文件失败 / 241 通过 / 1 跳过；28 项失败 / 2499 通过 / 247 跳过、16 errors，2774 注册。620.37 秒，出现多处 listen EPERM（本地 TCP/UDS/UDP），后续编译未执行。不删断言/排除测试；已获沙箱外权限，同一完整验证链在 67552 重跑中（diff 检查置末尾）。
+- 沙箱外重跑 67552 exit 1（462572）：372.58 秒，269 文件通过 / 1 失败 / 1 跳过；2755 项通过 / 1 失败 / 18 跳过，2774 注册。唯一失败 `server/index.test.ts:688` / `elects one Chief of Staff per section and preserves other section Chiefs`，原 20000ms 超时；不是回归全通过，附属命令被 && 中止。
+- 不改代码、断言或超时，独立运行 `pnpm vitest run server/index.test.ts -t 'elects one Chief of Staff per section and preserves other section Chiefs'`：36115 exit 1（df1b73），仍 20011ms 超时，其他 87 项为主动筛选跳过。后续 broker/updater/desktop-viewer/package-link/save-file/packaged-server/typecheck/编译链未执行；不以筛选运行冒充完整回归。该超时已连续复现两次，尚未证实根因，不提交本批。
+- 独立收尾 `pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-delivery-routing-typecheck && git diff --check && git status --short`：22873 exit 0（9ac09c）。所有测试/编译句柄终态；工作区仅本批七个任务文件及用户原有 AGENTS.md/outputs 未提交。目标仍 active，非生产真实试点仍未部署/验收。
+
 ## 2026-09-06 Owner 自然查询待核查回复（当前批）
 
 - 提交环节权限审查超时（cell 861），发生于进程创建前，不是测试失败；全套验证仍有效，恢复时仅重试一次本地提交。

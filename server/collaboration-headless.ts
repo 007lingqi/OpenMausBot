@@ -64,6 +64,7 @@ import { validateTargetCommandSpec, type TargetCommandSpec } from "./collaborati
 import type { AcceptanceCondition } from "./collaboration/snapshot.ts";
 import { configuredNaturalIntake } from "./collaboration/operations/natural-intake-model.ts";
 import { configuredAcceptanceMapping } from "./collaboration/operations/acceptance-mapping-model.ts";
+import { proactiveConversationRoutes, proactiveDestination } from "./collaboration/delivery-routing.ts";
 
 interface HeadlessArguments {
   dataDirectory: string;
@@ -240,7 +241,10 @@ export function createDingTalkDelivery(
   environment: NodeJS.ProcessEnv,
   dataDirectory: string,
 ): OutboxDeliveryPort {
-  const proactiveOpenConversationId = environment.OMB_DINGTALK_PROACTIVE_OPEN_CONVERSATION_ID?.trim() || undefined;
+  const hasProactiveConfiguration = !!(environment.OMB_DINGTALK_PROACTIVE_OPEN_CONVERSATION_ID?.trim() ||
+    environment.OMB_DINGTALK_PROACTIVE_CONVERSATION_MAP?.trim());
+  const proactiveRoutes = proactiveConversationRoutes(environment, hasProactiveConfiguration
+    ? readDingTalkAllowedConversationIds(environment) : new Set<string>());
   const credentialProvider = new SecureDingTalkCredentialFileProvider(environment);
   const router = new DingTalkReplyRouter(
     sessions,
@@ -274,7 +278,7 @@ export function createDingTalkDelivery(
       }
       const result = await router.send({
         sourceEventId: routedSourceEventId,
-        proactiveOpenConversationId,
+        proactiveOpenConversationId: proactiveDestination(databaseFile, routedSourceEventId, proactiveRoutes),
         payload,
         idempotencyKey: message.dedupeKey,
       });
