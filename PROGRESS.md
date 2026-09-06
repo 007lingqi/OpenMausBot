@@ -17,6 +17,15 @@
 
 ## 本批执行记录
 
+### 普通直接控制与回复原子化（2026-09-06，已验证）
+
+- 上轮 e6ce86e 已提交/完整链通过，分类 progress；本轮按 goal-protocol 接续，初始只有用户 AGENTS.md/outputs，保持不动。schema 25 不变，无外部配置/身份/凭据或群消息变更。
+- TDD 47504 exit 1（ff4398）：7 失败 / 48 通过，六类控制回复写失败不回滚已提交动作/审计，且入站事件可被再当控制。初修 62107 exit 0（bd15aa）：5 文件 / 118 项、typecheck/diff 通过。反向事件复用先行 84067 exit 1（b04e53）：1 失败 / 13 通过，控制事件可另建任务；补入站拦截。
+- 扩展真实候选批准的 Outbox 故障回滚/再试成功及双向冲突后，49469 exit 0（24cf06）：7 文件 / 142 项/typecheck/diff 通过。控制器原事务内新增受信任回复 opt-in；旧核心调用默认不发消息，runtime 兼容入口不改历史收据/来源。
+- 完整链 77419 已 exit 0：270 文件通过 / 1 跳过，2786 项通过 / 18 跳过（2804 注册），366.70 秒；broker 7、updater 15、desktop-viewer 5、package-link 2、save-file 10、打包脱离 node_modules 启动及 9 路代理、typecheck、独立服务端编译、diff 全通过。所有句柄终态。新增 owner-command-reply.ts、六个修改代码/测试文件与四个状态文档共 11 文件保存本地提交。
+- 只读确认下一阶段装配缺口：headless 的 attachmentIngestionFactory 创建协调器时没有传 extract；协调器已有可注入 extract 端口，固定镜像提取器已有受控测试。后续可先测试先行补显式装配和配置边界，不在真实镜像/隔离 smoke 未完成前启用处理真实附件，不把本地接线当文档试点通过。
+- 后续仍需历史缺回复的可核查恢复、卡片真实群来源/送达证据、旧输入/下载恢复、真实文档解析装配与验证、已授权模型及六类真实群聊、完整主机重启与 Owner 人工验收。Goal active，不 push、不部署。
+
 ### Token 审批事件与文本回复原子化（2026-09-06，已验证）
 
 - 上轮 d6471b3 已提交/全量通过，分类 progress；本轮按 goal-protocol 接续。初始只有用户 AGENTS.md/outputs，保持不动；schema 25 不变，无真实身份/凭据/配置/钉钉/Docker 变更。

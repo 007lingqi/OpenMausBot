@@ -1,5 +1,11 @@
 # Meta 协作验证记录
 
+## 2026-09-06 普通直接控制与回复原子化（已验证）
+
+- TDD delivery-routing/actions：47504 exit 1（ff4398），7 失败 / 48 通过。初修五文件 62107 exit 0（bd15aa），118 项及 typecheck/diff。反向复用 TDD 84067 exit 1（b04e53），1 失败 / 13 通过。
+- 扩展 delivery-routing/actions/runtime/runtime-verification-retry/stream-adapter/headless/delivery-review：49469 exit 0（24cf06），7 文件 / 142 项及 typecheck/diff。实际 SQLite 故障触发器验证暂停/取消/允许批准及拒绝结果整体回滚，批准再试仅一次成功；事件双向复用被拒。均为本地合成数据，非真实钉钉/Owner 动作。
+- 完整 `pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-direct-reply-typecheck && git diff --check`，77419 exit 0。保存的原输出确认主集 270 文件通过 / 1 跳过，2786 项通过 / 18 跳过（2804 注册），366.70 秒；broker 7、updater 15、desktop-viewer 5、package-link 2、save-file 10 通过。打包脱离 node_modules 启动及 9 路代理、typecheck、独立服务端编译和 diff 全通过。所有句柄终态；本地事务证据不等于远端消息送达或六类试点完成。
+
 ## 2026-09-06 Token 审批事件与文本回复原子化（已验证）
 
 - TDD actions/delivery-routing/text-actions：9740 exit 1（5158fb），3 失败 / 49 通过。初修 86895 exit 0（684535）：5 文件 / 94 项/typecheck/diff。

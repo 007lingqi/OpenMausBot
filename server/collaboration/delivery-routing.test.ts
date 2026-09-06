@@ -49,6 +49,26 @@ function fixture(environment: NodeJS.ProcessEnv) {
 }
 
 describe("production delivery group routing", () => {
+  it.each(["pause", "resume", "retry", "cancel", "approve_candidate", "reject_candidate"] as const)("rolls back %s decision if its reply cannot be saved", async commandName => {
+    const f = fixture({});
+    const owner = new LocalOwnerRegistry(join(f.root, "collaboration", "collaboration.sqlite"));
+    try { owner.bootstrap({ senderCorpId: "corp", senderStaffId: "staff", now: 1000 }); } finally { owner.close(); }
+    const runtime = new CollaborationHeadlessRuntime({ dataDirectory: f.root, platform: "linux" });
+    try {
+      await runtime.start();
+      const command = { transportEventId: "atomic-command", transportMessageId: "atomic-command", conversationId: "group-b", command: commandName,
+        workItemId: f.message("event-group-a").aggregateId, receivedAt: 2000,
+        sender: { senderCorpId: "corp", senderStaffId: "staff", senderId: "sender", displayName: "Owner" } };
+      const state = f.db.prepare("SELECT * FROM collaboration_work_items ORDER BY id").all();
+      const audits = f.db.prepare("SELECT count(*) n FROM collaboration_audit_events").get();
+      f.db.exec("CREATE TRIGGER fail_direct_reply BEFORE INSERT ON collaboration_outbox WHEN NEW.source_event_id='atomic-command' BEGIN SELECT RAISE(ABORT,'synthetic_direct_reply_failure'); END");
+      expect(() => runtime.performDingTalkOwnerTextCommand(command)).toThrow("synthetic_direct_reply_failure");
+      expect(f.db.prepare("SELECT * FROM collaboration_work_items ORDER BY id").all()).toEqual(state);
+      expect(f.db.prepare("SELECT count(*) n FROM collaboration_audit_events").get()).toEqual(audits);
+      expect(f.db.prepare("SELECT count(*) n FROM collaboration_owner_text_commands WHERE source_event_id='atomic-command'").get()).toEqual({ n: 0 });
+      expect(f.db.prepare("SELECT count(*) n FROM collaboration_control_events").get()).toEqual({ n: 0 });
+    } finally { await runtime.stop(); f.db.close(); }
+  });
   it("preserves rejected token text actions and their source after restart, without executing altered replay", async () => {
     const env = { OMB_DINGTALK_ALLOWED_CONVERSATION_IDS: "group-a,group-b", OMB_DINGTALK_PROACTIVE_CONVERSATION_MAP: '{"group-a":"open-a","group-b":"open-b"}' };
     const f = fixture(env);

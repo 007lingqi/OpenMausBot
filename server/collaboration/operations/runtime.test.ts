@@ -335,14 +335,25 @@ describe("production-isomorphic collaboration runtime", () => {
       const receipt = refreshDb.prepare("SELECT outcome_json FROM collaboration_owner_text_commands WHERE source_event_id='durable-refresh'").get() as { outcome_json: string };
       expect(JSON.parse(receipt.outcome_json)).toMatchObject({ kind: "owner_query", conversationId: "conversation", outcome: { allowed: true } });
     } finally { refreshDb.close(); }
-    const approved = runtime.performDingTalkOwnerTextCommand({
+    const approveRequest = {
       transportEventId: "approve-command-1",
       transportMessageId: "approve-transport-1",
-      command: "approve_candidate",
+      command: "approve_candidate" as const,
       workItemId,
       sender: message("owner-approval").sender,
       receivedAt: 5_000,
-    });
+    };
+    const failureDb = new DatabaseSync(join(dataDirectory, "collaboration", "collaboration.sqlite"));
+    try {
+      const before = failureDb.prepare("SELECT * FROM collaboration_work_items WHERE id=?").get(workItemId);
+      failureDb.exec("CREATE TRIGGER fail_approval_reply BEFORE INSERT ON collaboration_outbox WHEN NEW.source_event_id='approve-command-1' BEGIN SELECT RAISE(ABORT,'synthetic_approval_reply_failure'); END");
+      expect(() => runtime.performDingTalkOwnerTextCommand(approveRequest)).toThrow("synthetic_approval_reply_failure");
+      expect(failureDb.prepare("SELECT * FROM collaboration_work_items WHERE id=?").get(workItemId)).toEqual(before);
+      expect(failureDb.prepare("SELECT count(*) n FROM collaboration_owner_text_commands WHERE source_event_id='approve-command-1'").get()).toEqual({ n: 0 });
+      failureDb.exec("DROP TRIGGER fail_approval_reply");
+    } finally { failureDb.close(); }
+    const approved = runtime.performDingTalkOwnerTextCommand(approveRequest);
+    expect(runtime.performDingTalkOwnerTextCommand(approveRequest)).toMatchObject({ allowed: true, duplicate: true });
     expect(approved).toMatchObject({ allowed: true, duplicate: false, reason: "owner_action_applied" });
     const approvedDb = new DatabaseSync(join(dataDirectory, "collaboration", "collaboration.sqlite"));
     expect(approvedDb.prepare(

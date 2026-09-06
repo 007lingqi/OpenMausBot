@@ -551,6 +551,25 @@ describe("Owner action tokens and Work Item controls", () => {
     context.service.close();
   });
 
+  it("refuses a direct command that reuses an already recorded inbound event", () => {
+    const context = harness();
+    try {
+      expect(() => context.service.performDirectOwnerAction({ sourceEventId: "event-1", action: "pause", workItemId: context.workItemId,
+        sender: ownerSender(), now: 2000 })).toThrow("owner_text_command_event_conflict");
+      expect(item(context.databaseFile, context.workItemId)).toMatchObject({ control_state: "active", version: 1 });
+    } finally { context.service.close(); }
+  });
+
+  it("does not create a new task by replaying a direct control event as ordinary inbound text", () => {
+    const context = harness();
+    try {
+      context.service.performDirectOwnerAction({ sourceEventId: "control-not-inbound", action: "pause", workItemId: context.workItemId,
+        sender: ownerSender(), now: 2000 });
+      expect(() => context.service.ingestDingTalkMessage(message({ sourceEventId: "control-not-inbound", text: "新需求" })))
+        .toThrow("owner_text_command_event_conflict");
+    } finally { context.service.close(); }
+  });
+
   it("persists a token action event and reply atomically without retaining the executable token", () => {
     const context = harness();
     const db = new DatabaseSync(context.databaseFile);

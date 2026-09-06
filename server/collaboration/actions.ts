@@ -15,6 +15,7 @@ import {
 } from "./policy.ts";
 import { assertLedgerArmed } from "./restore-guard.ts";
 import { prepareTokenActionReceipt, persistTokenActionReceipt, type TokenActionRequest } from "./token-action-receipt.ts";
+import { enqueueDirectOwnerReply } from "./owner-command-reply.ts";
 
 const TOKEN_VERSION = 1 as const;
 const DEFAULT_TOKEN_TTL_MS = 15 * 60_000;
@@ -54,6 +55,8 @@ export interface PerformOwnerActionInput {
 export type DirectOwnerControlAction = WorkItemControlAction;
 
 export interface PerformDirectOwnerActionInput {
+  /** Trusted headless transport opt-in; not a message-controlled permission. */
+  replyRequested?: boolean;
   conversationId?: string;
   sourceEventId: string;
   action: DirectOwnerControlAction;
@@ -619,6 +622,9 @@ export class OwnerActionController {
         return { ...decision, duplicate: true };
       }
 
+      if (this.database.prepare("SELECT 1 FROM collaboration_external_events WHERE source='dingtalk' AND source_event_id=? UNION ALL SELECT 1 FROM collaboration_outbox WHERE source='dingtalk' AND source_event_id=? UNION ALL SELECT 1 FROM collaboration_attachment_recovery_requests WHERE source_event_id=? UNION ALL SELECT 1 FROM collaboration_natural_intake_recovery_requests WHERE source_event_id=?")
+        .get(sourceEventId, sourceEventId, sourceEventId, sourceEventId)) throw new Error("owner_text_command_event_conflict");
+
       const policy = evaluateOwnerPolicy(this.database, {
         sender: input.sender,
         capability: capabilityForAction(input.action),
@@ -766,6 +772,7 @@ export class OwnerActionController {
         "INSERT INTO collaboration_owner_text_commands " +
           "(source_event_id, payload_hash, outcome_json, processed_at) VALUES (?, ?, ?, ?)",
       ).run(sourceEventId, payloadHash, JSON.stringify(decision!), now);
+      if (input.replyRequested) enqueueDirectOwnerReply(this.database, normalized, decision!, now);
       this.database.exec("COMMIT");
       return decision!;
     } catch (error) {
