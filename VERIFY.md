@@ -1,5 +1,13 @@
 # Meta 协作验证记录
 
+## 2026-09-06 文档容器创建回执丢失恢复（本地完整通过，非真实 Docker 验收）
+
+- TDD 历史证据：92645/6d8162 exit 1，12 项新增断言失败、23 项既有测试通过，复现未知 ID 被跳过、无持久查询尝试及取消/接管边界。实现后 80090/c75972 exit 0，恢复/账本/提取器/摄取四文件 99 项、typecheck/diff 通过。追加真实生产提取器与重建恢复器的受控端口联通测试后，接续原 session 11501，不重复启动。
+- 本轮直接观察：11501/b1dd60 两文件 41 项通过；完整链最终 11501/f42bdf exit 0。主集 274 文件通过/1 跳过（275），2919 项通过/18 跳过（2937），333.85 秒；broker、updater、desktop-viewer、package-link、save-file、packaged-server 检查均成功，打包服务在无可达 node_modules 环境启动且 9 个代理路径有效。
+- 完整命令：`pnpm exec vitest run server/collaboration/operations/document-resource-journal.test.ts server/collaboration/operations/document-resource-recovery.test.ts && pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-document-discovery-typecheck && git diff --check`。全链 exit 0，类型检查、独立服务端编译和补丁检查通过；文档更新后另行 diff 检查。
+- 覆盖：精确名称发现、ID 持久化先于清理、独立查缺、错误 ID/名称/标签/镜像/多结果拒绝、写失败/冲突迟到回执/新尝试/取消/实例接管拒绝删除、查询失败三次跨重建预算、无归属旧记录保留，以及生产提取器丢回执后无需重解析的恢复链。没有放宽测试断言或超时。
+- 证据对应 c00ab23 基础上的本批四个代码/测试文件，观察保存 document-discovery-full-output/last（早期观察另见 b1dd60/390f36）。schema 28 未改，无实际 Docker 删除、群消息、模型切换、凭据或部署操作。真实镜像强隔离/强杀、独立 supervisor、主机重启、六类试点与 Owner 验收仍未证明，Goal 不标 complete。
+
 ## 2026-09-06 OpenCode GPT-6 Astra选择核查（尚未接入）
 
 - 用户撤销百炼/.env要求，明确OpenCode、GPT-6 Astra、medium。没有百炼代码/配置变更或真实模型请求；前一轮相关文档阅读和.env配置名称检查不能当作接入成果，密钥未显示。

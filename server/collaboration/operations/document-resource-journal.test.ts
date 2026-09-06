@@ -4,8 +4,10 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { openCollaborationLedger } from "../db.ts";
+import { InstanceLeaseCoordinator } from "../leases.ts";
 import { DockerDocumentExtractor } from "./document-extractor.ts";
 import { DocumentResourceJournal } from "./document-resource-journal.ts";
+import { DocumentResourceRecovery } from "./document-resource-recovery.ts";
 import type { DockerCommandPort } from "./docker-containment.ts";
 
 const dirs: string[] = [];
@@ -34,6 +36,31 @@ function fixture(fault = "") {
   return { db, path, run, extractor: new DockerDocumentExtractor({ image, docker: { run }, journal }) };
 }
 describe("persistent document resource ownership", () => {
+  it("recovers a real extractor's lost creation receipt after instance replacement without parsing again", async () => {
+    const f = fixture("lost");
+    const prior = new InstanceLeaseCoordinator(f.db, "old-parser").acquire(1000, 10)!;
+    const extractor = new DockerDocumentExtractor({ image, docker: { run: f.run },
+      journal: new DocumentResourceJournal(f.path, "fixture-context", prior) });
+    try {
+      await expect(extractor.extract(input)).rejects.toThrow("attachment_document_cleanup_failed");
+      expect(f.run.mock.calls.map(c => c[0][0])).toEqual(["create", "rm"]);
+      const owner = new InstanceLeaseCoordinator(f.db, "new-parser").acquire(2000, 1000)!;
+      const journal = new DocumentResourceJournal(f.path, "fixture-context", owner);
+      const [row] = journal.readUnresolved();
+      expect(row).toMatchObject({ container_id: null, instance_owner: prior.ownerId, instance_fence: prior.fence });
+      const run = vi.fn<DockerCommandPort["run"]>(async args => {
+        if (args[0] === "rm") expect(journal.readUnresolved()[0].container_id).toBe(id);
+        return { exitCode: 0, stderr: Buffer.alloc(0), stdout: args[0] === "inspect"
+          ? Buffer.from(JSON.stringify([{ Id: id, Name: `/${row.container_name}`, Image: image,
+            Config: { Labels: { "com.openmausbot.document.resource": row.container_name } } }])) : Buffer.alloc(0) };
+      });
+      await new DocumentResourceRecovery(journal, { run }).run(owner, 2000, () => {});
+      expect(run.mock.calls.map(c => c[0][0])).toEqual(["inspect", "rm", "container"]);
+      expect(run.mock.calls[0][0][3]).toBe(row.container_name);
+      expect(journal.readUnresolved()).toEqual([]);
+      expect(f.db.prepare("SELECT recovery_verified_absent FROM collaboration_document_resources").get()).toEqual({ recovery_verified_absent: 1 });
+    } finally { f.db.close(); }
+  });
   it("records ownership before create, ID before start and cleanup acknowledgement across reopening", async () => {
     const f = fixture();
     try {

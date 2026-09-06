@@ -64,7 +64,7 @@ export class DocumentResourceJournal {
   recoveryCandidates(owner: DocumentResourceOwner, now: number): DocumentResourceRecord[] {
     return this.use(db => {
       assertCurrentInstanceLease(db, owner, now);
-      return db.prepare("SELECT * FROM collaboration_document_resources WHERE docker_context=? AND cleanup_acknowledged=0 AND container_id IS NOT NULL AND instance_owner IS NOT NULL AND instance_fence<? AND recovery_attempts<3 ORDER BY created_at,container_name LIMIT 20")
+      return db.prepare("SELECT * FROM collaboration_document_resources WHERE docker_context=? AND cleanup_acknowledged=0 AND instance_owner IS NOT NULL AND instance_fence<? AND recovery_attempts<3 ORDER BY created_at,container_name LIMIT 20")
         .all(this.dockerContext, owner.fence) as unknown as DocumentResourceRecord[];
     });
   }
@@ -73,7 +73,7 @@ export class DocumentResourceJournal {
       db.exec("BEGIN IMMEDIATE");
       try {
         assertCurrentInstanceLease(db, owner, now);
-        const result = db.prepare("UPDATE collaboration_document_resources SET recovery_attempts=recovery_attempts+1 WHERE container_name=? AND docker_context=? AND cleanup_acknowledged=0 AND container_id IS NOT NULL AND instance_owner IS NOT NULL AND instance_fence<? AND recovery_attempts<3")
+        const result = db.prepare("UPDATE collaboration_document_resources SET recovery_attempts=recovery_attempts+1 WHERE container_name=? AND docker_context=? AND cleanup_acknowledged=0 AND instance_owner IS NOT NULL AND instance_fence<? AND recovery_attempts<3")
           .run(name, this.dockerContext, owner.fence);
         db.exec("COMMIT"); return result.changes === 1;
       } catch (error) { db.exec("ROLLBACK"); throw error; }
@@ -81,6 +81,22 @@ export class DocumentResourceJournal {
   }
   assertRecovering(owner: DocumentResourceOwner, now: number): void {
     this.use(db => assertCurrentInstanceLease(db, owner, now));
+  }
+  /** Persist a verified discovery only for the unchanged, latest recovery attempt. */
+  bindDiscoveredId(row: DocumentResourceRecord, id: string, owner: DocumentResourceOwner, now: number): boolean {
+    if (!/^[a-f0-9]{64}$/.test(id) || row.container_id !== null || row.docker_context !== this.dockerContext) return false;
+    return this.use(db => {
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        assertCurrentInstanceLease(db, owner, now);
+        const result = db.prepare("UPDATE collaboration_document_resources SET container_id=? WHERE container_name=? AND docker_context=? " +
+          "AND image=? AND source_hash=? AND instance_owner=? AND instance_fence=? AND instance_fence<? " +
+          "AND container_id IS NULL AND cleanup_acknowledged=0 AND recovery_attempts=? AND recovery_attempts BETWEEN 1 AND 3")
+          .run(id, row.container_name, this.dockerContext, row.image, row.source_hash, row.instance_owner, row.instance_fence,
+            owner.fence, row.recovery_attempts + 1);
+        db.exec("COMMIT"); return result.changes === 1;
+      } catch (error) { db.exec("ROLLBACK"); throw error; }
+    });
   }
   recovered(name: string, owner: DocumentResourceOwner, now: number): void {
     this.use(db => {
