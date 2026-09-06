@@ -68,7 +68,7 @@ async function harness(text: string, options: { partial?: boolean; other?: boole
 const definition = { goal: "修复登录反馈", goalConfirmed: true, acceptanceConditions: [{ description: "显示错误原因", observation: "登录失败可看到原因" }], blockingAmbiguities: [] };
 
 describe("authoritative attachment completeness", () => {
-  async function replacementHarness(options: { text?: string; otherSender?: boolean; partial?: boolean; manyOriginals?: boolean } = {}) {
+  async function replacementHarness(options: { text?: string; otherSender?: boolean; partial?: boolean; manyOriginals?: boolean; duplicateNames?: boolean } = {}) {
     const directory = mkdtempSync(join(tmpdir(), "attachment-replacement-")); scratch.push(directory);
     let plannerCalls = 0;
     const serviceOptions = { dataDirectory: directory, planning: { planner: { propose() { plannerCalls++; return validProposal(); } }, policy,
@@ -77,7 +77,7 @@ describe("authoritative attachment completeness", () => {
     const sender = { senderCorpId: "corp", senderStaffId: "user", senderId: "user", displayName: "测试同事" };
     const old = service.ingestDingTalkMessage({ sourceEventId: "old", transportMessageId: "old", conversationId: "group", addressedToBot: true,
       text: "请修复附件里的登录问题", sender, receivedAt: 1000, resources: [{ capabilityRef: "a".repeat(64), kind: "file", name: "bugs.pdf" },
-        ...(options.manyOriginals ? [{ capabilityRef: "c".repeat(64), kind: "file" as const, name: "other.pdf" }] : [])] });
+        ...(options.manyOriginals ? [{ capabilityRef: "c".repeat(64), kind: "file" as const, name: options.duplicateNames ? "bugs.pdf" : "other.pdf" }] : [])] });
     const db = new DatabaseSync(join(directory, "collaboration", "collaboration.sqlite"));
     db.exec("UPDATE collaboration_attachments SET ingest_state='unsupported',error_code='attachment_document_format_unsupported'");
     const message = { sourceEventId: "replacement", transportMessageId: "replacement", conversationId: "group", addressedToBot: true,
@@ -87,12 +87,13 @@ describe("authoritative attachment completeness", () => {
     expect(next.workItemId).toBe(old.workItemId);
     const bytes = Buffer.from("登录失败应该显示具体原因");
     const vault = new DingTalkAttachmentCapabilityVault(join(directory, "vault"), "fixture-vault-secret-at-least-32-bytes");
+    let projection: unknown;
     await new AttachmentIngestionCoordinator({ dataDirectory: directory, databaseFile: join(directory, "collaboration", "collaboration.sqlite"), vault,
       downloader: { download: async () => ({ ok: true, bytes, sha256: createHash("sha256").update(bytes).digest("hex") }) },
       extract(input) { const value = extractAttachmentText(input); return options.partial ? { ...value, truncated: true, warnings: ["unread_images"] } : value; },
-      onEvidence: notice => { service.observeAttachmentEvidence(old.workItemId!, accepted(notice)); },
+      onEvidence: notice => { projection = service.observeAttachmentEvidence(old.workItemId!, accepted(notice)); },
     }).process([{ capabilityRef: "b".repeat(64), downloadCode: "fixture-new-code", robotCode: "fixture-bot" }], 3000);
-    return { service, serviceOptions, db, id: old.workItemId!, message, plannerCalls: () => plannerCalls };
+    return { service, serviceOptions, db, id: old.workItemId!, message, projection, plannerCalls: () => plannerCalls };
   }
   it.each(["用这份文件替换原附件", "这份是可读版本，请替换原附件", "请用这个附件代替之前的文件"])("uses an explicitly linked readable replacement while retaining both sources: %s", async text => {
     const h = await replacementHarness({ text });
@@ -148,6 +149,116 @@ describe("authoritative attachment completeness", () => {
       expect(readNaturalAttachmentContext(h.db, h.id).fingerprint).not.toBe(before);
       expect(readNaturalAttachmentContext(h.db, h.id).incomplete).toBe(true);
     } finally { restarted.close(); h.db.close(); }
+  });
+  it.each(["用这份文件替换原消息里的第二份附件", "请用这个附件代替第2份", "用这份替换“other.pdf”", "用这份文件替换other.pdf"])("selects the exact original attachment without skipping its unread sibling: %s", async text => {
+    const h = await replacementHarness({ manyOriginals: true, text });
+    try {
+      const id = (h.db.prepare("SELECT id FROM collaboration_attachments WHERE capability_ref=?").get("c".repeat(64)) as { id: string }).id;
+      const ctx = readNaturalAttachmentContext(h.db, h.id);
+      expect(ctx.replacements).toMatchObject([{ originalAttachmentId: id, originalSourceEventId: "old", sourceEventId: "replacement", originalOrdinal: 1 }]);
+      expect(JSON.stringify(h.projection)).toContain("第 2 份");
+      expect(JSON.stringify(h.projection)).toContain("其他材料尚未核对完整");
+      expect(ctx.incomplete).toBe(true); // The first file still has not been read.
+      h.service.reviseWorkItemDefinition(h.id, definition);
+      expect(h.plannerCalls()).toBe(0);
+      const before = ctx.fingerprint;
+      h.service.ingestDingTalkMessage(h.message);
+      expect(readNaturalAttachmentContext(h.db, h.id).fingerprint).toBe(before);
+    } finally { h.service.close(); h.db.close(); }
+  });
+  it.each(["用这份替换第0份", "用这份替换第三份", "用这份替换最后一份", "不要用这份替换第二份", "文件里写着：用这份替换第二份", "用这份替换missing.pdf"])("does not guess a target from invalid or non-authoritative selection: %s", async text => {
+    const h = await replacementHarness({ manyOriginals: true, text });
+    try { expect(readNaturalAttachmentContext(h.db, h.id).replacements).toEqual([]); expect(readNaturalAttachmentContext(h.db, h.id).incomplete).toBe(true); }
+    finally { h.service.close(); h.db.close(); }
+  });
+  it("requires clarification for duplicate filenames rather than selecting the first match", async () => {
+    const h = await replacementHarness({ manyOriginals: true, duplicateNames: true, text: "用这份替换bugs.pdf" });
+    try { expect(readNaturalAttachmentContext(h.db, h.id).replacements).toEqual([]); }
+    finally { h.service.close(); h.db.close(); }
+  });
+  it.each(["第二份", "替换第2份附件", "是other.pdf"])("uses a separate source-linked selection reply: %s", async text => {
+    const h = await replacementHarness({ manyOriginals: true });
+    try {
+      expect(readNaturalAttachmentContext(h.db, h.id).replacements).toEqual([]);
+      const selection = { ...h.message, sourceEventId: "choose", transportMessageId: "choose", resources: [], replyToSourceEventId: "replacement", text, receivedAt: 4000 };
+      h.service.ingestDingTalkMessage(selection);
+      const ctx = readNaturalAttachmentContext(h.db, h.id);
+      expect(ctx.replacements).toMatchObject([{ originalOrdinal: 1, selectionSources: [{ sourceEventId: "choose", normalizedHash: expect.stringMatching(/^[a-f0-9]{64}$/) }] }]);
+      const reply = h.db.prepare("SELECT payload_json FROM collaboration_outbox WHERE source_event_id LIKE 'definition:%' ORDER BY rowid DESC LIMIT 1").get() as { payload_json: string };
+      expect(reply.payload_json).toContain("原消息第 2 份");
+      expect(reply.payload_json).toContain("尚未开始修改");
+      expect(ctx.incomplete).toBe(true);
+      const before = ctx.fingerprint; h.service.ingestDingTalkMessage(selection);
+      expect(readNaturalAttachmentContext(h.db, h.id).fingerprint).toBe(before);
+      h.service.close(); const restarted = startCollaborationService(h.serviceOptions);
+      try { expect(readNaturalAttachmentContext(h.db, h.id).fingerprint).toBe(before); }
+      finally { restarted.close(); }
+    } finally { h.service.close(); h.db.close(); }
+  });
+  it("acknowledges the saved selection while natural interpretation is pending", async () => {
+    const h = await replacementHarness({ manyOriginals: true });
+    h.service.close();
+    const restarted = startCollaborationService({ ...h.serviceOptions, planning: { ...h.serviceOptions.planning,
+      naturalIntake: { async interpret() { throw new Error("not needed for the durable acknowledgement"); } },
+    } });
+    try {
+      const selection = { ...h.message, sourceEventId: "natural-choose", transportMessageId: "natural-choose",
+        resources: [], replyToSourceEventId: "replacement", text: "第二份", receivedAt: 4000 };
+      restarted.ingestDingTalkMessage(selection);
+      const reply = h.db.prepare("SELECT payload_json FROM collaboration_outbox WHERE source_event_id LIKE 'definition:%' ORDER BY rowid DESC LIMIT 1").get() as { payload_json: string };
+      expect(reply.payload_json).toContain("原消息第 2 份");
+      expect(reply.payload_json).toContain("尚未开始修改");
+      expect(h.db.prepare("SELECT status FROM collaboration_natural_intake_jobs WHERE source_event_id='natural-choose'").get()).toEqual({ status: "pending" });
+      const revision = readLatestWorkItemSnapshot(h.db, h.id)!.revision;
+      restarted.ingestDingTalkMessage(selection);
+      expect(readLatestWorkItemSnapshot(h.db, h.id)!.revision).toBe(revision);
+      expect(h.plannerCalls()).toBe(0);
+    } finally { restarted.close(); h.db.close(); }
+  });
+  it.each(["other-person", "wrong-reference", "conflict"])("does not adopt a follow-up with %s", async fault => {
+    const h = await replacementHarness({ manyOriginals: true });
+    try {
+      const selection = { ...h.message, sourceEventId: "choose", transportMessageId: "choose", resources: [], replyToSourceEventId: fault === "wrong-reference" ? "old" : "replacement", text: "第二份", receivedAt: 4000,
+        sender: fault === "other-person" ? { ...h.message.sender, senderStaffId: "other", senderId: "other" } : h.message.sender };
+      h.service.ingestDingTalkMessage(selection);
+      if (fault === "conflict") h.service.ingestDingTalkMessage({ ...selection, sourceEventId: "choose-again", transportMessageId: "choose-again", text: "第一份", receivedAt: 5000 });
+      expect(readNaturalAttachmentContext(h.db, h.id).replacements).toEqual([]);
+    } finally { h.service.close(); h.db.close(); }
+  });
+  it("can complete both source replacements, retaining exact selections in the interpreted Spec receipt", async () => {
+    const h = await replacementHarness({ manyOriginals: true });
+    let restarted: ReturnType<typeof startCollaborationService> | undefined;
+    try {
+      h.service.ingestDingTalkMessage({ ...h.message, sourceEventId: "choose", transportMessageId: "choose", resources: [], replyToSourceEventId: "replacement", text: "第二份", receivedAt: 4000 });
+      expect(readNaturalAttachmentContext(h.db, h.id).incomplete).toBe(true);
+      h.service.ingestDingTalkMessage({ ...h.message, sourceEventId: "first-readable", transportMessageId: "first-readable", text: "请用这份替换第一份附件", receivedAt: 5000,
+        resources: [{ capabilityRef: "d".repeat(64), kind: "file", name: "first.txt", mimeType: "text/plain" }] });
+      const directory = h.serviceOptions.dataDirectory, bytes = Buffer.from("补充登录问题的验收场景");
+      await new AttachmentIngestionCoordinator({ dataDirectory: directory, databaseFile: join(directory, "collaboration", "collaboration.sqlite"),
+        vault: new DingTalkAttachmentCapabilityVault(join(directory, "vault"), "fixture-vault-secret-at-least-32-bytes"),
+        downloader: { download: async () => ({ ok: true, bytes, sha256: createHash("sha256").update(bytes).digest("hex") }) },
+        onEvidence: notice => { h.service.observeAttachmentEvidence(h.id, accepted(notice)); },
+      }).process([{ capabilityRef: "d".repeat(64), downloadCode: "fixture-next", robotCode: "fixture-bot" }], 6000);
+      const context = readNaturalAttachmentContext(h.db, h.id);
+      expect(context.incomplete).toBe(false);
+      expect(context.replacements.map(r => r.originalOrdinal).sort()).toEqual([0, 1]);
+      expect(context.attachments).toHaveLength(2);
+      expect(h.db.prepare("SELECT count(*) AS n FROM collaboration_attachments WHERE ingest_state='unsupported'").get()).toEqual({ n: 2 });
+      h.service.close();
+      let captured!: NaturalIntakeRequest;
+      restarted = startCollaborationService({ ...h.serviceOptions, planning: { ...h.serviceOptions.planning, naturalIntake: { async interpret(request) {
+        captured = request; return { version: 1, sourceEventId: request.event.sourceEventId, baseRevision: request.snapshot.revision, goal: null, acceptance: [], answers: [], questions: [] };
+      } } } });
+      restarted.ingestDingTalkMessage({ ...h.message, sourceEventId: "check-both", transportMessageId: "check-both", resources: [], text: "两份可读材料都补齐了", receivedAt: 7000 });
+      await restarted.processNaturalIntake();
+      expect(captured.attachmentsIncomplete).toBe(false);
+      const job = h.db.prepare("SELECT status,proposal_json FROM collaboration_natural_intake_jobs WHERE source_event_id='check-both'").get() as { status: string; proposal_json: string };
+      expect(job.status).toBe("applied");
+      expect(JSON.parse(job.proposal_json).attachmentReplacements).toEqual(context.replacements);
+      restarted.reviseWorkItemDefinition(h.id, definition);
+      expect(readLatestWorkItemSnapshot(h.db, h.id)!.blockingAmbiguities).toEqual([]);
+      expect(h.plannerCalls()).toBe(1);
+    } finally { restarted?.close(); h.service.close(); h.db.close(); }
   });
   it.each(["correction", "conflict"])("handles later replacement %s without silently choosing or keeping a resolved blocker", async mode => {
     const h = await replacementHarness({ otherSender: mode === "correction" });

@@ -320,6 +320,11 @@ export class PlanningCoordinator {
 
   observeAcceptedEvent(workItemId: string, text: string, now = Date.now(), sourceEventId?: string): DefinitionRevisionOutcome | null {
     assertLedgerArmed(this.database);
+    const selectedReplacement = sourceEventId ? readNaturalAttachmentContext(this.database, workItemId)
+      .replacements.find(row => row.selectionSources.some(source => source.sourceEventId === sourceEventId)) : undefined;
+    const contextSummary = selectedReplacement
+      ? `已确认这份可读材料对应原消息第 ${selectedReplacement.originalOrdinal + 1} 份附件，原文件仍保留。接下来继续核对材料、目标和验收标准，尚未开始修改。`
+      : undefined;
     if (this.naturalIntake && sourceEventId) {
       // Only the durable source can feed the model; changed redeliveries cannot inject a new definition.
       const event = this.database.prepare("SELECT normalized_json FROM collaboration_external_events WHERE source='dingtalk' AND source_event_id=? AND work_item_id=?")
@@ -342,7 +347,7 @@ export class PlanningCoordinator {
           id: "natural-input-pending", question: "我正在结合前面的沟通整理这条补充。", dependsOn: [],
           recommendedAnswer: "暂时不需要填写格式或编号；有新信息直接补充即可。",
         }],
-      }, now, { enqueueNaturalEvent: sourceEventId });
+      }, now, { enqueueNaturalEvent: sourceEventId, contextSummary });
     }
     const latest = readLatestWorkItemSnapshot(this.database, workItemId);
     const normalized = text.trim();
@@ -375,6 +380,7 @@ export class PlanningCoordinator {
       workItemId,
       patch,
       now,
+      { contextSummary },
     );
   }
 
@@ -451,6 +457,8 @@ export class PlanningCoordinator {
         recommendedAnswer: "等待读取完成，或用文字补充未读取附件的关键内容。",
       });
     }
+    const replacement = readNaturalAttachmentContext(this.database, workItemId).replacements.find(row => row.replacementAttachmentId === evidence.attachmentId);
+    const incompleteMaterials = attachmentCompletenessGates(this.database, workItemId, facts).length > 0;
     return this.reviseDefinition(workItemId, {
       ...(!latest
         ? {
@@ -465,10 +473,11 @@ export class PlanningCoordinator {
     }, now, {
       attachmentId: evidence.attachmentId,
       contentHash: evidence.contentHash,
-      contextSummary: attachmentCompletenessGates(this.database, workItemId, facts).length
-        ? `已保存附件“${sourceLabel}”的可读部分；仍有材料或需求内容未核对完整，尚未开始修改。`
-        : readNaturalAttachmentContext(this.database, workItemId).replacements.some(row => row.replacementAttachmentId === evidence.attachmentId)
-          ? `已读取附件“${sourceLabel}”，按你的说明用这份可读材料替代原来未读成功的附件；原文件仍保留。接下来确认目标和验收标准，尚未开始修改。`
+      contextSummary: replacement
+        ? `已读取附件“${sourceLabel}”，按你的说明作为原消息第 ${replacement.originalOrdinal + 1} 份附件的可读替代，原文件仍保留。` +
+          (incompleteMaterials ? "其他材料尚未核对完整，尚未开始修改。" : "接下来确认目标和验收标准，尚未开始修改。")
+        : incompleteMaterials
+          ? `已保存附件“${sourceLabel}”的可读部分；仍有材料或需求内容未核对完整，尚未开始修改。`
           : `已安全读取附件“${sourceLabel}”，内容已按来源保存，正在确认目标和验收标准。`,
     });
   }

@@ -1,5 +1,12 @@
 # Meta 协作验证记录
 
+## 2026-09-06 多附件选择及精确确认反馈（完整链通过）
+
+- 先行行为失败 81794/eff51a：7 失败 / 42 通过，暴露多文件定位和后续选择缺失。初步实现相关三文件 115 项通过；扩展后八文件 223 项通过。加强真实返回卡片断言后 30f140 exit 1：3 失败 / 47 跳过，单独选择虽正确关联但没有明确确认。未将早先弱断言通过冒充文案 TDD 红灯。
+- 修复确认反馈：70624/4772b3 exit 0，8 文件 / 223 项、11.97 秒、typecheck/diff 通过。补自然解释排队入口的确认/重放覆盖：29490/cfc8f3 exit 0，51 项、3.10 秒及 typecheck/diff。
+- 完整命令：pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-attachment-selection-typecheck && git diff --check。首次权限审查超时未启动；一次获准重试后 34020 在 35105c exit 0。主集 272 文件通过 / 1 跳过，2866 项通过 / 18 跳过（2884 注册），332.08 秒；broker 7、updater 15、viewer 5、package-link 2、save-file 10、无 node_modules 打包启动及 9 路代理、类型检查、独立编译、diff 全通过。原始输出已保存 attachment-selection-full-output，所有句柄终态。
+- 覆盖原上传序号/唯一名称、重复名称/越界/他人/错误引用/冲突拒绝、未读兄弟文件持续阻塞、双文件依次补齐、来源收据持久化与重建。SQLite/生产协调器实际执行，正文和模型受控；无真实钉钉发送、在线文档授权、实际容器解析、模型调用或部署，不能据此宣称六类试点已完成。
+
 ## 2026-09-06 可读附件替代材料来源（完整链通过）
 
 - 33249 在 fad711 exit 1：3 行为失败 / 26 通过，三种明确替代表达仍被旧失败文件阻塞。初修 98494 在 2b8d57 exit 0：3 文件 / 95 项/typecheck/diff 通过；扩展来源模型收据、反馈与漂移后 58787 在 510665 exit 0：8 文件 / 203 项/typecheck/diff 通过。
