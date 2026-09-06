@@ -4,6 +4,8 @@ import type { DingTalkActiveSendPort, DingTalkHttpResult } from "./ports.ts";
 import { renderDingTalkSessionMessage } from "./session-message.ts";
 import { boundedReplyRequest } from "./bounded-reply-request.ts";
 import { inspectDingTalkBusinessStatus } from "./business-status.ts";
+import { createHash } from "node:crypto";
+import { DingTalkGroupReceiptVault, hasGroupReceipt, validGroupQueryKey, type GroupReceiptBinding } from "./group-receipt-vault.ts";
 
 type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
@@ -20,12 +22,35 @@ export class FetchDingTalkInteractiveCardSender implements DingTalkActiveSendPor
   private readonly credentials: DingTalkCredentialProvider;
   private readonly fetcher: FetchLike;
   private readonly now: () => number;
+  private readonly receiptDirectory?: string;
   private cached: { accessToken: string; expiresAt: number; clientId: string } | null = null;
 
-  constructor(credentials: DingTalkCredentialProvider, fetcher: FetchLike = fetch, now: () => number = Date.now) {
+  constructor(credentials: DingTalkCredentialProvider, fetcher: FetchLike = fetch, now: () => number = Date.now, receiptDirectory?: string) {
     this.credentials = credentials;
     this.fetcher = fetcher;
     this.now = now;
+    this.receiptDirectory = receiptDirectory;
+  }
+
+  private binding(input: { proactiveOpenConversationId: string; payload: unknown; idempotencyKey: string }, robotCode: string): GroupReceiptBinding {
+    return { idempotencyKey: input.idempotencyKey, robotCode, openConversationId: input.proactiveOpenConversationId.trim(),
+      payloadHash: createHash("sha256").update(JSON.stringify({ payload: input.payload, rendered: renderDingTalkSessionMessage(input.payload) })).digest("hex") };
+  }
+
+  /** Query-only recovery: null means no receipt, never permission to resend an uncertain Outbox entry. */
+  async queryAccepted(input: { proactiveOpenConversationId: string; payload: unknown; idempotencyKey: string }): Promise<DingTalkHttpResult | null> {
+    if (!this.receiptDirectory) return null;
+    try {
+      if (!hasGroupReceipt(this.receiptDirectory, input.idempotencyKey)) return null;
+      if (isDingTalkCandidateOwnerCard(input.payload)) throw new Error("receipt_payload_conflict");
+      const credentials = this.credentials.load();
+      if (!credentials) return { ok: false, status: 503, deliveryState: "unknown", code: "dingtalk_receipt_credentials_missing" };
+      const key = new DingTalkGroupReceiptVault(this.receiptDirectory, credentials.clientSecret).read(this.binding(input, credentials.clientId));
+      if (key === null) throw new Error("receipt_disappeared");
+      const token = await this.accessToken(credentials);
+      if (!token) return { ok: false, status: 502, deliveryState: "unknown", code: "dingtalk_receipt_token_unavailable" };
+      return this.confirmGroupDelivery(token, credentials.clientId, input.proactiveOpenConversationId.trim(), key);
+    } catch { return { ok: false, status: 502, deliveryState: "unknown", code: "dingtalk_group_receipt_unavailable" }; }
   }
 
   async send(input: {
@@ -40,6 +65,13 @@ export class FetchDingTalkInteractiveCardSender implements DingTalkActiveSendPor
     }
     const credentials = this.credentials.load();
     if (!credentials) return { ok: false, status: 503, code: "dingtalk_credentials_missing", deliveryState: "not_sent" };
+    let vault: DingTalkGroupReceiptVault | undefined;
+    if (!card && this.receiptDirectory) {
+      const recovered = await this.queryAccepted(input);
+      if (recovered) return recovered;
+      try { vault = new DingTalkGroupReceiptVault(this.receiptDirectory, credentials.clientSecret); }
+      catch { return { ok: false, status: 503, deliveryState: "unknown", code: "dingtalk_group_receipt_unavailable" }; }
+    }
     const accessToken = await this.accessToken(credentials);
     if (!accessToken) return { ok: false, status: 502, code: "dingtalk_access_token_failed", deliveryState: "not_sent" };
     let endpoint: string;
@@ -106,14 +138,18 @@ export class FetchDingTalkInteractiveCardSender implements DingTalkActiveSendPor
     if (!card && !hasMessageReceipt) {
       return { ok: false, status: response.status, code: "dingtalk_group_message_unconfirmed", deliveryState: "unknown" };
     }
-    if (!card) return this.confirmGroupDelivery(accessToken, credentials.clientId, conversationId, String(result.processQueryKey));
+    if (!card) {
+      try { vault?.store(this.binding(input, credentials.clientId), String(result.processQueryKey)); }
+      catch { return { ok: false, status: 502, deliveryState: "unknown", code: "dingtalk_group_receipt_store_failed" }; }
+      return this.confirmGroupDelivery(accessToken, credentials.clientId, conversationId, String(result.processQueryKey));
+    }
     return { ok: true, status: response.status };
   }
 
   private async confirmGroupDelivery(accessToken: string, robotCode: string, openConversationId: string, processQueryKey: string): Promise<DingTalkHttpResult> {
     // This is a query/recall key, not a verified inbound reply-message ID. Never
     // copy it into source-event aliases, public errors, logs or model context.
-    if (processQueryKey.length > 4096 || processQueryKey.trim() !== processQueryKey || /[\u0000-\u001f\u007f]/u.test(processQueryKey)) {
+    if (!validGroupQueryKey(processQueryKey)) {
       return { ok: false, status: 502, code: "dingtalk_group_receipt_invalid", deliveryState: "unknown" };
     }
     try {

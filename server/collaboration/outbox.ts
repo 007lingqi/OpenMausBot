@@ -23,6 +23,10 @@ export interface CollaborationOutboxEntry {
 
 /** Transport-neutral contract implemented by the real DingTalk adapter. */
 export interface OutboxDeliveryPort {
+  /** Query an existing accepted send only. null is absence of evidence, never permission to resend. */
+  reconcile?(message: Parameters<OutboxDeliveryPort["deliver"]>[0]): Promise<
+    { outcome: "sent" } | { outcome: "unknown"; error: string } | null
+  >;
   /** Remote sends without server-enforced idempotency may retry only proven non-delivery. */
   retryPolicy?: "only-confirmed-unsent";
   deliver(message: {

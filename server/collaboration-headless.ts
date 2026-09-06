@@ -249,15 +249,15 @@ export function createDingTalkDelivery(
   const proactiveRoutes = proactiveConversationRoutes(environment, hasProactiveConfiguration
     ? readDingTalkAllowedConversationIds(environment) : new Set<string>());
   const credentialProvider = new SecureDingTalkCredentialFileProvider(environment);
+  const activeSender = new FetchDingTalkInteractiveCardSender(credentialProvider, fetch, Date.now,
+    join(dataDirectory, "collaboration", "group-message-receipts"));
   const router = new DingTalkReplyRouter(
     sessions,
     new FetchDingTalkSessionSender(),
-    new FetchDingTalkInteractiveCardSender(credentialProvider),
+    activeSender,
   );
   const databaseFile = join(dataDirectory, "collaboration", "collaboration.sqlite");
-  return {
-    retryPolicy: "only-confirmed-unsent",
-    async deliver(message) {
+  function routeEvent(message: Parameters<OutboxDeliveryPort["deliver"]>[0]): string | undefined {
       const eventId = sourceEventId(message.dedupeKey);
       const routedSourceEventId =
         hasOwnerTextCommandReceipt(databaseFile, eventId) ? eventId : eventId?.startsWith("attachment-feedback:")
@@ -266,6 +266,22 @@ export function createDingTalkDelivery(
         (message.aggregateType === "work_item" && message.dedupeKey.startsWith("dingtalk:event:lifecycle-recovery:"))
           ? latestWorkItemSourceEventId(databaseFile, message.aggregateId) ?? sourceEventId(message.dedupeKey)
           : sourceEventId(message.dedupeKey);
+      return routedSourceEventId;
+  }
+  const reconcile: NonNullable<OutboxDeliveryPort["reconcile"]> = async message => {
+    const destination = proactiveDestination(databaseFile, routeEvent(message), proactiveRoutes);
+    const result = await activeSender.queryAccepted({ proactiveOpenConversationId: destination ?? "",
+      payload: message.payload, idempotencyKey: JSON.stringify([message.id, message.dedupeKey]) });
+    if (!result) return null;
+    return result.ok ? { outcome: "sent" } : { outcome: "unknown", error: result.code ?? "proactive_delivery_unconfirmed" };
+  };
+  return {
+    retryPolicy: "only-confirmed-unsent",
+    reconcile,
+    async deliver(message) {
+      const recovered = await reconcile(message);
+      if (recovered) return recovered;
+      const routedSourceEventId = routeEvent(message);
       let payload = message.payload;
       if (isDingTalkCandidateOwnerCardRequest(payload) && !isDingTalkCandidateOwnerCard(payload)) {
         const actions = new OwnerActionController(databaseFile);
@@ -283,7 +299,7 @@ export function createDingTalkDelivery(
         sourceEventId: routedSourceEventId,
         proactiveOpenConversationId: proactiveDestination(databaseFile, routedSourceEventId, proactiveRoutes),
         payload,
-        idempotencyKey: message.dedupeKey,
+        idempotencyKey: JSON.stringify([message.id, message.dedupeKey]),
       });
       if (result.kind === "sent") return { outcome: "sent" as const };
       if (result.kind === "permanent") return { outcome: "permanent_failure" as const, error: result.code };

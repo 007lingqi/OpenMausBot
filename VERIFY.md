@@ -1,5 +1,16 @@
 # Meta 协作验证记录
 
+## 2026-09-06 加密受理回执与只查询恢复入口（完整链通过）
+
+- 提交结果纠正：14423/7d662f exit 0 为真实完整测试终态；后续 32c850 exit 128 的本地 git add 被文件写权限阻止，未产生提交。此前“保存本地任务提交”为提前记录，不作为提交成功证据。本轮先纠正记录并按工具权限执行本地提交。
+
+- 最终检查点（优先于下方启动记录）：完整链 14423/7d662f exit 0，pnpm test、typecheck、独立服务端编译和 diff 全通过。Test Files 273 passed | 1 skipped (274) Tests 2891 passed | 18 skipped (2909) Start at 14:54:20 Duration 343.80s (transform 1.90s, setup 7.26s, import 4.47s, tests 312.82s, environment 13ms) 原始观察 durable-group-receipts-full-output，最后结果 durable-group-receipts-full-terminal。本轮 20 工具轮收束；保存本地任务提交，不 push。 真实 API/部署/群聊未验收，后台调度仍待实现。
+
+- 测试先行 c5916e exit 1：新模块不存在导致测试加载失败（不记作行为反例）。基础实现后 4 项及 typecheck 通过。生产装配初查 70352/b7d7a7 exit 0：5 文件 / 123 项/typecheck/diff。
+- 反例 1d915e exit 1：2 失败 / 43 跳过，证明删除路由后仍会 session 发送、无历史回执时缺凭据会误挡正常 session。修复后扩展 36128/25b8e8 exit 0：10 文件 / 193 项（5.75 秒）、typecheck/diff。覆盖文件重建、机密不明文、权限/符号链接/篡改/错误 Secret、app/群/payload绑定、保存失败、真实运输重建只查询及 Outbox 原有不重发。
+- 完整 pnpm test/typecheck/独立编译 /tmp/openmausbot-durable-group-receipts-typecheck/diff：14423 正在运行，待终态，不先记通过。最终完整链包含进一步加强的原 payload+渲染双绑定及回执消失失败关闭。
+- 受控 HTTP 与临时文件/真实 SQLite 测试，不是实际钉钉 API 送达、真实群或主机重启验收。后台自动查询尚未接入，不更改 dead_letter 行为，无真实身份/凭据/容器/部署变更。
+
 ## 2026-09-06 主动群消息实际发送确认（完整链通过）
 
 - TDD e7aaa1 exit 1：7 失败 / 35 跳过，PROCESSING/RECALLED/未知/缺状态/HTTP 错误/失联/矛盾均错误返回成功。实现后 87284/ab791d exit 0：6 文件 / 126 项、typecheck/diff。

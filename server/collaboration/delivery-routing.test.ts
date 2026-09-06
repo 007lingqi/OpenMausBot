@@ -36,7 +36,7 @@ function fixture(environment: NodeJS.ProcessEnv) {
     return { id: String(row.id), source: "dingtalk", dedupeKey: String(row.dedupe_key), aggregateType: "work_item",
       aggregateId: String(row.aggregate_id), aggregateVersion: Number(row.aggregate_version), kind: "primary_status_card", payload: JSON.parse(String(row.payload_json)) };
   };
-  vi.spyOn(SecureDingTalkCredentialFileProvider.prototype, "load").mockReturnValue({ clientId: "synthetic-client", clientSecret: "synthetic-secret" });
+  vi.spyOn(SecureDingTalkCredentialFileProvider.prototype, "load").mockReturnValue({ clientId: "synthetic-client", clientSecret: "synthetic-secret-at-least-32-bytes-long" });
   const destinations: string[] = [];
   const fetcher = vi.fn(async (url: string | URL, init?: RequestInit) => {
     if (String(url).includes("accessToken")) return new Response(JSON.stringify({ accessToken: "synthetic-token", expireIn: 7200 }));
@@ -50,6 +50,38 @@ function fixture(environment: NodeJS.ProcessEnv) {
 }
 
 describe("production delivery group routing", () => {
+  it("reconstructs query-only delivery without resending through an available session", async () => {
+    const env = { OMB_DINGTALK_ALLOWED_CONVERSATION_IDS: "group-a,group-b", OMB_DINGTALK_PROACTIVE_CONVERSATION_MAP: '{"group-a":"open-a","group-b":"open-b"}' };
+    const f = fixture(env); let state = "PROCESSING";
+    f.fetcher.mockImplementation(async (url: string | URL) => {
+      if (String(url).endsWith("/accessToken")) return new Response(JSON.stringify({ accessToken: "synthetic-token", expireIn: 7200 }));
+      if (String(url).endsWith("/query")) return new Response(JSON.stringify({ sendStatus: state }));
+      return new Response(JSON.stringify({ processQueryKey: "private-query-key" }));
+    });
+    try {
+      const message = f.message("event-group-a");
+      expect(await f.delivery.deliver(message)).toMatchObject({ outcome: "unknown" });
+      f.sessions.capture({ sourceEventId: "event-group-a", webhookUrl: "https://oapi.dingtalk.com/robot/send?access_token=synthetic", expiresAt: Date.now() + 60000 });
+      state = "SUCCESS";
+      const rebuilt = createDingTalkDelivery(f.sessions, env, f.root);
+      expect(await rebuilt.reconcile!(message)).toEqual({ outcome: "sent" });
+      expect(await rebuilt.deliver(message)).toEqual({ outcome: "sent" });
+      // Removing the route must not turn an accepted proactive send into a fresh session send.
+      expect(await createDingTalkDelivery(f.sessions, {}, f.root).deliver(message)).toMatchObject({ outcome: "unknown" });
+      const urls = f.fetcher.mock.calls.map(([url]) => String(url));
+      expect(urls.filter(url => url.endsWith("/groupMessages/send"))).toHaveLength(1);
+      expect(urls.some(url => url.includes("oapi.dingtalk.com"))).toBe(false);
+      expect(JSON.stringify(f.db.prepare("SELECT * FROM collaboration_outbox").all())).not.toContain("private-query-key");
+    } finally { f.db.close(); }
+  });
+  it("keeps an unused session path available without proactive credentials", async () => {
+    const f = fixture({ OMB_DINGTALK_ALLOWED_CONVERSATION_IDS: "group-a", OMB_DINGTALK_PROACTIVE_OPEN_CONVERSATION_ID: "open-a" });
+    try {
+      vi.spyOn(SecureDingTalkCredentialFileProvider.prototype, "load").mockReturnValue(null);
+      f.sessions.capture({ sourceEventId: "event-group-a", webhookUrl: "https://oapi.dingtalk.com/robot/send?access_token=synthetic", expiresAt: Date.now() + 60000 });
+      expect(await f.delivery.deliver(f.message("event-group-a"))).toEqual({ outcome: "sent" });
+    } finally { f.db.close(); }
+  });
   it("keeps an accepted but processing reply unconfirmed across dispatcher restart without sending again", async () => {
     const f = fixture({ OMB_DINGTALK_ALLOWED_CONVERSATION_IDS: "group-a,group-b", OMB_DINGTALK_PROACTIVE_CONVERSATION_MAP: '{"group-a":"open-a","group-b":"open-b"}' });
     let sends = 0;

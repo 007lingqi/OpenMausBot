@@ -2,6 +2,13 @@
 
 ## 当前状态
 
+- 提交状态纠正（2026-09-06，最高优先）：上批完整链已在 14423/7d662f exit 0 结束，但随后 32c850 的 git add 因 index.lock 写权限失败（exit 128），没有形成本地提交。下方提前写入“形成本地提交”为记录错误；本轮恢复先纠正并在授权范围内完成本地保存，绝不 push。工作区十个任务文件仍在，用户 AGENTS.md/outputs 保留。
+
+- 本批最终检查点（最高优先）：完整链 14423/7d662f exit 0，pnpm test、typecheck、独立服务端编译和 diff 全通过。Test Files 273 passed | 1 skipped (274) Tests 2891 passed | 18 skipped (2909) Start at 14:54:20 Duration 343.80s (transform 1.90s, setup 7.26s, import 4.47s, tests 312.82s, environment 13ms) 本轮 20 工具轮收束，分类 progress；受理回执存储和只查询入口已实现，后台调度未接入，Goal active。全部原始观察保存在工具状态 durable-group-receipts-full-output，最后结果 durable-group-receipts-full-terminal；此前两次初始观察另见 4019f1/75007d。本批仅十个任务文件形成本地提交，不 push。 用户 AGENTS.md/outputs 保留；schema 27、实际身份凭据和容器不变。下一步先核实终态/提交，然后接入有界 query-only 队列恢复。
+
+- 本轮最新（优先于下方历史）：从 b0d8927 继续，上一轮仅检查点为 no progress。本轮已实现加密不可变受理回执及真实运输 query-only reconcile，已有回执优先于 session，路由移除/身份或内容漂移不重发；尚无后台调度。相关 10 文件 / 193 项及 typecheck/diff 通过；完整链 14423 正在运行，未提交、未部署，schema 27 不变。用户 AGENTS.md/outputs 未触碰。
+- 下一恢复入口：完整回归终态后保存本批；继续为待核查队列接入持久次数/退避、三次停止、失效 fence 和认领时效保护的 query-only 调度，处理与 Owner 手动核查/补发竞争。不得把缺回执或 PROCESSING 分类成已确认未发送。真实平台/模型/文档/解析隔离及六类场景的未验收边界保留。
+
 - 最新批次（优先）：普通主动群消息发送后增加一次有界状态查询；仅无矛盾 SUCCESS 标记发送成功，PROCESSING/RECALLED/查询失败不重发而进入待核查。9 文件 / 185 项及完整链通过，23002 在 fa2b11 exit 0：272 文件通过 / 1 跳过，2883 项通过 / 18 跳过，520.63 秒，全部后续类型/编译/打包检查通过。schema 27 不变，未部署，Goal active，本轮 progress。
 - 当前恢复入口：接下来实现持久受理回执和后台查询恢复，避免已受理但仍处理中的消息永久依赖人工核查；本批仅单次查询、不存 processQueryKey、不持续对账，不是完整投递闭环。群文件/引用消息/主动 @ 的真实平台限制、真实模型配置、镜像及新通道授权仍未解决，不能据本地通过标记总目标完成。
 - 最新前置复核（2026-09-06）：本轮分类 no progress，重新核实但未解除真实环境阻塞。显式 colima-openmausbot-pilot 中原试点 healthy、镜像仍 2ae332cd23df、无解析镜像，其他容器 exited 且未动。官方 registry 匿名 HEAD 在 6979/07acf7 exit 28，DNS 10008ms 超时；manifest inspect 的权限审查超时，进程未启动，未重复提交。所有已启动命令终态，没有构建/解析/部署。模型配置与新增接入授权仍无 Owner 回复，保留 Goal active；不得把记录更新计为实现进展。
