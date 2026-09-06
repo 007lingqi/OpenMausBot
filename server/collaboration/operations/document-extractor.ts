@@ -57,10 +57,15 @@ export class DockerDocumentExtractor {
 }
 
 export function configuredDocumentExtractor(environment: NodeJS.ProcessEnv): ((input: AttachmentTextExtractionInput) => Promise<AttachmentTextExtraction>) | undefined {
+  const enabled = environment.OMB_DOCUMENT_EXTRACTOR_ENABLED?.trim();
+  if (!enabled || enabled === "0") return undefined;
+  if (enabled !== "1") throw new Error("attachment_document_enable_invalid");
   const image = environment.OMB_DOCUMENT_EXTRACTOR_IMAGE?.trim();
-  if (!image) return undefined;
+  if (!image) throw new Error("attachment_document_image_required");
+  const context = environment.OMB_DOCKER_CONTEXT?.trim();
+  if (!context) throw new Error("attachment_document_context_required");
   const extractor = new DockerDocumentExtractor({ image, docker: new NodeDockerCommandPort({
-    executable: environment.OMB_DOCKER_EXECUTABLE, context: environment.OMB_DOCKER_CONTEXT,
+    executable: environment.OMB_DOCKER_EXECUTABLE, context,
   }) });
   return input => extractor.extract(input);
 }

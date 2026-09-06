@@ -1,5 +1,16 @@
 # Meta 协作验证记录
 
+## 2026-09-06 文档解析 headless 装配（完整链已通过）
+
+- 沙箱外授权复验同一完整链：72315 在 92ea6e exit 0。270 文件通过 / 1 跳过，2793 项通过 / 18 跳过（2811 注册），314.68 秒；broker 7、updater 15、viewer 5、package-link 2、save-file 10、打包脱离 node_modules 启动及 9 路代理、pnpm typecheck、独立服务端编译、diff 均通过。失败范围中的通信/端口用例全部重验，未改这些测试、未删除断言或增加跳过。
+
+- 先行 `pnpm exec vitest run server/collaboration/operations/document-extractor.test.ts server/collaboration/attachment-ingestion.test.ts`：57962 exit 1（eae2b0），5 失败 / 45 通过。
+- 修复后加入 server/collaboration-headless.test.ts：59221 exit 0（af0598），3 文件 / 61 项，随后 pnpm typecheck 和 git diff --check 通过。Docker/下载均是合成夹具受控端口；SQLite、headless 生产工厂、协调器和重建投影实际执行，没有联网/群消息/真实附件。
+- 完整 `pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-document-wiring-typecheck && git diff --check`：历史沙箱内会话 95895 在 07d0f1 exit 1，29 文件失败 / 241 通过 / 1 跳过，28 项失败 / 2536 通过 / 247 跳过（2811 注册），16 未处理错误，623.21 秒。socket EPERM 与监听超时使该次结果不能通过，串联后续未执行。该句柄终态后才启动上述授权复验。
+- 非生产环境只读 d67187：试点 healthy、旧镜像 2ae332cd23df、无解析器镜像；官方 registry 匿名 HEAD 40559 在 620e88 exit 28，DNS 10010ms 超时。未构建或运行实际文档 smoke，无部署/身份/凭据/群消息变更。所有句柄终态。
+- 已观察本批 attachment-ingestion 43、headless 11、document-extractor 7、document-extractor-smoke 17 项在完整主集内通过，但不能替代完整链，更不能代替真实 Linux 文档解析和六类群聊。
+
+
 ## 2026-09-06 普通直接控制与回复原子化（已验证）
 
 - TDD delivery-routing/actions：47504 exit 1（ff4398），7 失败 / 48 通过。初修五文件 62107 exit 0（bd15aa），118 项及 typecheck/diff。反向复用 TDD 84067 exit 1（b04e53），1 失败 / 13 通过。

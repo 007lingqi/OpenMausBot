@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DockerDocumentExtractor } from "./document-extractor.ts";
+import { configuredDocumentExtractor, DockerDocumentExtractor } from "./document-extractor.ts";
 import type { DockerCommandPort } from "./docker-containment.ts";
 import { NodeDockerCommandPort } from "./docker-containment.ts";
 
@@ -18,6 +18,16 @@ function harness(output: unknown, failStart = false, failCleanup = false) {
   return { calls, extractor: new DockerDocumentExtractor({ docker, image }) };
 }
 describe("isolated document extraction", () => {
+  it("requires explicit enablement, a fixed image and a named Docker context without running commands", () => {
+    expect(configuredDocumentExtractor({})).toBeUndefined();
+    expect(configuredDocumentExtractor({ OMB_DOCUMENT_EXTRACTOR_IMAGE: image })).toBeUndefined();
+    expect(configuredDocumentExtractor({ OMB_DOCUMENT_EXTRACTOR_ENABLED: "0", OMB_DOCUMENT_EXTRACTOR_IMAGE: image })).toBeUndefined();
+    expect(() => configuredDocumentExtractor({ OMB_DOCUMENT_EXTRACTOR_ENABLED: "yes" })).toThrow("attachment_document_enable_invalid");
+    expect(() => configuredDocumentExtractor({ OMB_DOCUMENT_EXTRACTOR_ENABLED: "1" })).toThrow("attachment_document_image_required");
+    expect(() => configuredDocumentExtractor({ OMB_DOCUMENT_EXTRACTOR_ENABLED: "1", OMB_DOCUMENT_EXTRACTOR_IMAGE: "parser:latest", OMB_DOCKER_CONTEXT: "pilot" })).toThrow("attachment_document_image_not_fixed");
+    expect(() => configuredDocumentExtractor({ OMB_DOCUMENT_EXTRACTOR_ENABLED: "1", OMB_DOCUMENT_EXTRACTOR_IMAGE: image })).toThrow("attachment_document_context_required");
+    expect(configuredDocumentExtractor({ OMB_DOCUMENT_EXTRACTOR_ENABLED: "1", OMB_DOCUMENT_EXTRACTOR_IMAGE: image, OMB_DOCKER_CONTEXT: "pilot" })).toBeTypeOf("function");
+  });
   it("handles an early parser stdin close without an unhandled EPIPE", async () => {
     const port = new NodeDockerCommandPort({ executable: process.execPath });
     await expect(port.run(["-e", "process.exit(0)"], { input: Buffer.alloc(16 * 1024 * 1024), timeoutMs: 5000 })).rejects.toThrow("docker_stdin_write_failed");

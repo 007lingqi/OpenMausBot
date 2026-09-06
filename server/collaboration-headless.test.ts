@@ -59,6 +59,15 @@ function signalIo(): { io: HeadlessIo; signal(name: NodeJS.Signals): void } {
 }
 
 describe("secure collaboration headless CLI", () => {
+  it("rejects incomplete document parser configuration before creating the runtime", async () => {
+    const directory = temporaryDirectory();
+    let created = false;
+    await expect(runCollaborationHeadless(["--health", "--data-dir", directory], {
+      OMB_DINGTALK_ENABLED: "0", OMB_DOCUMENT_EXTRACTOR_ENABLED: "1",
+    }, { io: io().io, createRuntime(options) { created = true; return new CollaborationHeadlessRuntime(options); } }))
+      .rejects.toThrow("attachment_document_image_required");
+    expect(created).toBe(false);
+  });
   it("prints a safe delivery-review summary in health-only mode without consuming the queue or acquiring ownership", async () => {
     const directory = temporaryDirectory();
     const ledger = openCollaborationLedger(join(directory, "collaboration"));

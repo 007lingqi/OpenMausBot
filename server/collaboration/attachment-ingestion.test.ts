@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { Readable } from "node:stream";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -16,7 +17,10 @@ import { extractAttachmentText } from "./attachment-text-extractor.ts";
 import { OutboxDispatcher } from "./outbox-dispatcher.ts";
 import { InstanceLeaseCoordinator } from "./leases.ts";
 import { renderDingTalkSessionMessage } from "../integrations/dingtalk/session-message.ts";
-import { createDingTalkDelivery } from "../collaboration-headless.ts";
+import { createDingTalkDelivery, runCollaborationHeadless } from "../collaboration-headless.ts";
+import { CollaborationHeadlessRuntime, type CollaborationHeadlessRuntimeOptions } from "./operations/runtime.ts";
+import { NodeDockerCommandPort } from "./operations/docker-containment.ts";
+import { FetchDingTalkAttachmentDownloader } from "../integrations/dingtalk/attachment-downloader.ts";
 import { DingTalkSessionReplyRegistry } from "../integrations/dingtalk/reply-router.ts";
 import { LocalOwnerRegistry } from "./owner.ts";
 import { recoverAttachmentProjection } from "./attachment-projection-recovery.ts";
@@ -34,6 +38,7 @@ const REF_B = "b".repeat(64);
 const scratchDirectories: string[] = [];
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   for (const directory of scratchDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
@@ -101,6 +106,69 @@ function row(databaseFile: string, ref = REF_A): Record<string, unknown> {
 }
 
 describe("AttachmentIngestionCoordinator", () => {
+  it.each(["complete", "partial", "failed", "disabled", "cancelled"] as const)("uses the headless document pipeline with %s evidence", async mode => {
+    const setup = context([resource({ name: "bugs.pdf", mimeType: "application/pdf" })]);
+    const credentialFile = join(setup.dataDirectory, "credentials.json");
+    writeFileSync(credentialFile, JSON.stringify({ clientId: "fixture-app", clientSecret: VAULT_SECRET }), { mode: 0o600 });
+    const image = `sha256:${"d".repeat(64)}`;
+    const container = "e".repeat(64);
+    const source = Buffer.from("synthetic PDF fixture, never sent to a real parser");
+    const controller = new AbortController();
+    const download = vi.spyOn(FetchDingTalkAttachmentDownloader.prototype, "download").mockResolvedValue({ ok: true, bytes: source, sha256: hash(source), mediaType: "application/pdf" });
+    const docker = vi.spyOn(NodeDockerCommandPort.prototype, "run").mockImplementation(async args => {
+      if (args[0] === "create") return { exitCode: 0, stdout: Buffer.from(container), stderr: Buffer.alloc(0) };
+      if (args[0] === "rm") return { exitCode: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+      if (mode === "failed") throw new Error("private parser stderr must not escape");
+      if (mode === "cancelled") controller.abort();
+      return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.from(JSON.stringify({ version: 1, format: "pdf",
+        records: [{ location: "page:2", text: "登录失败 access_token=never-persist-this" }],
+        truncated: mode === "partial", warnings: mode === "partial" ? ["unread_images"] : [],
+      })) };
+    });
+    let options!: CollaborationHeadlessRuntimeOptions;
+    await runCollaborationHeadless(["--health", "--data-dir", setup.dataDirectory], {
+      OMB_DINGTALK_ENABLED: "1", OMB_DINGTALK_CREDENTIAL_FILE: credentialFile,
+      OMB_DINGTALK_ALLOWED_CONVERSATION_IDS: "fixture-group",
+      OMB_DOCUMENT_EXTRACTOR_ENABLED: mode === "disabled" ? "0" : "1",
+      OMB_DOCUMENT_EXTRACTOR_IMAGE: image, OMB_DOCKER_CONTEXT: "fixture-nonproduction",
+    }, { io: { stdin: Readable.from([]), stdout: { write() {} }, stderr: { write() {} }, once() {}, off() {} },
+      createRuntime(input) { options = input; return new CollaborationHeadlessRuntime({ dataDirectory: setup.dataDirectory, probeOnly: true }); } });
+    expect(docker).not.toHaveBeenCalled();
+    expect(download).not.toHaveBeenCalled();
+    const onEvidence = vi.fn();
+    const factoryContext = { databaseFile: setup.databaseFile, dataDirectory: setup.dataDirectory, signal: controller.signal, assertActive() {}, onEvidence };
+    const coordinator = options.attachmentIngestionFactory!(factoryContext);
+    if (mode === "cancelled") {
+      await expect(coordinator.process([capability()], 1000)).rejects.toThrow("attachment_ingestion_inactive");
+      expect(onEvidence).not.toHaveBeenCalled();
+      expect(row(setup.databaseFile).ingest_state).toBe("downloading");
+    } else {
+      await coordinator.process([capability()], 1000);
+      await options.attachmentIngestionFactory!(factoryContext).process([], 2000);
+      if (mode === "complete" || mode === "partial") {
+        expect(onEvidence).toHaveBeenCalledTimes(1);
+        expect(onEvidence).toHaveBeenCalledWith(WORK_ITEM_ID, expect.objectContaining({ sourceEventId: "source-event-1", contentHash: hash(source),
+          format: "pdf", truncated: mode === "partial", warnings: mode === "partial" ? ["unread_images"] : [],
+          chunks: [expect.objectContaining({ untrusted: true, text: expect.stringContaining("page:2") })] }));
+        const db = new DatabaseSync(setup.databaseFile);
+        try {
+          expect(db.prepare("SELECT extractor, extractor_version, source_hash FROM collaboration_attachment_extractions").get()).toEqual({ extractor: "docker-document", extractor_version: `1:${image}`, source_hash: hash(source) });
+          expect(JSON.stringify(db.prepare("SELECT content FROM collaboration_attachment_chunks").all())).not.toContain("never-persist-this");
+        } finally { db.close(); }
+      } else {
+        expect(onEvidence).not.toHaveBeenCalled();
+        expect(row(setup.databaseFile).ingest_state).toBe(mode === "disabled" ? "unsupported" : "failed");
+        expect(JSON.stringify(row(setup.databaseFile))).not.toContain("private parser");
+      }
+    }
+    expect(download).toHaveBeenCalledTimes(1);
+    if (mode === "disabled") expect(docker).not.toHaveBeenCalled();
+    else {
+      expect(docker).toHaveBeenCalledTimes(3);
+      expect(docker.mock.calls[0][0]).toContain(image);
+      expect(docker.mock.calls[2][0]).toEqual(["rm", "--force", container]);
+    }
+  });
   async function recoveryFixture(count = 1) {
     const setup = context(Array.from({ length: count }, (_, ordinal) => resource({ capabilityRef: ordinal ? REF_B : REF_A })));
     const bytes = Buffer.from("original bug evidence");

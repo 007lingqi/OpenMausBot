@@ -17,7 +17,9 @@ docker image inspect omb-document-parser:local --format '{{.Id}}'
 
 依赖版本与 PyPI wheel SHA256 全部固定在 requirements.lock；禁止安装未列明的源码包。构建阶段可联网，运行阶段必须无网络、无宿主挂载、非 root、只读并限制资源。运行镜像不包含测试代码。
 
-生产适配器 `DockerDocumentExtractor` 只接受最终镜像的固定 ID/digest；通过 stdin 传入文件，超时/失败后清理本次容器。`configuredDocumentExtractor` 尚未接入 headless 工厂，不应仅设置环境变量便宣称功能已上线。需要完成真实容器参数检查、正文摄取/恢复、来源追踪、失败清理及钉钉试点后才启用。
+生产适配器 `DockerDocumentExtractor` 只接受最终镜像的固定 ID/digest；通过 stdin 传入文件，超时/失败后清理本次容器。headless 工厂已接入 `configuredDocumentExtractor`，默认关闭。完成真实容器隔离 smoke 后，才可在非生产配置中明确设置 `OMB_DOCUMENT_EXTRACTOR_ENABLED=1`、`OMB_DOCUMENT_EXTRACTOR_IMAGE`（已验证的固定 ID/digest）和 `OMB_DOCKER_CONTEXT`（明确的非生产 context）。仅设置镜像不启用；显式启用但缺少镜像/context 或使用可变标签时启动拒绝。不修改现有试点配置，也不设置代表“已验证”的替代标记。
+
+健康检查只验证配置，不拉取镜像、不启动解析容器、不读取文件。实际摄取仍经下载校验、受限解析、正文脱敏、来源账本和完整性门禁；部分正文不得当完整读取。服务失去认领或停止后，迟到解析结果不能落库；解析仍受现有命令超时和清理约束，本接入不提供即时取消容器或强杀后的持久清理 supervisor。装配与受控测试通过不代表真实文档/在线文档或钉钉试点已通过。
 
 ## 生产适配器容器验证
 
@@ -37,6 +39,8 @@ node --experimental-strip-types server/collaboration/operations/document-extract
 成功只输出镜像 ID、场景和证据来源，不输出文档正文。注入受控 Docker 端口的测试报告明确标为 `controlled_docker_port`，不等同于 CLI 的 `docker` 证据。两者均不证明钉钉正文摄取、Ledger 重启恢复或在线文档权限。
 
 ## 验证边界
+
+2026-09-06 headless 装配已完成且完整本地回归通过（2793 项，另 18 跳过；类型检查、独立编译和打包启动通过）。最新显式 context 只读检查确认试点仍 healthy、旧镜像 2ae332cd23df、无解析器缓存镜像；沙箱外官方 registry 匿名 HEAD 仍 DNS 超时（10010ms）。本次未构建、未部署、未启用真实解析。下方是装配前的历史记录，不能作为当前代码未接线的结论。
 
 2026-09-06 最新前置复核（业务候选 4b20d9c）：显式 `colima-openmausbot-pilot` 查询确认现有试点 healthy，本地没有本解析器镜像。Docker CLI 缺少 buildx，但已有 `docker manifest inspect`，因此查询固定基础镜像不要求额外安装插件。沙箱外匿名访问官方 `registry-1.docker.io/v2/` 仍在 DNS 解析约 10 秒后超时；本次没有启动拉取、构建或 smoke，没有修改 DNS/代理或现有容器。网络恢复后先通过官方清单取得可信 digest，再执行上述两个构建目标和正式 smoke。主服务尚未装配解析器；容器测试通过也不能单独证明群内真实附件可用。
 

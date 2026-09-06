@@ -64,6 +64,7 @@ import { validateTargetCommandSpec, type TargetCommandSpec } from "./collaborati
 import type { AcceptanceCondition } from "./collaboration/snapshot.ts";
 import { configuredNaturalIntake } from "./collaboration/operations/natural-intake-model.ts";
 import { configuredAcceptanceMapping } from "./collaboration/operations/acceptance-mapping-model.ts";
+import { configuredDocumentExtractor } from "./collaboration/operations/document-extractor.ts";
 import { proactiveConversationRoutes, proactiveDestination, hasOwnerTextCommandReceipt } from "./collaboration/delivery-routing.ts";
 
 interface HeadlessArguments {
@@ -519,6 +520,7 @@ function productionRuntimeOptions(
   const executionOptions = dockerExecutionOptions(environment);
   const naturalIntake = configuredNaturalIntake(environment);
   const acceptanceMapping = configuredAcceptanceMapping(environment);
+  const documentExtractor = configuredDocumentExtractor(environment);
   if (naturalIntake && !executionOptions.planner) throw new Error("natural_intake_requires_planning_configuration");
   if (acceptanceMapping && !executionOptions.planner) throw new Error("acceptance_mapping_requires_planning_configuration");
   return {
@@ -565,6 +567,7 @@ function productionRuntimeOptions(
             );
             return new AttachmentIngestionCoordinator({
               signal, assertActive,
+              ...(documentExtractor ? { extract: documentExtractor } : {}),
               databaseFile,
               dataDirectory,
               vault,
