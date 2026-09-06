@@ -1,5 +1,21 @@
 # Meta 协作验证记录
 
+## 2026-09-06 源码上下文真实模型验证与直接验收漂移修复
+
+- 5cccaa exit1：默认沙箱最小loopback bind检查返回EPERM，因此未将默认沙箱当作可运行完整端口测试。没有开启常驻监听、外部网络或Docker通道。
+- 95749/367859 exit0：上轮模型探测审核超时后的唯一重试已实际启动并通过。/tmp/openmausbot-astra-source-context-probe.mjs创建临时固定Git两文件，生产采集器传测试和implementation上下文，真实OpenCodex gpt-6-astra/medium Proposer+Verifier完成精确函数契约映射；收据重读与重复请求不产生新模型调用。无候选执行或真实钉钉交付，不能替代六类试点。
+- 87080/326c27 exit1：新增直接读取门禁测试复现readScope变化后candidateHasPassedMetaReview仍true。改为v3双收据保存/直接重算Spec身份后，新增read/deny漂移与低风险自动完成拒绝断言通过。60308/ad07de exit1的4项失败为旧v2合成政策夹具；显式更新夹具到v3并按其当前数据库输入计算身份，不伪造真实验证证据。
+- 84705/c06b36 exit0：7文件133项/typecheck/diff通过，包含candidate-verification、candidate-approval、acceptance-source/mapping、actions、runtime-verification-retry、runtime测试。
+- 27855/f1f4ee exit0：`pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-source-context-v3-typecheck && git diff --check`完整终态通过。涵盖主集、broker、桌面及普通打包无node_modules启动/9代理路径和headless健康/运行/SIGTERM；固定源码/测试下取得完整链证据，输出截断不补造测试总数。全部句柄终态，本批16个任务文件可本地提交；不混入用户AGENTS.md/outputs、不push、不部署。真实模型证据只覆盖前述合成函数场景，整个产品目标未完成。
+
+## 2026-09-06 固定候选业务实现上下文（尚未完整验证）
+
+- 基线6a0f734；TDD95506/bb016a exit1：12失败/32通过，复现未采集实现、未执行read/deny、角色schema不接受及headless丢字段。96882/66ae34 exit1：两个候选验证新增用例失败，模型视图缺实现且越界未拦截。
+- 首次实现68492/2a2550 exit1：80通过/1失败，原有无效报告器错误提示被新清单校验抢先覆盖。未放宽原断言，修复报告器校验顺序；新增cwd基准、重复角色、祖先目录/空read范围和总数约束用例。
+- 99466/c72d70 exit0：`pnpm vitest run server/collaboration/acceptance-source.test.ts server/collaboration/acceptance-mapping.test.ts server/collaboration/candidate-verification.test.ts server/collaboration/worktree-manager.test.ts server/collaboration-headless.test.ts && pnpm typecheck && git diff --check`；5文件83项通过。两个模型端口为合成夹具；真实Git对象与SQLite验证固定读取、当前范围、实现角色不可绑定、缓存失效、先于模型/执行阻断。不能替代真实模型或完整回归。
+- 完整回归命令计划为 `pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-source-context-typecheck && git diff --check`。cell199 CreateProcess因自动权限审核超时未启动；cell200唯一重试同样未启动。无session/无退出码，不能记测试失败或通过，不再盲重试。
+- `/tmp/openmausbot-astra-source-context-probe.mjs`已准备合成固定Git两文件来源、Astra/medium两真实角色、SQLite收据重读及重放探测；cell200首次执行同样在CreateProcess前审核超时，未向模型发请求。模型探测尚可按工具规则重试一次，完整回归需要用户指导/权限执行安排。当前所有工具cell均终态，无运行中操作。本批不提交、不部署；真实群和Docker验收均未发生。
+
 ## 2026-09-06 语法感知源码脱敏批次
 
 - 接续TDD c6b77d exit1：初始27项19失败/8通过。parse-only实现后518ad7/ca8f52 exit0：27项与类型检查通过。新增集成及边界578b7b exit1：7失败/49通过；包含两处尚未接线、动态键括号/解构别名/类型字面量遗漏，以及一个把凭据样式正则误设为原样保留的新增测试。后者拆成普通正则保留、凭据样式正则隐藏两例，不放宽敏感值保护。

@@ -24,7 +24,7 @@ import { collectAcceptanceMappingRequest } from "./acceptance-source.ts";
 const VERIFIER_AGENT_ID = "deterministic-verifier-v1";
 const META_AGENT_ID = "meta-acceptance-gate-v1";
 export const CANDIDATE_VERIFICATION_MAX_ATTEMPTS = 3;
-const VERIFICATION_CONTRACT_SCHEMA_VERSION = 2 as const;
+const VERIFICATION_CONTRACT_SCHEMA_VERSION = 3 as const;
 const FULL_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
 const IN_FLIGHT = new WeakMap<DatabaseSync, Map<string, Promise<CandidateVerificationOutcome>>>();
 
@@ -37,6 +37,8 @@ interface VerificationRow {
   modify_agent_id: string;
   verifier_agent_id: string;
   commands_json: string;
+  read_scope_json: string;
+  deny_scope_json: string;
   repository_path: string;
   result_sha: string;
   changed_paths_json: string;
@@ -124,6 +126,22 @@ function hash(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
+function verificationSpec(row: VerificationRow) {
+  return {
+    workItemId: row.work_item_id,
+    planRevision: row.plan_revision,
+    snapshotRevision: row.snapshot_revision,
+    proposalHash: row.proposal_hash,
+    verifierReadScope: JSON.parse(row.read_scope_json) as unknown,
+    verifierDenyScope: JSON.parse(row.deny_scope_json) as unknown,
+    goal: row.goal,
+    facts: JSON.parse(row.facts_json) as unknown,
+    assumptions: JSON.parse(row.assumptions_json) as unknown,
+    acceptance: JSON.parse(row.acceptance_json) as unknown,
+    blockingAmbiguities: JSON.parse(row.blocking_ambiguities_json) as unknown,
+  };
+}
+
 function verificationContractHash(
   row: VerificationRow,
   commands: Readonly<Record<string, TargetCommandSpec>>,
@@ -133,17 +151,7 @@ function verificationContractHash(
   return hash({
     schemaVersion: VERIFICATION_CONTRACT_SCHEMA_VERSION,
     mappingPolicy,
-    spec: {
-      workItemId: row.work_item_id,
-      planRevision: row.plan_revision,
-      snapshotRevision: row.snapshot_revision,
-      proposalHash: row.proposal_hash,
-      goal: row.goal,
-      facts: JSON.parse(row.facts_json) as unknown,
-      assumptions: JSON.parse(row.assumptions_json) as unknown,
-      acceptance: JSON.parse(row.acceptance_json) as unknown,
-      blockingAmbiguities: JSON.parse(row.blocking_ambiguities_json) as unknown,
-    },
+    spec: verificationSpec(row),
     selectedCommands: commandIds === null
       ? { invalidCommandsJson: row.commands_json }
       : commandIds.map((commandId) => {
@@ -158,6 +166,7 @@ function verificationContractHash(
                   maxOutputBytes: command.maxOutputBytes,
                   assertionContract: command.assertionContract ?? null,
                   assertionReporter: command.assertionReporter ?? null,
+                  acceptanceSourceFiles: command.acceptanceSourceFiles ?? null,
                 }
               : null,
           };
@@ -207,7 +216,7 @@ function readRow(database: DatabaseSync, candidateRunId: string): VerificationRo
   return database.prepare(
     "SELECT r.id AS candidate_run_id, r.work_item_id, r.plan_revision, p.snapshot_revision, p.proposal_hash, " +
       "m.assigned_agent_id AS modify_agent_id, v.assigned_agent_id AS verifier_agent_id, " +
-      "v.commands_json, r.repository_path, c.result_sha, c.changed_paths_json, " +
+      "v.commands_json, v.read_scope_json, v.deny_scope_json, r.repository_path, c.result_sha, c.changed_paths_json, " +
       "s.acceptance_json, s.blocking_ambiguities_json, s.goal, s.facts_json, s.assumptions_json " +
       "FROM collaboration_runs r " +
       "JOIN collaboration_work_items w ON w.id = r.work_item_id AND w.current_plan_revision = r.plan_revision " +
@@ -282,6 +291,11 @@ function latestPassedReviewPair(
     (expectedSpecHash !== undefined && verifier.spec_hash !== expectedSpecHash) ||
     referencedVerifierAttempt(meta) !== verifier.attempt
   ) return null;
+  // Completion/Owner gates can read receipts without invoking verify(). Bind
+  // their decision to today's persisted Spec and scopes as well as paired receipts.
+  const specIdentityHash = hash(verificationSpec(row));
+  if (reviewVerdict(verifier)?.specIdentityHash !== specIdentityHash ||
+    reviewVerdict(meta)?.specIdentityHash !== specIdentityHash) return null;
   const conditions = acceptance(row.acceptance_json);
   const commands = reviewVerdict(verifier)?.commands;
   const savedCoverage = reviewVerdict(meta)?.coverage;
@@ -494,8 +508,10 @@ export class CandidateVerificationCoordinator {
     if (before.head !== row.result_sha || before.status) reasons.push("candidate_worktree_not_clean");
     if (!reasons.length && this.options.acceptanceMapping && commandIds.some(id => !commands[id]?.assertionContract)) {
       try {
+        const readScope = strings(row.read_scope_json), denyScope = strings(row.deny_scope_json);
+        if (!readScope || !denyScope) throw new Error("acceptance_source_scope_invalid");
         const request = collectAcceptanceMappingRequest({ worktree: worktreePath, candidateSha: row.result_sha, specHash: currentSpecHash,
-          conditions, commandIds, commands });
+          conditions, commandIds, commands, readScope, denyScope });
         const result = await new AcceptanceMappingCoordinator(this.database, this.options.acceptanceMapping).map(request, input.now, input.signal);
         if (result.status === "pending") return { passed: false, status: "needs_configuration", reasons: ["acceptance_mapping_pending"],
           specHash: currentSpecHash, verifierAttempt: previous?.attempt ?? 0, metaAttempt: null };
@@ -566,6 +582,7 @@ export class CandidateVerificationCoordinator {
         verdict: {
           candidateRunId: input.candidateRunId,
           contractSchemaVersion: VERIFICATION_CONTRACT_SCHEMA_VERSION,
+          specIdentityHash: hash(verificationSpec(row)),
           reasons,
           commands: publicEvidence(evidence, commands),
           ...(mapping ? { mapping } : {}),
@@ -681,6 +698,7 @@ export class CandidateVerificationCoordinator {
         verdict: {
           candidateRunId: row.candidate_run_id,
           contractSchemaVersion: VERIFICATION_CONTRACT_SCHEMA_VERSION,
+          specIdentityHash: hash(verificationSpec(row)),
           reasons,
           verifierAttempt,
           coverage,

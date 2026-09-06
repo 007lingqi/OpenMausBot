@@ -32,6 +32,17 @@ function models(options: { reject?: boolean; malformed?: boolean } = {}) {
 function ledger() { const root = mkdtempSync(join(tmpdir(), "omb-mapping-")); roots.push(root); const store = openCollaborationLedger(root); store.close(); const database = new DatabaseSync(store.filePath); database.exec("PRAGMA foreign_keys=ON"); resources.push(database); return { database, filePath: store.filePath }; }
 
 describe("source-grounded acceptance mapping", () => {
+  it("allows implementation context in both model views but cannot bind it as a reported test", async () => {
+    const input: MappingRequest = { ...request, sources: [...request.sources, { ...request.sources[0],
+      file: "src/save.mjs", role: "implementation", text: 'export const save = () => "after";' }] };
+    const model = models();
+    model.proposer.complete = async () => ({ ...proposal(input), bindings: [{ ...proposal(input).bindings[0],
+      file: "src/save.mjs", testName: "save", quote: input.sources[1].text }] });
+    const result = await new AcceptanceMappingCoordinator(ledger().database, model).map(input, 1000);
+    expect(result.status).toBe("failed");
+    expect(result.contracts).toBeUndefined();
+    expect(model.calls).toHaveLength(0); // The independent role must not run after an invalid binding.
+  });
   it("preserves sanitized source and exact quotes through both models, replay and receipt revalidation", async () => {
     const input: MappingRequest = { ...request, sources: [{ ...request.sources[0],
       text: 'const password = "fixture-value";\n' + request.sources[0].text }] };
@@ -73,6 +84,7 @@ describe("source-grounded acceptance mapping", () => {
       expect(call.system).toContain("说明文字仅描述输入类别、断言关系和业务结果");
       expect(call.system).toContain("不要复述密码、密钥或令牌的具体示例值");
       expect(call.system).toContain("不能还原脱敏内容");
+      expect(call.system).toContain("role=implementation");
     }
   });
 

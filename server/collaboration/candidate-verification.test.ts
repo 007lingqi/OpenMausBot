@@ -32,6 +32,7 @@ import type { NaturalIntakeModelPort } from "./natural-intake.ts";
 import { InstanceLeaseCoordinator } from "./leases.ts";
 import { hasUnsettledVerification } from "./verification-lifecycle.ts";
 import { CommandCleanupError } from "./execution-limits.ts";
+import { completeVerifiedLowRiskCandidate } from "./candidate-approval.ts";
 
 const scratch: string[] = [];
 const resources: Array<{ close(): void }> = [];
@@ -149,7 +150,10 @@ function fixture(observation = "pnpm test target 验证候选结果", selfReport
   git(repository, ["config", "user.name", "Fixture"]);
   git(repository, ["config", "user.email", "fixture@example.invalid"]);
   writeFileSync(join(repository, "src", "value.txt"), "before\n");
-  if (mapping) writeFileSync(join(repository, "src", "value.test.mjs"), "import test from 'node:test'; import assert from 'node:assert/strict'; import {readFileSync} from 'node:fs'; test('候选值更新',()=>assert.equal(readFileSync('src/value.txt','utf8'),'after\\n'));\n");
+  if (mapping) {
+    writeFileSync(join(repository, "src", "value.test.mjs"), "import test from 'node:test'; import assert from 'node:assert/strict'; import {readFileSync} from 'node:fs'; test('候选值更新',()=>assert.equal(readFileSync('src/value.txt','utf8'),'after\\n'));\n");
+    writeFileSync(join(repository, "src", "value.mjs"), 'export function display(value) { return value; }\n');
+  }
   git(repository, ["add", "."]);
   git(repository, ["commit", "-m", "base"]);
   const baseSha = git(repository, ["rev-parse", "HEAD"]);
@@ -270,6 +274,55 @@ function mappingHarness(item: Fixture) {
 }
 
 describe("independent candidate verification", () => {
+  it.each(["read_scope_json", "deny_scope_json"] as const)("rejects a cached review through the completion gate when %s changes before another verification", async scope => {
+    const item = fixture(undefined, true, true);
+    item.commands["pnpm test target"].acceptanceSourceFiles = ["src/value.mjs"];
+    const h = mappingHarness(item);
+    const result = await h.coordinator.verify({ candidateRunId: item.runId, worktreePath: item.worktree,
+      instance: { ownerId: "instance-1", fence: 1 }, now: 4000 });
+    expect(result.passed).toBe(true);
+    item.database.prepare(`UPDATE collaboration_work_nodes SET ${scope}=? WHERE work_item_id=? AND node_type='validate'`)
+      .run(JSON.stringify(scope === "read_scope_json" ? ["src/value.test.mjs"] : ["src/value.mjs"]), item.workItemId);
+    expect(candidateHasPassedMetaReview(item.database, item.runId, item.candidateSha)).toBe(false);
+    expect(completeVerifiedLowRiskCandidate(item.database, { workItemId: item.workItemId, runId: item.runId,
+      sourceEventId: "scope-changed-completion", now: 5000 }).completed).toBe(false);
+  });
+  it("provides configured implementation context to both roles and invalidates cached approval when it changes", async () => {
+    const item = fixture(undefined, true, true);
+    item.commands["pnpm test target"].acceptanceSourceFiles = ["src/value.mjs"];
+    const h = mappingHarness(item); const seen: unknown[] = [];
+    for (const role of ["proposer", "verifier"] as const) {
+      const complete = h[role].complete.bind(h[role]);
+      h[role].complete = async input => {
+        const data = JSON.parse(input.user); const sources = (data.request ?? data).sources;
+        seen.push(sources.find((source: {role?: string}) => source.role === "implementation"));
+        return complete(input);
+      };
+    }
+    const input = { candidateRunId: item.runId, worktreePath: item.worktree, instance: { ownerId: "instance-1", fence: 1 }, now: 4000 };
+    const first = await h.coordinator.verify(input);
+    expect(first.passed).toBe(true);
+    expect(seen).toEqual([expect.objectContaining({ file: "src/value.mjs" }), expect.objectContaining({ file: "src/value.mjs" })]);
+    item.commands["pnpm test target"].acceptanceSourceFiles = ["src/missing.mjs"];
+    const next = await h.coordinator.verify({ ...input, now: 5000 });
+    expect(next.passed).toBe(false);
+    expect(next.specHash).not.toBe(first.specHash);
+    expect(next.reasons).toContain("acceptance_mapping_unavailable");
+    expect(h.runner.requests).toHaveLength(1);
+    expect(candidateHasPassedMetaReview(item.database, item.runId, item.candidateSha)).toBe(false);
+  });
+  it("blocks model calls and test execution for source outside the verifier's current read scope", async () => {
+    const item = fixture(undefined, true, true); item.commands["pnpm test target"].acceptanceSourceFiles = ["src/value.mjs"];
+    item.database.prepare("UPDATE collaboration_work_nodes SET read_scope_json=? WHERE work_item_id=? AND node_type='validate'")
+      .run(JSON.stringify(["src/value.test.mjs"]), item.workItemId);
+    const h = mappingHarness(item); h.proposer.complete = vi.fn(h.proposer.complete);
+    const outcome = await h.coordinator.verify({ candidateRunId: item.runId, worktreePath: item.worktree,
+      instance: { ownerId: "instance-1", fence: 1 }, now: 4000 });
+    expect(outcome.passed).toBe(false);
+    expect(outcome.reasons).toContain("acceptance_mapping_unavailable");
+    expect(h.proposer.complete).not.toHaveBeenCalled();
+    expect(h.runner.requests).toHaveLength(0);
+  });
   it("reserves direct verification before commands and rejects a second connection and independent process", async () => {
     const item = fixture();
     const other = new DatabaseSync(join(item.dataDirectory, "collaboration", "collaboration.sqlite"));

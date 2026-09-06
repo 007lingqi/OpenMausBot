@@ -74,7 +74,7 @@ function globPattern(pattern: string): RegExp {
   return new RegExp(`${expression}$`, "u");
 }
 
-function matches(path: string, patterns: readonly string[]): boolean {
+export function matchesPathScope(path: string, patterns: readonly string[]): boolean {
   return patterns.some((pattern) => globPattern(pattern).test(path));
 }
 
@@ -229,8 +229,8 @@ export class WorktreeManager {
         violations.push(`${path}: invalid_path`);
         continue;
       }
-      if (matches(path, deny)) violations.push(`${path}: denied_path`);
-      if (!matches(path, claims)) violations.push(`${path}: outside_claim`);
+      if (matchesPathScope(path, deny)) violations.push(`${path}: denied_path`);
+      if (!matchesPathScope(path, claims)) violations.push(`${path}: outside_claim`);
       const absolute = resolve(worktree.path, path);
       if (!contained(worktree.path, absolute)) {
         violations.push(`${path}: escaped_worktree`);

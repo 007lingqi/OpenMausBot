@@ -96,6 +96,7 @@ describe("secure collaboration headless CLI", () => {
     writeFileSync(key, Buffer.alloc(32, 1), { mode: 0o600 });
     writeFileSync(generation, "fixture-boot-generation");
     const command = { argv: ["node", "--test", "case.test.mjs"], timeoutMs: 1000, maxOutputBytes: 32000,
+      acceptanceSourceFiles: ["src/save.mjs"],
       assertionReporter: "node-test-v1", assertionContract: { format: "omb-assertions-v1", bindings: [{ conditionHash: "a".repeat(64), assertionIds: ["case"] }] } };
     const environment = { OMB_DINGTALK_ENABLED: "0", OMB_EXECUTION_ENABLED: "1", OMB_EXECUTION_BACKEND: "docker",
       OMB_EXECUTION_REPOSITORY: root, OMB_EXECUTION_WORKTREE_ROOT: join(root, "worktrees"), OMB_EXECUTION_EXCHANGE_ROOT: join(root, "exchange"),
@@ -118,6 +119,12 @@ describe("secure collaboration headless CLI", () => {
     expect(seen[0].acceptanceMapping?.proposer).not.toBe(seen[0].acceptanceMapping?.verifier);
     await expect(runCollaborationHeadless(["--health", "--data-dir", root], { ...environment,
       OMB_EXECUTION_TARGET_COMMANDS_JSON: JSON.stringify({ cases: { ...command, assertionReporter: "arbitrary" } }) }, dependencies)).rejects.toThrow("assertion reporter");
+    expect(seen).toHaveLength(1);
+    for (const acceptanceSourceFiles of ["src/save.mjs", ["../outside.mjs"], ["src/*.mjs"], ["src/save.mjs", "src/save.mjs"]]) {
+      await expect(runCollaborationHeadless(["--health", "--data-dir", root], { ...environment,
+        OMB_EXECUTION_TARGET_COMMANDS_JSON: JSON.stringify({ cases: { ...command, acceptanceSourceFiles } }) }, dependencies))
+        .rejects.toThrow();
+    }
     expect(seen).toHaveLength(1);
   });
   it("requires and validates an explicit DingTalk conversation allowlist", () => {

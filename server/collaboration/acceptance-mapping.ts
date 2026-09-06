@@ -11,10 +11,11 @@ import { assertLedgerArmed } from "./restore-guard.ts";
 const sha = z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u);
 const digest = z.string().regex(/^[a-f0-9]{64}$/u);
 const text = z.string().min(1).max(2000);
-const explanationRule = "说明文字仅描述输入类别、断言关系和业务结果，不要复述密码、密钥或令牌的具体示例值，即使来自测试夹具；可以说‘错误输入’或‘无效凭据’。不能还原脱敏内容；脱敏导致必要源码或依赖不完整时，不可推断缺失逻辑已满足条件。";
+const explanationRule = "说明文字仅描述输入类别、断言关系和业务结果，不要复述密码、密钥或令牌的具体示例值，即使来自测试夹具；可以说‘错误输入’或‘无效凭据’。不能还原脱敏内容；脱敏导致必要源码或依赖不完整时，不可推断缺失逻辑已满足条件。sources 中 role=implementation 是辅助核对的业务实现，不是测试报告器执行的测试，不能作为绑定的 file/testName；省略 role 或 role=test 才是测试来源。核对测试与实现的实际调用关系，未提供的依赖仍按缺失处理。";
 const requestSchema = z.object({ candidateSha: sha, specHash: digest,
   conditions: z.array(z.object({ description: text, observation: text }).strict()).min(1).max(50),
-  sources: z.array(z.object({ commandId: text, file: text, blobSha: sha, text: z.string().min(1).max(32000) }).strict()).min(1).max(16),
+  sources: z.array(z.object({ commandId: text, file: text, blobSha: sha, text: z.string().min(1).max(32000),
+    role: z.enum(["test", "implementation"]).optional() }).strict()).min(1).max(16),
 }).strict();
 /** Only a trusted fixed-candidate source collector may construct this input, never a chat/model payload. */
 export type MappingRequest = z.infer<typeof requestSchema>;
@@ -52,7 +53,7 @@ function validateProposal(raw: unknown, request: MappingRequest): Proposal {
   for (const item of proposal.bindings) {
     const source = request.sources.find(s => s.commandId === item.commandId && s.file === item.file);
     const identity = JSON.stringify([item.conditionHash, item.commandId, item.file, item.testName]);
-    if (!source || !conditions.has(item.conditionHash) || identities.has(identity)) throw new Error("acceptance_mapping_binding_invalid");
+    if (!source || source.role === "implementation" || !conditions.has(item.conditionHash) || identities.has(identity)) throw new Error("acceptance_mapping_binding_invalid");
     const lines = source.text.split("\n");
     if (item.endLine < item.startLine || item.endLine > lines.length || lines.slice(item.startLine-1, item.endLine).join("\n") !== item.quote ||
       !item.quote.includes(item.testName)) throw new Error("acceptance_mapping_quote_invalid");

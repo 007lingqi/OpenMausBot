@@ -2,6 +2,17 @@
 
 ## 当前状态
 
+- 最新接续（2026-09-06，优先于下方）：上一轮progress，本轮progress。5cccaa最小只读权限诊断确认默认沙箱loopback bind报EPERM，未盲启全量。随后真实模型探测唯一重试获准，95749/367859 exit0：固定Git测试+实现源码经生产采集器送真实Astra/medium两角色，映射approved，SQLite收据重读及重放不新增模型调用。仅合成函数契约，无候选执行/群交付。
+- 进一步复现并修复直接完成入口的Spec漂移漏洞：87080/326c27新增测试按预期失败；原直接读取不重算范围。现在v3收据在两阶段保存当前持久Spec身份并由直接读取重算，read/deny变化不等待重新verify即可拒绝低风险完成。更新合成政策夹具而未放宽门禁。84705/c06b36 exit0：7文件133项/typecheck/diff通过；此前60308/ad07de的4项失败仅旧合成v2夹具已修复。
+- 完整回归27855/f1f4ee exit0：pnpm test/typecheck/独立编译至/tmp/openmausbot-source-context-v3-typecheck/diff全部通过，含普通打包无node_modules启动/9代理及headless健康/运行/SIGTERM。完整运行期间业务/测试代码固定。所有本批句柄现终态，禁止继续轮询27855/95749或旧未启动审核请求。本批16个任务文件验证后保存本地提交，不push、不部署；实际提交结果以Git为准。
+- 接续审计：直接读取入口已绑定当前持久Spec/计划范围；外部命令定义、源码清单和模型策略在verify协调器之外是否被最新运行配置约束仍未证明，需要专项接线审计。不要外推为所有配置漂移已解决。Docker通道仍待Owner明确授权，真实文档/群/六类试点、隔离/supervisor/主机恢复及最终Owner验收保留；Goal active，用户AGENTS.md/outputs不动。
+
+- 最新批次（2026-09-06，优先于下方）：上一轮progress（6a0f734已提交），本轮progress。新增受信任命令的acceptanceSourceFiles、当前验证节点read/deny范围检查、固定候选实现来源及角色约束，源码清单/范围进入验收契约哈希。配置变化使旧通过缓存失效，越界在模型调用和测试前拒绝；headless保留并验证配置。本批不跟随import扩权、不改变模型或Docker网络。
+- 已取得定向终态99466/c72d70 exit0：5文件83项、pnpm typecheck和diff通过。TDD95506/bb016a的12项、96882/66ae34的2项原实现失败；首次实现68492/2a2550仅配置错误提示顺序失败（80项通过），保留原断言并修复后通过。
+- 完整回归尚未启动：cell199首次exec权限审核超时；cell200唯一重试也审核超时，均CreateProcess失败，无运行进程或session。真实模型探测在cell200首次尝试同样未启动，不能视为失败拒绝或模型验证通过。cell199/200均已终态，不再轮询；完整回归不可继续盲重试，需用户指导或权限审核恢复后的明确执行安排。模型探测尚保留一次允许重试。
+- 本批改动尚未提交（全量验证缺失），用户AGENTS.md/outputs不动。恢复入口：先检查当前diff，再运行完整pnpm test/typecheck/独立编译/diff及/tmp/openmausbot-astra-source-context-probe.mjs（只含临时固定Git合成源码、生产采集/两模型协调器/SQLite收据重读和重放，无钉钉发送或候选执行）。没有活跃验证句柄，不重复轮询旧回归45320或51283；两者仅属于已提交上一批。
+- Goal仍active，本轮有实质实现进展，不满足blocked条件。Docker受限通道仍待Owner授权，真实文档/群/六类场景、隔离/supervisor/主机恢复、最终Owner验收继续保留。显式源码清单不是完整依赖图保证，不得据定向测试宣称产品完整闭环完成。
+
 - 最新批次（2026-09-06，优先于下方）：继续使用 OpenCodex gpt-6-astra/medium，无需密钥。原生 Goal active；源码脱敏已实现并接入固定 Git 采集和模型请求复验，支持幂等/原证据行、动态字段和默认值保护。未执行候选代码、未读密钥、未改网络/容器。TypeScript 同版本移至运行依赖，锁文件只读一致性检查通过。
 - 定向验证 66362/6d2c26 exit0：4 文件89项、pnpm typecheck、diff通过。真实合成反例34382/31219e exit0：合成Proposer提议，真实Astra独立Verifier指出缺少实际登录/界面逻辑及脱敏关键比较，返回missing，协调器rejected。只证明负例门禁，不是线上交付。
 - 完整回归45320/55e815 exit0：pnpm test/typecheck/独立编译至/tmp/openmausbot-source-redaction-typecheck/diff通过，运行期间代码/测试固定。补充headless打包测试d792d1发现TypeScript初始化缺少ESM中的__filename；修复仅涉及打包脚本和默认测试脚本，未改已验证业务/测试代码。51283/3ad32f exit0：重新构建全部入口、普通打包启动/9代理、独立headless健康/运行/SIGTERM及typecheck/diff通过。headless检查已加入默认pnpm test末端，不再遗漏。所有句柄终态；保存本地批次，不push。源码采集仍只包含显式测试文件；下一批补可信读/拒绝范围内的被测依赖上下文，不得自动任意遍历仓库。

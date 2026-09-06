@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { assertionContractSchema, readAssertionReport, type AssertionContract, type AssertionResult } from "./acceptance-assertions.ts";
-import { validateNodeTestArgv } from "./node-test-reporter.ts";
+import { nodeTestAssertionId, validateNodeTestArgv } from "./node-test-reporter.ts";
 
 import {
   type ContainmentPort,
@@ -18,6 +18,8 @@ export interface TargetCommandSpec {
   maxOutputBytes: number;
   assertionContract?: AssertionContract;
   assertionReporter?: "node-test-v1";
+  /** Trusted repository-relative source files; never supplied by chat or model output. */
+  acceptanceSourceFiles?: readonly string[];
 }
 
 export interface SandboxCommandAttestation {
@@ -103,8 +105,19 @@ function contained(root: string, candidate: string): boolean {
 }
 
 export function validateTargetCommandSpec(commandId: string, spec: TargetCommandSpec): void {
+  if (spec.assertionReporter !== undefined && spec.assertionReporter !== "node-test-v1")
+    throw new Error("Target command assertion reporter is invalid");
+  if (spec.acceptanceSourceFiles !== undefined) {
+    const files = spec.acceptanceSourceFiles;
+    if (spec.assertionReporter !== "node-test-v1" || !Array.isArray(files) || files.length > 16 ||
+      new Set(files).size !== files.length) throw new Error("acceptance_source_files_invalid");
+    for (const file of files) {
+      if (typeof file !== "string" || /[\x00-\x1f\x7f*?\[\]{}]/u.test(file) || !/\.(?:[cm]?js|ts)$/u.test(file))
+        throw new Error("acceptance_source_files_invalid");
+      nodeTestAssertionId(file, "validation");
+    }
+  }
   if (spec.assertionReporter !== undefined) {
-    if (spec.assertionReporter !== "node-test-v1") throw new Error("Target command assertion reporter is invalid");
     validateNodeTestArgv(spec.argv);
   }
   if (spec.assertionContract !== undefined && !assertionContractSchema.safeParse(spec.assertionContract).success) throw new Error("Target command assertion contract is invalid");
