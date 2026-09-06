@@ -1,5 +1,12 @@
 # Meta 协作验证记录
 
+## 2026-09-06 Docker 前置条件复核（未启动解析验证）
+
+- 7fd00c9 仅审计文档后，业务代码仍 943a0ed；任务工作区干净，用户 AGENTS.md/outputs 保留。没有业务代码或实际配置改动，旧完整回归不当作新 Docker 通过证据。
+- b1e002：显式 colima-openmausbot-pilot ps/image ls 确认既有服务 healthy、镜像 2ae332cd23df、没有解析器/Python 镜像，历史容器 exited。串联官方 registry 匿名 HEAD，6979 在 07acf7 exit 28：DNS 10008ms 超时，没有收到 HTTP 业务响应。
+- 后续只读 manifest inspect 的 exec cell 1200 在权限审查阶段超时，进程未启动；未把审批超时解释为安全拒绝，也未在已知 DNS 故障下反复提交。没有活跃命令，无拉取、构建、解析 smoke、容器删除/暂停、网络/身份/凭据修改。
+- 本轮是已知阻塞复核，no progress；需要外部条件或 Owner 授权信息变化后才能运行真实解析。未将待授权通道、待配置模型或镜像缺失改写为已通过。
+
 ## 2026-09-06 真实钉钉接入契约审计（非试点通过）
 
 - 代码基线 943a0ed，任务工作区干净，仅用户 AGENTS.md/outputs 未跟踪；本轮只有文档修改。审计覆盖 normalizer 的 originalMsgId、association 的入站事件匹配、发送器丢弃 processQueryKey 和主动 sampleMarkdown 的接口边界。
