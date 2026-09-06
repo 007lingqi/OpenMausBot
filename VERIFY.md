@@ -1,5 +1,12 @@
 # Meta 协作验证记录
 
+## 2026-09-06 附件选择定向澄清（完整链通过）
+
+- 先行 3d3280 exit 1：1 行为失败 / 51 跳过，原卡片没有具体文件列表和应答路径。实现后 55686/ec77e3 exit 0：4 文件 / 99 项、typecheck/diff。扩展后 21199/42b0d7 exit 0：9 文件 / 243 项（023358，12.34 秒）、typecheck/diff 通过。
+- 覆盖原序号/名称、实际 Markdown 和 atUserIds、提醒材料提供者而不是另一个事项创建者、只先展示选择问题但保留未读门禁、回答后检查剩余附件，以及他人/部分正文不描述为可用替代。来源身份经过现有 principal/event/quote/staff 校验，不增加权限。
+- 完整命令：pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-attachment-question-typecheck && git diff --check。2535 在 41f6db exit 0：272 文件通过 / 1 跳过，2870 项通过 / 18 跳过（2888 注册），371.09 秒；broker 7、updater 15、viewer 5、package-link 2、save-file 10、打包脱离 node_modules 启动与 9 路代理、类型检查/独立编译/diff 全通过。原始输出已存 attachment-question-full-output，所有句柄终态。
+- SQLite、生产协调器和实际渲染执行；合成材料，无真实钉钉发送/模型调用/文档权限/解析容器/部署。这些结果不能替代六类非生产真实试点。
+
 ## 2026-09-06 多附件选择及精确确认反馈（完整链通过）
 
 - 先行行为失败 81794/eff51a：7 失败 / 42 通过，暴露多文件定位和后续选择缺失。初步实现相关三文件 115 项通过；扩展后八文件 223 项通过。加强真实返回卡片断言后 30f140 exit 1：3 失败 / 47 跳过，单独选择虽正确关联但没有明确确认。未将早先弱断言通过冒充文案 TDD 红灯。

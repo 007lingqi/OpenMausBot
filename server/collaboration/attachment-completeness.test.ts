@@ -15,6 +15,7 @@ import { attachmentExcerpts, readNaturalAttachmentContext } from "./attachment-c
 import { AttachmentStore } from "./attachment-store.ts";
 import { DockerDocumentExtractor } from "./operations/document-extractor.ts";
 import { isCurrentAttachmentFeedback } from "./attachment-feedback.ts";
+import { renderDingTalkSessionMessage } from "../integrations/dingtalk/session-message.ts";
 
 const scratch: string[] = [];
 afterEach(() => { for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true }); });
@@ -68,14 +69,17 @@ async function harness(text: string, options: { partial?: boolean; other?: boole
 const definition = { goal: "修复登录反馈", goalConfirmed: true, acceptanceConditions: [{ description: "显示错误原因", observation: "登录失败可看到原因" }], blockingAmbiguities: [] };
 
 describe("authoritative attachment completeness", () => {
-  async function replacementHarness(options: { text?: string; otherSender?: boolean; partial?: boolean; manyOriginals?: boolean; duplicateNames?: boolean } = {}) {
+  async function replacementHarness(options: { text?: string; otherSender?: boolean; partial?: boolean; manyOriginals?: boolean; duplicateNames?: boolean; separateRequester?: boolean } = {}) {
     const directory = mkdtempSync(join(tmpdir(), "attachment-replacement-")); scratch.push(directory);
     let plannerCalls = 0;
     const serviceOptions = { dataDirectory: directory, planning: { planner: { propose() { plannerCalls++; return validProposal(); } }, policy,
       defaultDefinition: { repository: policy.allowedRepositories[0], acceptanceConditions: [] } } };
     const service = startCollaborationService(serviceOptions);
     const sender = { senderCorpId: "corp", senderStaffId: "user", senderId: "user", displayName: "测试同事" };
+    if (options.separateRequester) service.ingestDingTalkMessage({ sourceEventId: "requester", transportMessageId: "requester", conversationId: "group", addressedToBot: true,
+      text: "请检查登录的问题", sender: { ...sender, senderStaffId: "requester", senderId: "requester", displayName: "产品同事" }, receivedAt: 500 });
     const old = service.ingestDingTalkMessage({ sourceEventId: "old", transportMessageId: "old", conversationId: "group", addressedToBot: true,
+      ...(options.separateRequester ? { replyToSourceEventId: "requester" } : {}),
       text: "请修复附件里的登录问题", sender, receivedAt: 1000, resources: [{ capabilityRef: "a".repeat(64), kind: "file", name: "bugs.pdf" },
         ...(options.manyOriginals ? [{ capabilityRef: "c".repeat(64), kind: "file" as const, name: options.duplicateNames ? "bugs.pdf" : "other.pdf" }] : [])] });
     const db = new DatabaseSync(join(directory, "collaboration", "collaboration.sqlite"));
@@ -193,6 +197,38 @@ describe("authoritative attachment completeness", () => {
       h.service.close(); const restarted = startCollaborationService(h.serviceOptions);
       try { expect(readNaturalAttachmentContext(h.db, h.id).fingerprint).toBe(before); }
       finally { restarted.close(); }
+    } finally { h.service.close(); h.db.close(); }
+  });
+  it.each([false, true])("asks the material provider a concrete file-selection question, not a different requester: %s", async separateRequester => {
+    const h = await replacementHarness({ manyOriginals: true, separateRequester });
+    try {
+      const outcome = h.service.reviseWorkItemDefinition(h.id, definition);
+      const card = outcome.card;
+      expect(JSON.stringify(card)).toContain("第 1 份“bugs.pdf”");
+      expect(JSON.stringify(card)).toContain("第 2 份“other.pdf”");
+      expect(JSON.stringify(card)).toContain("回复你刚上传可读文件的那条消息");
+      expect(card).toMatchObject({ questions: expect.arrayContaining([expect.objectContaining({
+        id: "attachment-replacement-unclear", requestedResponder: { targetId: "user", displayName: "测试同事" },
+      })]) });
+      expect(card).toMatchObject({ questions: [expect.objectContaining({ id: "attachment-replacement-unclear" })] });
+      const rendered = renderDingTalkSessionMessage(card) as { markdown: { text: string }; at: unknown };
+      expect(rendered.at).toEqual({ atUserIds: ["user"], isAtAll: false });
+      expect(rendered.markdown.text).toContain("@测试同事");
+      expect(rendered.markdown.text).not.toContain("WI-");
+      expect(rendered.markdown.text).not.toContain("请提供可读版本");
+      h.service.ingestDingTalkMessage({ ...h.message, sourceEventId: "answer-selection", transportMessageId: "answer-selection",
+        resources: [], replyToSourceEventId: "replacement", text: "第二份", receivedAt: 4000 });
+      expect(readLatestWorkItemSnapshot(h.db, h.id)!.blockingAmbiguities.some(q => q.id === "attachment-replacement-unclear")).toBe(false);
+      expect(readNaturalAttachmentContext(h.db, h.id).incomplete).toBe(true);
+      expect(h.plannerCalls()).toBe(0);
+    } finally { h.service.close(); h.db.close(); }
+  });
+  it.each([{ manyOriginals: true, partial: true }, { manyOriginals: true, otherSender: true }])("does not offer a usable selection for unread or another participant's material: %j", async options => {
+    const h = await replacementHarness(options);
+    try {
+      const outcome = h.service.reviseWorkItemDefinition(h.id, definition);
+      expect(JSON.stringify(outcome.card)).not.toContain("回复你刚上传可读文件的那条消息");
+      expect(readNaturalAttachmentContext(h.db, h.id).incomplete).toBe(true);
     } finally { h.service.close(); h.db.close(); }
   });
   it("acknowledges the saved selection while natural interpretation is pending", async () => {

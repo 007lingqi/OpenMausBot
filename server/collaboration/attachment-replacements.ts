@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { readAttachmentEvidenceNotification } from "./attachment-ingestion.ts";
+import { redactSensitiveText } from "./sensitive-text.ts";
 
 interface Material {
   id: string; ingest_state: string; source_event_id: string; principal_id: string;
@@ -15,6 +16,11 @@ export interface AttachmentReplacementReceipt {
   selectionSources: Array<{ sourceEventId: string; normalizedHash: string }>;
 }
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
+interface SelectionQuestion {
+  question: string;
+  recommendedAnswer: string;
+  respondent: { principalId: string; sourceEventId: string; quote: string };
+}
 
 type Target = { kind: "unspecified" } | { kind: "ordinal"; ordinal: number } | { kind: "name"; name: string } | { kind: "invalid" };
 
@@ -65,9 +71,10 @@ export function readAttachmentReplacements(db: DatabaseSync, workItemId: string)
     "FROM collaboration_attachments a JOIN collaboration_external_events e ON e.id=a.external_event_id " +
     "WHERE e.source='dingtalk' AND e.work_item_id=? ORDER BY e.rowid,a.ordinal LIMIT 101").all(workItemId) as unknown as Material[];
   const receipts: AttachmentReplacementReceipt[] = [];
+  const selectionQuestions: Array<{ originals: Material[]; question: SelectionQuestion }> = [];
   const replaced = new Set<string>();
   let needsClarification = false;
-  if (rows.length > 100) return { receipts, replaced, needsClarification };
+  if (rows.length > 100) return { receipts, replaced, needsClarification, selectionQuestion: undefined as SelectionQuestion | undefined };
   for (const row of rows) {
     let message: { text?: unknown; replyToSourceEventId?: unknown };
     try { message = JSON.parse(row.normalized_json); } catch { continue; }
@@ -93,6 +100,22 @@ export function readAttachmentReplacements(db: DatabaseSync, workItemId: string)
       if (choice) { choices.push(choice); selectionSources.push({ sourceEventId: followup.source_event_id, normalizedHash: hash(followup.normalized_json) }); }
     }
     if (!choices.length) choices.push({ kind: "unspecified" });
+    if (choices.length === 1 && choices[0]!.kind === "unspecified" && originals.length > 1 &&
+      originals.every(old => old.principal_id === row.principal_id && ["failed", "unsupported"].includes(old.ingest_state) && !old.has_evidence) && row.ingest_state === "ready") {
+      try {
+        const evidence = readAttachmentEvidenceNotification(db, row.id);
+        if (evidence.workItemId === workItemId && evidence.source.sourceEventId === row.source_event_id && evidence.chunks.length &&
+          evidence.chunks.every(c => !c.truncated && c.warnings.every(w => /^csv_formula_like_cells_present:\d+$/.test(w)))) {
+          const label = (value: string | null) => redactSensitiveText(value ?? "未命名附件").replace(/[\r\n\u0000-\u001f\u007f“”]/gu, " ").slice(0, 60);
+          const options = originals.slice(0, 3).map(old => `第 ${old.ordinal + 1} 份“${label(old.display_name)}”`).join("、");
+          selectionQuestions.push({ originals, question: {
+            question: `你上传的“${label(row.display_name)}”要替代原消息中的哪份文件？${options}${originals.length > 3 ? `等 ${originals.length} 份` : ""}。`,
+            recommendedAnswer: "请回复你刚上传可读文件的那条消息，说明原消息中的第几份；原文件会保留，尚未开始修改。",
+            respondent: { principalId: row.principal_id, sourceEventId: row.source_event_id, quote: redactSensitiveText(String(message.text)) },
+          } });
+        }
+      } catch { /* Unread or unverifiable new material cannot be described as a usable replacement. */ }
+    }
     const selected = choices.map(choice => originals.filter(original => choice.kind === "unspecified" ||
       (choice.kind === "ordinal" && original.ordinal === choice.ordinal) || (choice.kind === "name" && original.display_name === choice.name)));
     if (selected.some(matches => matches.length !== 1) || new Set(selected.map(matches => matches[0]!.id)).size !== 1) { needsClarification = true; continue; }
@@ -121,5 +144,7 @@ export function readAttachmentReplacements(db: DatabaseSync, workItemId: string)
   // A later valid correction may resolve an earlier ambiguous suggestion. The
   // replacement gate is about unread inputs, never a permanent historical flag.
   needsClarification &&= rows.some(row => ["failed", "unsupported"].includes(row.ingest_state) && !replaced.has(row.id));
-  return { receipts: unambiguous, replaced, needsClarification };
+  const selectionQuestion = needsClarification
+    ? selectionQuestions.find(entry => entry.originals.some(old => !replaced.has(old.id)))?.question : undefined;
+  return { receipts: unambiguous, replaced, needsClarification, selectionQuestion };
 }

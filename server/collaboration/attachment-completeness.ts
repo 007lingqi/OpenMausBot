@@ -83,9 +83,10 @@ export function attachmentCompletenessGates(database: DatabaseSync, workItemId: 
     } catch { incomplete = true; }
   }
   const gates: BlockingAmbiguity[] = [];
-  if (replacement.needsClarification) gates.push({ id: "attachment-replacement-unclear", question: "附件替换关系还不明确，请确认原材料和要采用的新文件。", dependsOn: [],
-    recommendedAnswer: "请原材料提供者回复原附件消息，确认要替换的文件；涉及多人材料或已经使用的内容，需要先核对影响。" });
-  if (pending) gates.push({ id: "attachment-content-pending", question: "仍有附件没有读到正文，暂时不能确认材料完整。", dependsOn: [],
+  if (replacement.needsClarification) gates.push({ id: "attachment-replacement-unclear", dependsOn: [],
+    ...(replacement.selectionQuestion ?? { question: "附件替换关系还不明确，请确认原材料和要采用的新文件。",
+      recommendedAnswer: "请原材料提供者回复原附件消息，确认要替换的文件；涉及多人材料或已经使用的内容，需要先核对影响。" }) });
+  if (pending) gates.push({ id: "attachment-content-pending", question: "仍有附件没有读到正文，暂时不能确认材料完整。", dependsOn: replacement.selectionQuestion ? ["attachment-replacement-unclear"] : [],
     recommendedAnswer: failed ? "有附件未能读取，请提供可读版本；不需要重复发送已读成功的文件。" : "正在读取，暂时不用重复发送；读取失败时我会说明需要补充什么。" });
   if (incomplete) gates.push({ id: "attachment-content-incomplete", question: "附件有部分内容尚未读全或无法核实，暂时不能据此开始修改。", dependsOn: [],
     recommendedAnswer: "请补充可完整读取的材料；图片、扫描页或其他未读内容需要进一步核对。" });
