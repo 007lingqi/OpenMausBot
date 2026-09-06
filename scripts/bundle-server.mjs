@@ -70,8 +70,12 @@ await build({
   // dynamically require Node built-ins. ESM has no global require, so provide
   // a package-local bridge while still bundling all non-built-in packages.
   banner: {
-    js: 'import { createRequire as __openmausbotCreateRequire } from "node:module"; const require = __openmausbotCreateRequire(import.meta.url);',
+    js: 'import { createRequire as __openmausbotCreateRequire } from "node:module"; import { fileURLToPath as __openmausbotFileURLToPath } from "node:url"; import { dirname as __openmausbotDirnameOf } from "node:path"; const require = __openmausbotCreateRequire(import.meta.url); const __openmausbotFilename = __openmausbotFileURLToPath(import.meta.url); const __openmausbotDirname = __openmausbotDirnameOf(__openmausbotFilename);',
   },
+  // TypeScript initializes its Node system even when consumers use only the
+  // parser. Supply bundled CJS location globals without relying on node_modules.
+  // define substitutes free globals only; module-local declarations stay local.
+  define: { __filename: "__openmausbotFilename", __dirname: "__openmausbotDirname" },
   outbase: server,
   outdir: join(root, "dist-server"),
   // Written after tsc, replacing its output for these entry points.

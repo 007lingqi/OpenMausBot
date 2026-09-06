@@ -32,6 +32,40 @@ function models(options: { reject?: boolean; malformed?: boolean } = {}) {
 function ledger() { const root = mkdtempSync(join(tmpdir(), "omb-mapping-")); roots.push(root); const store = openCollaborationLedger(root); store.close(); const database = new DatabaseSync(store.filePath); database.exec("PRAGMA foreign_keys=ON"); resources.push(database); return { database, filePath: store.filePath }; }
 
 describe("source-grounded acceptance mapping", () => {
+  it("preserves sanitized source and exact quotes through both models, replay and receipt revalidation", async () => {
+    const input: MappingRequest = { ...request, sources: [{ ...request.sources[0],
+      text: 'const password = "fixture-value";\n' + request.sources[0].text }] };
+    const expectedText = 'const password = "[敏感信息已隐藏]";\n' + request.sources[0].text;
+    const store = ledger();
+    const calls: string[] = [];
+    const model = {
+      policyId: "source-syntax-v1",
+      proposer: { async complete(call: Parameters<NaturalIntakeModelPort["complete"]>[0]) {
+        calls.push(call.user);
+        const data = JSON.parse(call.user);
+        expect(data.sources[0].text).toBe(expectedText);
+        return { ...proposal(input), bindings: [{ ...proposal(input).bindings[0], startLine: 2, endLine: 2,
+          quote: request.sources[0].text }] };
+      } },
+      verifier: { async complete(call: Parameters<NaturalIntakeModelPort["complete"]>[0]) {
+        calls.push(call.user);
+        const data = JSON.parse(call.user);
+        expect(data.request.sources[0].text).toBe(expectedText);
+        return { version: 1, requestHash: data.requestHash, proposalHash: data.proposalHash,
+          findings: [{ conditionHash: acceptanceConditionHash(condition), state: "covered", reason: "合成端口仅测试源码传递" }] };
+      } },
+    };
+    const result = await new AcceptanceMappingCoordinator(store.database, model).map(input, 1000);
+    expect(result.status).toBe("approved");
+    expect(await new AcceptanceMappingCoordinator(store.database, model).map(input, 2000)).toEqual(result);
+    expect(calls).toHaveLength(2);
+    expect(JSON.stringify(calls)).not.toContain("fixture-value");
+    expect(readApprovedAcceptanceMapping(store.database, { requestHash: result.requestHash, policyId: model.policyId,
+      candidateSha: input.candidateSha, specHash: input.specHash, conditions: input.conditions })).toEqual(result.contracts);
+    expect(JSON.stringify(store.database.prepare("SELECT request_json FROM collaboration_acceptance_mapping_attempts").all()))
+      .not.toContain("fixture-value");
+  });
+
   it("instructs both roles to explain assertions without repeating credential examples", async () => {
     const model = models();
     expect((await new AcceptanceMappingCoordinator(ledger().database, model).map(request, 1000)).status).toBe("approved");

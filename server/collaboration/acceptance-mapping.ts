@@ -5,6 +5,7 @@ import { acceptanceConditionHash, type AssertionContract } from "./acceptance-as
 import { nodeTestAssertionId } from "./node-test-reporter.ts";
 import type { NaturalIntakeModelPort } from "./natural-intake.ts";
 import { redactSensitiveText } from "./sensitive-text.ts";
+import { redactSensitiveSource } from "./sensitive-source.ts";
 import { assertLedgerArmed } from "./restore-guard.ts";
 
 const sha = z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u);
@@ -37,7 +38,7 @@ function safeRequest(input: MappingRequest): MappingRequest {
     new Set(parsed.sources.map(source => JSON.stringify([source.commandId, source.file]))).size !== parsed.sources.length) throw new Error("acceptance_mapping_duplicate_input");
   for (const source of parsed.sources) nodeTestAssertionId(source.file, "validation");
   return { ...parsed, conditions: parsed.conditions.map(c => ({ description: redactSensitiveText(c.description), observation: redactSensitiveText(c.observation) })),
-    sources: parsed.sources.map(s => ({ ...s, text: redactSensitiveText(s.text) })) };
+    sources: parsed.sources.map(s => ({ ...s, text: redactSensitiveSource(s.text, s.file) })) };
 }
 export const mappingRequestHash = (request: MappingRequest): string => hash(safeRequest(request));
 export const mappingProposalHash = (proposal: unknown): string => hash(proposalSchema.parse(proposal));

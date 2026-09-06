@@ -1,5 +1,15 @@
 # Meta 协作验证记录
 
+## 2026-09-06 语法感知源码脱敏批次
+
+- 接续TDD c6b77d exit1：初始27项19失败/8通过。parse-only实现后518ad7/ca8f52 exit0：27项与类型检查通过。新增集成及边界578b7b exit1：7失败/49通过；包含两处尚未接线、动态键括号/解构别名/类型字面量遗漏，以及一个把凭据样式正则误设为原样保留的新增测试。后者拆成普通正则保留、凭据样式正则隐藏两例，不放宽敏感值保护。
+- 66362/6d2c26 exit0：`pnpm vitest run server/collaboration/sensitive-source.test.ts server/collaboration/acceptance-source.test.ts server/collaboration/acceptance-mapping.test.ts server/collaboration/candidate-verification.test.ts && pnpm typecheck && git diff --check`；4文件89项通过。覆盖固定Git而非可变工作区、源码不执行、解析失败不泄诊断、精确证据行、两角色请求、收据重读、重放幂等和候选验收既有门禁。
+- af6b45 exit0：package.json与锁文件root运行依赖TypeScript ^5.8.3/5.9.3一致，开发项已移除；没有升级、安装或清理node_modules。
+- 34382/31219e exit0：仅调用已授权本机OpenCodex Astra/medium的真实独立Verifier，Proposer是合成端口。新源码视图保留比较语法且隐藏比较字面量；Verifier明确实际登录/界面未覆盖，返回missing，协调器rejected、无contracts。脚本断言真实拒绝，不将传输失败当负例通过。仅合成源码，无钉钉发送、候选执行或真实交付验收。
+- 完整回归45320/55e815 exit0：`pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-source-redaction-typecheck && git diff --check`。主集、broker、桌面、普通打包无node_modules启动/9代理及后续类型/独立编译全部通过，运行期间源码/测试不变；输出截断不补造总数。
+- 补查headless打包d792d1 exit1：TypeScript初始化Node系统时引用未定义__filename。不能把上述仅启动index的打包检查当headless已通过。修复bundle-server的CJS位置全局映射（保留模块局部变量），并把既有headless烟测加入默认test:packaged-server。51283/3ad32f exit0：`pnpm test:packaged-server && pnpm typecheck && git diff --check`，所有打包入口重建、普通入口及9代理、headless无依赖目录启动/脱敏健康JSON/运行/SIGTERM均通过。修复后仅重跑受影响的构建/打包/类型链，之前完整主集业务与测试代码未改变，不声称重新跑了一次完整pnpm test。
+- headless bundle约11.5MiB：引入完整TypeScript运行包有体积代价，当前无node_modules启动已覆盖，不等于真实容器资源/性能验收。所有本批命令终态，无运行中操作；只提交13个本任务文件，不含用户AGENTS.md/outputs。真实文档/群入口、Docker受限通道、独立隔离/恢复及六场景仍未验收；本批不解决依赖源码采集。
+
 ## 2026-09-06 验收映射批次完整验证通过
 
 - 53277/d40579 exit0：`pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-mapping-explanations-typecheck && git diff --check`。主集、broker、updater、desktop-viewer、package-link、save-file、打包无node_modules启动及9代理路径、类型/独立编译全部经过命令串终态验证。终态输出较长被截断，不补造未保留的新统计值。代码和测试在整次运行保持固定。

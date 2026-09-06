@@ -2,6 +2,11 @@
 
 ## 当前状态
 
+- 最新批次（2026-09-06，优先于下方）：继续使用 OpenCodex gpt-6-astra/medium，无需密钥。原生 Goal active；源码脱敏已实现并接入固定 Git 采集和模型请求复验，支持幂等/原证据行、动态字段和默认值保护。未执行候选代码、未读密钥、未改网络/容器。TypeScript 同版本移至运行依赖，锁文件只读一致性检查通过。
+- 定向验证 66362/6d2c26 exit0：4 文件89项、pnpm typecheck、diff通过。真实合成反例34382/31219e exit0：合成Proposer提议，真实Astra独立Verifier指出缺少实际登录/界面逻辑及脱敏关键比较，返回missing，协调器rejected。只证明负例门禁，不是线上交付。
+- 完整回归45320/55e815 exit0：pnpm test/typecheck/独立编译至/tmp/openmausbot-source-redaction-typecheck/diff通过，运行期间代码/测试固定。补充headless打包测试d792d1发现TypeScript初始化缺少ESM中的__filename；修复仅涉及打包脚本和默认测试脚本，未改已验证业务/测试代码。51283/3ad32f exit0：重新构建全部入口、普通打包启动/9代理、独立headless健康/运行/SIGTERM及typecheck/diff通过。headless检查已加入默认pnpm test末端，不再遗漏。所有句柄终态；保存本地批次，不push。源码采集仍只包含显式测试文件；下一批补可信读/拒绝范围内的被测依赖上下文，不得自动任意遍历仓库。
+- Docker受限本机通道仍待唯一Owner明确批准，未将Goal续办当授权；真实钉钉文档/群入口、六类场景、隔离/supervisor/主机恢复和最终Owner验收继续保留。用户AGENTS.md/outputs不改动、不提交；全目标未完成。
+
 - 最新验证收束（2026-09-06，优先于下方）：上轮progress，本轮先verified wait，现取得完整终态证据，分类progress。53277/d40579 exit0，pnpm test/typecheck/独立服务端编译至/tmp/openmausbot-mapping-explanations-typecheck/diff完整链通过；打包无node_modules启动及9代理路径通过。整个重跑期间没有改业务或测试代码。所有验证句柄现终态。
 - 前一次固定版本61336/5b2f08 exit1：唯一失败是未修改的env-path等待断言（274文件/2961项通过，1项失败，18跳过，430.51秒）。19540/c94e6d独立复测13通过/7跳过，类型和独立编译通过；同代码完整重跑通过。未改路径实现、未放宽断言/超时，根因未知，保留失败历史，不宣称彻底消除偶发性。
 - 已验证批次：系统向两角色提供条件校验标识、安全解释文案契约、敏感输出拒绝/收据不保留示例值及相关测试。真实模型证据仍以已记录的精确函数正例、弱断言/业务覆盖不足/脱敏缺失负例为准，不作为真实产品交付完成。完成后仅本地提交六个本任务文件，不push，提交结果以Git为准；用户AGENTS.md/outputs不动。

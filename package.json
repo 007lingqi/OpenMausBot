@@ -69,7 +69,7 @@
     "smoke:cua-x11-input": "node scripts/smoke-cua-x11-input.mjs",
     "package:linux:dir": "pnpm package:prepare && pnpm build:cua:linux && electron-builder --linux dir --x64 --publish never",
     "package": "pnpm package:mac",
-    "test:packaged-server": "pnpm build:server && node scripts/smoke-packaged-server.mjs",
+    "test:packaged-server": "pnpm build:server && node scripts/smoke-packaged-server.mjs && pnpm smoke:collaboration-headless",
     "broker:types": "wrangler types --config cloudflare/composio-broker/wrangler.jsonc cloudflare/composio-broker/worker-configuration.d.ts",
     "broker:check": "pnpm broker:types && tsc -p cloudflare/composio-broker/tsconfig.json",
     "broker:test": "vitest run --config cloudflare/composio-broker/vitest.config.ts",
@@ -92,6 +92,7 @@
     "remark-gfm": "^4.0.1",
     "shiki": "^4.4.3",
     "tailwind-merge": "^3.3.1",
+    "typescript": "^5.8.3",
     "yaml": "^2.9.0",
     "zod": "4.4.3"
   },
@@ -108,7 +109,6 @@
     "esbuild": "^0.28.2",
     "oxlint": "1.78.0",
     "tailwindcss": "^4.1.11",
-    "typescript": "^5.8.3",
     "vite": "^7.1.0",
     "vitest": "^4.1.10",
     "wrangler": "4.123.0"

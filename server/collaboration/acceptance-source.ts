@@ -5,7 +5,7 @@ import { TextDecoder } from "node:util";
 import { isolatedExecutionEnvironment } from "./execution-limits.ts";
 import { mappingRequestHash, type MappingRequest } from "./acceptance-mapping.ts";
 import { nodeTestAssertionId, validateNodeTestArgv } from "./node-test-reporter.ts";
-import { redactSensitiveText } from "./sensitive-text.ts";
+import { redactSensitiveSource } from "./sensitive-source.ts";
 import type { TargetCommandSpec } from "./quality-gate.ts";
 
 /** Read-only Git objects: never execute candidate tests, traverse symlinks, or use mutable worktree contents. */
@@ -41,7 +41,7 @@ export function collectAcceptanceMappingRequest(input: {
       if (bytes.length !== size) throw new Error("acceptance_source_size_mismatch");
       const source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
       if (source.includes("\0")) throw new Error("acceptance_source_binary");
-      sources.push({ commandId, file, blobSha, text: redactSensitiveText(source) });
+      sources.push({ commandId, file, blobSha, text: redactSensitiveSource(source, file) });
     }
   }
   const request = { candidateSha: input.candidateSha, specHash: input.specHash, conditions: input.conditions, sources };
