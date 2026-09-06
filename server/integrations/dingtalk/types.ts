@@ -71,6 +71,7 @@ export type DingTalkOwnerTextCommandName =
   | "reject_candidate";
 
 export interface DingTalkOwnerTextCommand {
+  conversationId?: string;
   transportEventId: string;
   transportMessageId: string;
   command: DingTalkOwnerTextCommandName;

@@ -64,6 +64,7 @@ export function parseDingTalkOwnerTextCommand(message: DingTalkInboundMessage): 
   const candidate = CANDIDATE_COMMAND.exec(message.text.trim());
   if (candidate) {
     return {
+      conversationId: message.conversationId,
       transportEventId: message.sourceEventId,
       transportMessageId: message.transportMessageId,
       command: candidate[1] === "批准" ? "approve_candidate" : "reject_candidate",
@@ -78,6 +79,7 @@ export function parseDingTalkOwnerTextCommand(message: DingTalkInboundMessage): 
   const command = COMMANDS[matched[1]!];
   if (!command) return null;
   return {
+    conversationId: message.conversationId,
     transportEventId: message.sourceEventId,
     transportMessageId: message.transportMessageId,
     command,

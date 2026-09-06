@@ -52,6 +52,7 @@ export interface PerformOwnerActionInput {
 export type DirectOwnerControlAction = WorkItemControlAction;
 
 export interface PerformDirectOwnerActionInput {
+  conversationId?: string;
   sourceEventId: string;
   action: DirectOwnerControlAction;
   workItemId: string;
@@ -62,6 +63,8 @@ export interface PerformDirectOwnerActionInput {
 }
 
 export interface OwnerActionOutcome {
+  /** Immutable direct-command origin; absent for older receipts and token actions. */
+  conversationId?: string;
   allowed: boolean;
   duplicate: boolean;
   action: WorkItemControlAction | null;
@@ -585,6 +588,9 @@ export class OwnerActionController {
     const sourceEventId = input.sourceEventId.trim();
     const workItemId = input.workItemId.trim().toUpperCase();
     if (!sourceEventId || sourceEventId.length > 256) throw new Error("owner_text_source_event_invalid");
+    if (input.conversationId !== undefined && (!input.conversationId.trim() || input.conversationId.length > 512 || /[\u0000-\u001f\u007f]/u.test(input.conversationId))) {
+      throw new Error("owner_text_conversation_invalid");
+    }
     if (!/^WI-[A-F0-9]{12}$/u.test(workItemId)) throw new Error("owner_text_work_item_invalid");
     const normalized = { ...input, sourceEventId, workItemId, now };
     const payloadHash = directCommandHash(normalized);
@@ -600,6 +606,9 @@ export class OwnerActionController {
       if (previous) {
         if (previous.payload_hash !== payloadHash) throw new Error("owner_text_command_event_conflict");
         const decision = JSON.parse(previous.outcome_json) as OwnerActionOutcome;
+        if (decision.conversationId !== undefined && decision.conversationId !== input.conversationId) {
+          throw new Error("owner_text_command_event_conflict");
+        }
         this.database.exec("COMMIT");
         return { ...decision, duplicate: true };
       }
@@ -746,6 +755,7 @@ export class OwnerActionController {
           });
         }
       }
+      if (input.conversationId !== undefined) decision!.conversationId = input.conversationId;
       this.database.prepare(
         "INSERT INTO collaboration_owner_text_commands " +
           "(source_event_id, payload_hash, outcome_json, processed_at) VALUES (?, ?, ?, ?)",

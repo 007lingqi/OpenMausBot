@@ -1014,6 +1014,7 @@ export class CollaborationHeadlessRuntime {
       const action = command.command === "approve_candidate" ? "accept" : "reject";
       const outcome = this.service!.performDirectOwnerAction({
         sourceEventId: command.transportEventId,
+        conversationId: command.conversationId,
         action,
         workItemId: command.workItemId,
         sender: command.sender,
@@ -1086,6 +1087,7 @@ export class CollaborationHeadlessRuntime {
     if (!action) throw new Error("unsupported_owner_text_command");
     const outcome = this.service!.performDirectOwnerAction({
       sourceEventId: command.transportEventId,
+      conversationId: command.conversationId,
       action,
       workItemId: command.workItemId,
       sender: command.sender,

@@ -64,7 +64,7 @@ import { validateTargetCommandSpec, type TargetCommandSpec } from "./collaborati
 import type { AcceptanceCondition } from "./collaboration/snapshot.ts";
 import { configuredNaturalIntake } from "./collaboration/operations/natural-intake-model.ts";
 import { configuredAcceptanceMapping } from "./collaboration/operations/acceptance-mapping-model.ts";
-import { proactiveConversationRoutes, proactiveDestination } from "./collaboration/delivery-routing.ts";
+import { proactiveConversationRoutes, proactiveDestination, hasOwnerTextCommandReceipt } from "./collaboration/delivery-routing.ts";
 
 interface HeadlessArguments {
   dataDirectory: string;
@@ -257,7 +257,7 @@ export function createDingTalkDelivery(
     async deliver(message) {
       const eventId = sourceEventId(message.dedupeKey);
       const routedSourceEventId =
-        eventId?.startsWith("attachment-feedback:")
+        hasOwnerTextCommandReceipt(databaseFile, eventId) ? eventId : eventId?.startsWith("attachment-feedback:")
           ? latestWorkItemSourceEventId(databaseFile, message.aggregateId, eventId)
           : message.aggregateType === "plan" ||
         (message.aggregateType === "work_item" && message.dedupeKey.startsWith("dingtalk:event:lifecycle-recovery:"))

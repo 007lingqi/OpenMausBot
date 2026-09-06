@@ -39,10 +39,18 @@ export function proactiveDestination(databaseFile: string, sourceEventId: string
       "JOIN collaboration_conversation_aliases a ON a.conversation_id=e.conversation_id AND a.source='dingtalk' " +
       "WHERE e.source='dingtalk' AND e.source_event_id=? UNION " +
       "SELECT json_extract(outcome_json,'$.conversationId') AS conversation FROM collaboration_owner_text_commands " +
-      "WHERE source_event_id=? AND json_extract(outcome_json,'$.kind')='delivery_review' UNION " +
+      "WHERE source_event_id=? UNION " +
       "SELECT json_extract(outcome_json,'$.conversationId') AS conversation FROM collaboration_natural_intake_recovery_requests WHERE source_event_id=? UNION " +
       "SELECT json_extract(outcome_json,'$.conversationId') AS conversation FROM collaboration_attachment_recovery_requests WHERE source_event_id=?",
     ).all(sourceEventId, sourceEventId, sourceEventId, sourceEventId) as Array<{ conversation: string | null }>;
     return origins.length === 1 && origins[0]!.conversation ? routes.get(origins[0]!.conversation) : undefined;
   } finally { db.close(); }
+}
+
+/** Even legacy control receipts must not fall back to a target item's latest group. */
+export function hasOwnerTextCommandReceipt(databaseFile: string, sourceEventId: string | undefined): boolean {
+  if (!sourceEventId) return false;
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try { return !!db.prepare("SELECT 1 FROM collaboration_owner_text_commands WHERE source_event_id=?").get(sourceEventId); }
+  finally { db.close(); }
 }

@@ -502,14 +502,16 @@ describe("Owner action tokens and Work Item controls", () => {
     const context = harness();
     const first = context.service.performDirectOwnerAction({
       sourceEventId: "text-command-1",
+      conversationId: "request-group",
       action: "pause",
       workItemId: context.workItemId,
       sender: ownerSender(),
       now: 2_000,
     });
-    expect(first).toMatchObject({ allowed: true, duplicate: false, action: "pause", controlState: "paused" });
+    expect(first).toMatchObject({ allowed: true, duplicate: false, action: "pause", controlState: "paused", conversationId: "request-group" });
     expect(context.service.performDirectOwnerAction({
       sourceEventId: "text-command-1",
+      conversationId: "request-group",
       action: "pause",
       workItemId: context.workItemId,
       sender: ownerSender(),
@@ -547,6 +549,22 @@ describe("Owner action tokens and Work Item controls", () => {
     ).get()).toEqual({ outcome: "deny", error: "work_item_not_active" });
     database.close();
     context.service.close();
+  });
+
+  it("rolls back the control mutation when its origin receipt cannot be persisted", () => {
+    const context = harness();
+    const db = new DatabaseSync(context.databaseFile);
+    try {
+      const before = db.prepare("SELECT * FROM collaboration_work_items").all();
+      const audits = db.prepare("SELECT count(*) n FROM collaboration_audit_events").get();
+      db.exec("CREATE TRIGGER fail_origin_receipt BEFORE INSERT ON collaboration_owner_text_commands BEGIN SELECT RAISE(ABORT,'synthetic_origin_failure'); END");
+      expect(() => context.service.performDirectOwnerAction({ sourceEventId: "origin-failure", conversationId: "request-group", action: "pause",
+        workItemId: context.workItemId, sender: ownerSender(), now: 2000 })).toThrow("synthetic_origin_failure");
+      expect(db.prepare("SELECT * FROM collaboration_work_items").all()).toEqual(before);
+      expect(db.prepare("SELECT count(*) n FROM collaboration_audit_events").get()).toEqual(audits);
+      expect(db.prepare("SELECT count(*) n FROM collaboration_owner_text_commands").get()).toEqual({ n: 0 });
+      expect(db.prepare("SELECT count(*) n FROM collaboration_control_events").get()).toEqual({ n: 0 });
+    } finally { db.close(); context.service.close(); }
   });
 
   it("atomically deduplicates direct candidate decisions without turning a denied replay into success", () => {

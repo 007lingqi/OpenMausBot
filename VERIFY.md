@@ -1,5 +1,11 @@
 # Meta 协作验证记录
 
+## 2026-09-06 直接文本控制回复来源（已验证）
+
+- 先行 delivery-routing/actions：74645 exit 1（7ea8f1），7 失败 / 29 通过。新增解析器来源和允许控制来源断言失败，证明原实现缺失，不冒充已到达网络发送断言。
+- delivery-routing/actions/text-actions/stream-adapter/runtime/headless 六文件：48696 exit 0（843998），94 项及 typecheck/diff 通过；补充 Owner 允许、旧收据及控制事务回滚后，18489 exit 0（4597e9），97 项/typecheck/diff 通过。
+- 完整命令 `pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-control-origin-typecheck && git diff --check`，16925 exit 0（0b5f70）：270 文件通过 / 1 跳过，2769 项通过 / 18 跳过（2787 注册），421.03 秒。broker 7、updater 15、desktop-viewer 5、package-link 2、save-file 10、打包服务脱离 node_modules 启动及 9 个代理路径、typecheck、独立服务端编译及 diff 均通过。无运行中验证、无真实发送/凭据/部署操作；全量本地回归不替代完整六类真实验收。
+
 ## 2026-09-06 文档解析 Docker 前置复核（未执行解析测试）
 
 - 业务候选仍为 4b20d9c；本轮只有文档记录变化。此前该候选完整回归通过不等于文档 Docker 或真实钉钉试点通过。

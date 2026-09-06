@@ -15,6 +15,8 @@ import { recoverNaturalIntake } from "./natural-intake-recovery.ts";
 import { recoverAttachmentProjection } from "./attachment-projection-recovery.ts";
 import { OutboxDispatcher } from "./outbox-dispatcher.ts";
 import { InstanceLeaseCoordinator } from "./leases.ts";
+import { CollaborationHeadlessRuntime } from "./operations/runtime.ts";
+import { parseDingTalkOwnerTextCommand } from "../integrations/dingtalk/text-actions.ts";
 
 const roots: string[] = [];
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -47,6 +49,52 @@ function fixture(environment: NodeJS.ProcessEnv) {
 }
 
 describe("production delivery group routing", () => {
+  it.each([["暂停", false], ["恢复", false], ["重试", false], ["取消", false], ["批准", false], ["退回", false], ["暂停", true]] as const)("preserves the actual group for %s control replies (Owner=%s), including denial and replay", async (label, isOwner) => {
+    const env = { OMB_DINGTALK_ALLOWED_CONVERSATION_IDS: "group-a,group-b", OMB_DINGTALK_PROACTIVE_CONVERSATION_MAP: '{"group-a":"open-a","group-b":"open-b"}' };
+    const f = fixture(env);
+    const runtime = new CollaborationHeadlessRuntime({ dataDirectory: f.root, platform: "linux" });
+    try {
+      if (isOwner) {
+        const owner = new LocalOwnerRegistry(join(f.root, "collaboration", "collaboration.sqlite"));
+        try { owner.bootstrap({ senderCorpId: "corp", senderStaffId: "staff", now: 1000 }); } finally { owner.close(); }
+      }
+      await runtime.start();
+      const workItemId = f.message("event-group-a").aggregateId;
+      const command = parseDingTalkOwnerTextCommand({ sourceEventId: "control-origin", transportMessageId: "control-origin", conversationId: "group-b",
+        addressedToBot: true, text: `${label} ${workItemId}`, receivedAt: 2000,
+        sender: { senderCorpId: "corp", senderStaffId: "staff", senderId: "sender", displayName: "Member" } })!;
+      expect(command).toMatchObject({ conversationId: "group-b" });
+      expect(runtime.performDingTalkOwnerTextCommand(command).allowed).toBe(isOwner);
+      expect(runtime.performDingTalkOwnerTextCommand(command).duplicate).toBe(true);
+      expect(() => runtime.performDingTalkOwnerTextCommand({ ...command, conversationId: "group-a" } as typeof command)).toThrow("event_conflict");
+      const stored = f.db.prepare("SELECT outcome_json FROM collaboration_owner_text_commands WHERE source_event_id='control-origin'").get() as { outcome_json: string };
+      expect(JSON.parse(stored.outcome_json).conversationId).toBe("group-b");
+      const row = f.db.prepare("SELECT aggregate_type FROM collaboration_outbox WHERE source_event_id='control-origin'").get() as { aggregate_type: "plan" | "work_item" };
+      const reply = { ...f.message("control-origin"), aggregateType: row.aggregate_type };
+      await runtime.stop();
+      expect(await createDingTalkDelivery(new DingTalkSessionReplyRegistry(), env, f.root).deliver(reply)).toEqual({ outcome: "sent" });
+      expect(f.destinations).toEqual(["open-b"]);
+    } finally { await runtime.stop(); f.db.close(); }
+  });
+  it("does not manufacture an origin for legacy direct approval receipts on replay", async () => {
+    const env = { OMB_DINGTALK_ALLOWED_CONVERSATION_IDS: "group-a,group-b", OMB_DINGTALK_PROACTIVE_CONVERSATION_MAP: '{"group-a":"open-a","group-b":"open-b"}' };
+    const f = fixture(env);
+    const runtime = new CollaborationHeadlessRuntime({ dataDirectory: f.root, platform: "linux" });
+    try {
+      await runtime.start();
+      const command = { transportEventId: "legacy-control", transportMessageId: "legacy-control", command: "approve_candidate" as const,
+        workItemId: f.message("event-group-a").aggregateId, receivedAt: 2000,
+        sender: { senderCorpId: "corp", senderStaffId: "staff", senderId: "sender", displayName: "Member" } };
+      runtime.performDingTalkOwnerTextCommand(command);
+      const before = f.db.prepare("SELECT * FROM collaboration_owner_text_commands").all();
+      expect(runtime.performDingTalkOwnerTextCommand({ ...command, conversationId: "group-b" }).duplicate).toBe(true);
+      expect(f.db.prepare("SELECT * FROM collaboration_owner_text_commands").all()).toEqual(before);
+      await runtime.stop();
+      const reply = { ...f.message("legacy-control"), aggregateType: "plan" as const };
+      expect(await createDingTalkDelivery(new DingTalkSessionReplyRegistry(), env, f.root).deliver(reply)).toMatchObject({ outcome: "permanent_failure" });
+      expect(f.destinations).toEqual([]);
+    } finally { await runtime.stop(); f.db.close(); }
+  });
   it.each([
     ["继续整理需求", recoverNaturalIntake, "collaboration_natural_intake_recovery_requests"],
     ["继续整理附件", recoverAttachmentProjection, "collaboration_attachment_recovery_requests"],
