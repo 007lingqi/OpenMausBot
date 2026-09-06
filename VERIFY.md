@@ -1,5 +1,12 @@
 # Meta 协作验证记录
 
+## 2026-09-06 状态查询与刷新审批收据（已验证）
+
+- TDD delivery-routing：37157 exit 1（29f7c1），4 失败 / 29 通过；缺原始收据、拒绝重放误报成功及写失败无回滚。
+- 初修 16946 exit 0（64e3c4），4 文件 / 85 项及 typecheck/diff。扩展 49945 exit 0（b922e8），6 文件 / 109 项；清理旧错误分支后 67067 exit 0（493286），6 文件 / 109 项及 typecheck/diff 通过。
+- 扩展覆盖允许刷新、原 Outbox supersession 回滚、旧无收据回复保守处理、query 改写/入口复用拒绝、runtime 重建后原始结果不变及原群发送；只使用合成数据/受控 fetch。
+- 完整 `pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-owner-query-typecheck && git diff --check`，15574 exit 0（712852）。主集 760c57：270 文件通过 / 1 跳过，2774 项通过 / 18 跳过（2792 注册），354.11 秒；broker 7、updater 15、desktop-viewer 5、package-link 2、save-file 10 通过。6a281a：打包脱离 node_modules 启动及 9 路代理通过；随后 typecheck、独立服务端编译及 diff 全通过。所有句柄终态，未执行真实钉钉、模型、文档容器或部署，不以全量本地测试代替六类试点。
+
 ## 2026-09-06 直接文本控制回复来源（已验证）
 
 - 先行 delivery-routing/actions：74645 exit 1（7ea8f1），7 失败 / 29 通过。新增解析器来源和允许控制来源断言失败，证明原实现缺失，不冒充已到达网络发送断言。

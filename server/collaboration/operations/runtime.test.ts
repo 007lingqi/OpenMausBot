@@ -319,6 +319,22 @@ describe("production-isomorphic collaboration runtime", () => {
 
     const runtime = new CollaborationHeadlessRuntime({ dataDirectory, platform: "linux" });
     await runtime.start();
+    const refreshRequest = { transportEventId: "durable-refresh", transportMessageId: "durable-refresh", conversationId: "conversation",
+      command: "refresh_approval" as const, workItemId, sender: message("owner-refresh").sender, receivedAt: 4500 };
+    const refreshDb = new DatabaseSync(join(dataDirectory, "collaboration", "collaboration.sqlite"));
+    try {
+      const before = refreshDb.prepare("SELECT * FROM collaboration_outbox ORDER BY id").all();
+      refreshDb.exec("CREATE TRIGGER fail_refresh_receipt BEFORE INSERT ON collaboration_owner_text_commands BEGIN SELECT RAISE(ABORT,'synthetic_refresh_receipt_failure'); END");
+      expect(() => runtime.performDingTalkOwnerTextCommand(refreshRequest)).toThrow("synthetic_refresh_receipt_failure");
+      expect(refreshDb.prepare("SELECT * FROM collaboration_outbox ORDER BY id").all()).toEqual(before);
+      refreshDb.exec("DROP TRIGGER fail_refresh_receipt");
+      expect(runtime.performDingTalkOwnerTextCommand(refreshRequest)).toMatchObject({ allowed: true, duplicate: false, reason: "approval_refreshed" });
+      const after = refreshDb.prepare("SELECT * FROM collaboration_outbox ORDER BY id").all();
+      expect(runtime.performDingTalkOwnerTextCommand(refreshRequest)).toMatchObject({ allowed: true, duplicate: true, reason: "approval_refreshed" });
+      expect(refreshDb.prepare("SELECT * FROM collaboration_outbox ORDER BY id").all()).toEqual(after);
+      const receipt = refreshDb.prepare("SELECT outcome_json FROM collaboration_owner_text_commands WHERE source_event_id='durable-refresh'").get() as { outcome_json: string };
+      expect(JSON.parse(receipt.outcome_json)).toMatchObject({ kind: "owner_query", conversationId: "conversation", outcome: { allowed: true } });
+    } finally { refreshDb.close(); }
     const approved = runtime.performDingTalkOwnerTextCommand({
       transportEventId: "approve-command-1",
       transportMessageId: "approve-transport-1",

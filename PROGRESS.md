@@ -17,6 +17,15 @@
 
 ## 本批执行记录
 
+### 状态查询与刷新审批收据（2026-09-06，已验证）
+
+- 上轮 c029190 已提交且全量通过，分类 progress；本轮按 goal-protocol 接续。初始只有用户 AGENTS.md/outputs，保持不动；schema 25 不变，无真实钉钉/模型/凭据/Docker 变更。
+- TDD 37157 exit 1（29f7c1）：4 失败 / 29 通过，复现缺收据、刷新拒绝重放变成功、无原子回滚。新增 owner-query-receipt，生产 runtime 持久化查询原始结果和群；入队 savepoint 支持外层事务；入站/token 路径拒绝查询事件复用。
+- 初修 16946 exit 0（64e3c4）：4 文件 / 85 项/typecheck/diff。扩展成功刷新与 supersession 回滚、旧无收据回复不补来源后，49945 exit 0（b922e8）：6 文件 / 109 项；清除旧错误重放分支后 67067 exit 0（493286）：同 109 项、typecheck/diff 通过。
+- 覆盖真实 SQLite + runtime 重建 + 生产发送器/受控 fetch：状态/拒绝结果重放不变，改群/事项/身份/命令冲突，旧回复不猜成功，不重复刷新，写收据失败不遗留回复或 supersession。不是线上试点或完整主机重启证明。
+- 完整链 15574 已 exit 0（712852）：270 文件通过 / 1 跳过，2774 项通过 / 18 跳过（2792 注册），354.11 秒；broker 7、updater 15、desktop-viewer 5、package-link 2、save-file 10、打包脱离 node_modules 启动与 9 路代理、typecheck、独立服务端编译及 diff 全通过。所有句柄终态；本批 9 个任务文件保存本地提交，不 push、不部署。
+- 后续仍需 token 文本/卡片回复来源、直接控制动作与回复跨事务恢复、旧输入/下载恢复、真实文档解析与模型授权、六类群聊及主机重启/人工验收。Goal active，不缩小完成标准。
+
 ### 直接文本控制回复来源（2026-09-06，已验证）
 
 - 上轮 e86de44 获得新的 Docker/DNS 前置证据，分类 progress；本轮按 goal-protocol 转向无需外部模型/网络的控制回复来源。初始只有用户 AGENTS.md/outputs，保持不动。

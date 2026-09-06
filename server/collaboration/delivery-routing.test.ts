@@ -49,6 +49,69 @@ function fixture(environment: NodeJS.ProcessEnv) {
 }
 
 describe("production delivery group routing", () => {
+  it.each(["status", "refresh_approval"] as const)("persists %s outcome and group, preserving denial across restart and rejecting rewritten replay", async commandName => {
+    const env = { OMB_DINGTALK_ALLOWED_CONVERSATION_IDS: "group-a,group-b", OMB_DINGTALK_PROACTIVE_CONVERSATION_MAP: '{"group-a":"open-a","group-b":"open-b"}' };
+    const f = fixture(env);
+    let runtime = new CollaborationHeadlessRuntime({ dataDirectory: f.root, platform: "linux" });
+    try {
+      await runtime.start();
+      const command = { transportEventId: "query-origin", transportMessageId: "query-origin", conversationId: "group-b", command: commandName,
+        workItemId: f.message("event-group-a").aggregateId, receivedAt: 2000,
+        sender: { senderCorpId: "corp", senderStaffId: "staff", senderId: "sender", displayName: "Member" } };
+      const first = runtime.performDingTalkOwnerTextCommand(command);
+      expect(first.allowed).toBe(commandName === "status");
+      expect(runtime.performDingTalkOwnerTextCommand(command)).toEqual({ ...first, duplicate: true });
+      const rows = f.db.prepare("SELECT * FROM collaboration_owner_text_commands WHERE source_event_id='query-origin'").all();
+      expect(rows).toHaveLength(1);
+      for (const altered of [{ ...command, conversationId: "group-a" }, { ...command, workItemId: "WI-AAAAAAAAAAAA" },
+        { ...command, sender: { ...command.sender, senderStaffId: "other" } }, { ...command, command: "pause" as const }]) {
+        expect(() => runtime.performDingTalkOwnerTextCommand(altered)).toThrow("event_conflict");
+      }
+      expect(() => runtime.ingestDingTalkMessage({ sourceEventId: command.transportEventId, transportMessageId: command.transportMessageId,
+        conversationId: "group-b", text: "新的工作", addressedToBot: true, sender: command.sender })).toThrow("event_conflict");
+      expect(() => runtime.performDingTalkOwnerAction({ transportEventId: command.transportEventId, transportMessageId: command.transportMessageId,
+        actionToken: "synthetic-unused-token", sender: command.sender, receivedAt: 2100, origin: "text" })).toThrow("owner_query_event_conflict");
+      await runtime.stop();
+      runtime = new CollaborationHeadlessRuntime({ dataDirectory: f.root, platform: "linux" });
+      await runtime.start();
+      expect(runtime.performDingTalkOwnerTextCommand(command)).toEqual({ ...first, duplicate: true });
+      expect(f.db.prepare("SELECT * FROM collaboration_owner_text_commands WHERE source_event_id='query-origin'").all()).toEqual(rows);
+      await runtime.stop();
+      expect(await createDingTalkDelivery(new DingTalkSessionReplyRegistry(), env, f.root).deliver(f.message("query-origin"))).toEqual({ outcome: "sent" });
+      expect(f.destinations).toEqual(["open-b"]);
+    } finally { await runtime.stop(); f.db.close(); }
+  });
+  it("does not turn an old reply without a query receipt into a new success or group binding", async () => {
+    const f = fixture({});
+    const runtime = new CollaborationHeadlessRuntime({ dataDirectory: f.root, platform: "linux" });
+    try {
+      await runtime.start();
+      const reply = f.db.prepare("SELECT * FROM collaboration_outbox WHERE source_event_id='event-group-a'").get() as Record<string, string | number>;
+      f.db.prepare("INSERT INTO collaboration_outbox(id,source,source_event_id,aggregate_type,aggregate_id,aggregate_version,kind,dedupe_key,payload_json,created_at,next_attempt_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
+        .run("legacy-query", "dingtalk", "legacy-query", "work_item", reply.aggregate_id, reply.aggregate_version, reply.kind, "dingtalk:event:legacy-query:ack", reply.payload_json, 2000, 2000);
+      const before = f.db.prepare("SELECT * FROM collaboration_outbox ORDER BY id").all();
+      expect(runtime.performDingTalkOwnerTextCommand({ transportEventId: "legacy-query", transportMessageId: "legacy-query", conversationId: "group-b",
+        command: "refresh_approval", workItemId: String(reply.aggregate_id), receivedAt: 3000,
+        sender: { senderCorpId: "corp", senderStaffId: "staff", senderId: "sender", displayName: "Member" } }))
+        .toMatchObject({ allowed: false, duplicate: true, reason: "owner_query_legacy_outcome_unavailable" });
+      expect(f.db.prepare("SELECT count(*) n FROM collaboration_owner_text_commands WHERE source_event_id='legacy-query'").get()).toEqual({ n: 0 });
+      expect(f.db.prepare("SELECT * FROM collaboration_outbox ORDER BY id").all()).toEqual(before);
+    } finally { await runtime.stop(); f.db.close(); }
+  });
+  it.each(["status", "refresh_approval"] as const)("rolls back %s reply when the query receipt fails", async commandName => {
+    const f = fixture({});
+    const runtime = new CollaborationHeadlessRuntime({ dataDirectory: f.root, platform: "linux" });
+    try {
+      await runtime.start();
+      const before = f.db.prepare("SELECT * FROM collaboration_outbox ORDER BY id").all();
+      f.db.exec("CREATE TRIGGER fail_query_receipt BEFORE INSERT ON collaboration_owner_text_commands BEGIN SELECT RAISE(ABORT,'synthetic_query_failure'); END");
+      expect(() => runtime.performDingTalkOwnerTextCommand({ transportEventId: "query-failed", transportMessageId: "query-failed", conversationId: "group-b",
+        command: commandName, workItemId: f.message("event-group-a").aggregateId, receivedAt: 2000,
+        sender: { senderCorpId: "corp", senderStaffId: "staff", senderId: "sender", displayName: "Member" } })).toThrow("synthetic_query_failure");
+      expect(f.db.prepare("SELECT * FROM collaboration_outbox ORDER BY id").all()).toEqual(before);
+      expect(f.db.prepare("SELECT count(*) n FROM collaboration_owner_text_commands").get()).toEqual({ n: 0 });
+    } finally { await runtime.stop(); f.db.close(); }
+  });
   it.each([["暂停", false], ["恢复", false], ["重试", false], ["取消", false], ["批准", false], ["退回", false], ["暂停", true]] as const)("preserves the actual group for %s control replies (Owner=%s), including denial and replay", async (label, isOwner) => {
     const env = { OMB_DINGTALK_ALLOWED_CONVERSATION_IDS: "group-a,group-b", OMB_DINGTALK_PROACTIVE_CONVERSATION_MAP: '{"group-a":"open-a","group-b":"open-b"}' };
     const f = fixture(env);

@@ -41,6 +41,7 @@ import { assertCurrentInstanceLease, InstanceLeaseCoordinator, StaleFenceError, 
 import { OutboxDispatcher, type DispatchOutcome, type OutboxDispatcherOptions } from "../outbox-dispatcher.ts";
 import { readDeliveryHealth, type DeliveryHealth } from "./delivery-health.ts";
 import { requestDeliveryReview, isDeliveryReviewEvent } from "../delivery-review.ts";
+import { recordOwnerQuery, isOwnerQueryEvent } from "../owner-query-receipt.ts";
 import { enqueueInboundCard, type OutboxDeliveryPort } from "../outbox.ts";
 import { renderCommandStatusCard, renderPlanStatusCard } from "../message-renderer.ts";
 import { syncWorkItemMetaBundle } from "../meta-bundle.ts";
@@ -560,7 +561,7 @@ export function enqueueOwnerDecisionForWorkItem(
         changedPaths,
         testStates: evidence.map((item) => `${item.command_id}: ${item.state}`),
       });
-  database.exec("BEGIN IMMEDIATE");
+  database.exec("SAVEPOINT owner_decision_reply");
   try {
     enqueueInboundCard(database, {
       sourceEventId,
@@ -571,10 +572,10 @@ export function enqueueOwnerDecisionForWorkItem(
       supersessionKey: `work-item:${row.work_item_id}:execution-status`,
       now,
     });
-    database.exec("COMMIT");
+    database.exec("RELEASE owner_decision_reply");
     return true;
   } catch (error) {
-    database.exec("ROLLBACK");
+    database.exec("ROLLBACK TO owner_decision_reply; RELEASE owner_decision_reply");
     throw error;
   }
 }
@@ -913,6 +914,7 @@ export class CollaborationHeadlessRuntime {
 
   performDingTalkOwnerAction(action: DingTalkCardAction): OwnerActionOutcome {
     this.assertOperational();
+    if (isOwnerQueryEvent(this.database!, action.transportEventId)) throw new Error("owner_query_event_conflict");
     if (isDeliveryReviewEvent(this.database!, action.transportEventId)) throw new Error("delivery_review_event_conflict");
     let workItemId: string | null = null;
     try {
@@ -932,6 +934,13 @@ export class CollaborationHeadlessRuntime {
 
   performDingTalkOwnerTextCommand(command: DingTalkOwnerTextCommand): DingTalkOwnerTextCommandOutcome {
     try {
+      if (command.command === "status" || command.command === "refresh_approval") {
+        this.assertOperational();
+        return recordOwnerQuery(this.database!, command, this.clock.now(), () => {
+          this.assertOperational();
+          assertCurrentInstanceLease(this.database!, this.lease!, this.clock.now());
+        }, () => this.performDingTalkOwnerTextCommandInternal(command));
+      }
       return this.performDingTalkOwnerTextCommandInternal(command);
     } finally {
       this.syncMetaBundleBestEffort(command.workItemId, true);
@@ -975,9 +984,6 @@ export class CollaborationHeadlessRuntime {
     if (database.prepare("SELECT 1 FROM collaboration_attachment_recovery_requests WHERE source_event_id=?").get(command.transportEventId)) {
       throw new Error("attachment_recovery_event_conflict");
     }
-    const existingResponse = database.prepare(
-      "SELECT 1 FROM collaboration_outbox WHERE source = 'dingtalk' AND source_event_id = ?",
-    ).get(command.transportEventId);
     const previousTextCommand = database.prepare(
       "SELECT outcome_json FROM collaboration_owner_text_commands WHERE source_event_id = ?",
     ).get(command.transportEventId) as { outcome_json: string } | undefined;
@@ -991,12 +997,10 @@ export class CollaborationHeadlessRuntime {
         control_state: string;
         version: number;
       } | undefined;
-      if (!existingResponse) {
-        this.enqueueOwnerTextCommandStatus(command, Boolean(row), row ? "status_returned" : "unknown_work_item", row);
-      }
+      this.enqueueOwnerTextCommandStatus(command, Boolean(row), row ? "status_returned" : "unknown_work_item", row);
       return {
         allowed: Boolean(row),
-        duplicate: Boolean(existingResponse),
+        duplicate: false,
         command: command.command,
         workItemId: command.workItemId,
         reason: row ? "status_returned" : "unknown_work_item",
@@ -1042,15 +1046,6 @@ export class CollaborationHeadlessRuntime {
     }
 
     if (command.command === "refresh_approval") {
-      if (existingResponse) {
-        return {
-          allowed: true,
-          duplicate: true,
-          command: command.command,
-          workItemId: command.workItemId,
-          reason: "approval_refreshed",
-        };
-      }
       const policy = evaluateOwnerPolicy(database, {
         sender: command.sender,
         capability: "candidate.accept",
@@ -1160,7 +1155,7 @@ export class CollaborationHeadlessRuntime {
       control_state: string;
       version: number;
     } | undefined;
-    this.database.exec("BEGIN IMMEDIATE");
+    this.database.exec("SAVEPOINT owner_query_status_reply");
     try {
       enqueueInboundCard(this.database, {
         sourceEventId: command.transportEventId,
@@ -1182,9 +1177,9 @@ export class CollaborationHeadlessRuntime {
         }),
         now: command.receivedAt,
       });
-      this.database.exec("COMMIT");
+      this.database.exec("RELEASE owner_query_status_reply");
     } catch (error) {
-      this.database.exec("ROLLBACK");
+      this.database.exec("ROLLBACK TO owner_query_status_reply; RELEASE owner_query_status_reply");
       throw error;
     }
   }
