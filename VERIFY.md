@@ -1,5 +1,16 @@
 # Meta 协作验证记录
 
+## 2026-09-06 Owner 自然查询待核查回复（当前批）
+
+- 提交环节权限审查超时（cell 861），发生于进程创建前，不是测试失败；全套验证仍有效，恢复时仅重试一次本地提交。
+- TDD 5f1910 exit 1：新模块尚不存在，无测试实际运行；不声称行为复现。初实现 024f59 exit 1：3 通过 / 7 因合成 sender 缺 displayName 失败。修正后 28222：10 项通过，但 typecheck exit 2（新增标题不在类型联合中）。
+- 扩展 3020 exit 1（82b934）：72 项通过 / 1 失败，预期当前群 8 条而只找到 1 条。查询将 association 的内部 externalEventId 当 source_event_id，正式关联修复为 e.id；没有放宽断言。
+- 扩展命令 `pnpm vitest run server/collaboration/delivery-review.test.ts server/integrations/dingtalk/stream-adapter.test.ts server/collaboration/outbox-dispatcher.test.ts server/collaboration/operations/runtime.test.ts server/collaboration-headless.test.ts server/collaboration/natural-intake-recovery.test.ts server/collaboration/attachment-ingestion.test.ts server/integrations/dingtalk/sender.test.ts && pnpm typecheck && git diff --check`，67393 原句柄终态待记录。
+- 覆盖同群/引用筛选、非 Owner/无身份/未知和跨群引用拒绝、五条上限与真实总数、重放/事件改写、旧投递/事项不变、响应持久化失败回滚、Owner 变更/源变更清单失效、实际 dispatcher 丢弃过期清单、runtime 其他控制入口重放拒绝、Stream 持久化前不 ACK 且不新建事项。均为本地受控消息，没有真实钉钉发送/授权变更。
+- 扩展 67393 exit 0（d51d92）：8 文件 / 142 项、typecheck/diff 通过。
+- 完整命令 `pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-delivery-review-typecheck && git diff --check`：8602 最终 exit 0（186f50）。主集见 2bbb4c：353.46 秒，269 文件通过 / 1 跳过，2,739 项通过 / 18 跳过，注册数 2,757。
+- broker 7、updater 15、desktop-viewer 5、package-link 2、save-file 10 全通过；打包服务无可访问 node_modules 启动、9 条 spawned proxy 路径通过；后续 typecheck、独立服务端编译与 diff 检查全通过。所有测试句柄终态。本批未调用真实钉钉/模型/在线文档或 Docker，未部署。
+
 ## 2026-09-06 回复投递待核查的后台可见性（当前批）
 
 - TDD `pnpm vitest run server/collaboration/operations/delivery-health.test.ts`：fff00d exit 1，5 项失败；缺少排查状态而不是已有投递实现失败。

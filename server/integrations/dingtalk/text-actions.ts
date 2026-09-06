@@ -17,6 +17,10 @@ const COMMANDS: Readonly<Record<string, DingTalkOwnerTextCommandName>> = {
   刷新验收码: "refresh_approval",
 };
 
+export function parseDingTalkDeliveryReviewRequest(message: DingTalkInboundMessage): boolean {
+  return message.addressedToBot && !message.resources?.length && /^(?:请)?(?:查看|核查)(?:待核查|未确认|未送达)(?:的)?回复[。！!]?$/u.test(message.text.trim());
+}
+
 /** Only explicit direct text is control intent; quoted/document content is not. */
 export function parseDingTalkRequirementRecoveryRequest(message: DingTalkInboundMessage): boolean {
   return message.addressedToBot && !message.resources?.length && /^(?:请)?(?:继续|重新)整理需求[。！!]?$/u.test(message.text.trim());

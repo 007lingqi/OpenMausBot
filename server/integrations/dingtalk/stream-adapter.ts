@@ -8,7 +8,7 @@ import {
 } from "./safe-log.ts";
 import { DingTalkSessionReplyRegistry } from "./reply-router.ts";
 import type { DingTalkStreamEnvelope } from "./types.ts";
-import { parseDingTalkOwnerTextAction, parseDingTalkOwnerTextCommand, parseDingTalkProjectionRecoveryRequest, parseDingTalkRequirementRecoveryRequest } from "./text-actions.ts";
+import { parseDingTalkOwnerTextAction, parseDingTalkOwnerTextCommand, parseDingTalkProjectionRecoveryRequest, parseDingTalkRequirementRecoveryRequest, parseDingTalkDeliveryReviewRequest } from "./text-actions.ts";
 
 export type DingTalkStreamState = "stopped" | "connecting" | "connected" | "reconnecting" | "stopping";
 
@@ -137,6 +137,12 @@ export class DingTalkStreamAdapter {
         return;
       }
       if (normalized.replyChannel) this.replyChannels.capture(normalized.replyChannel);
+      if (parseDingTalkDeliveryReviewRequest(normalized.message)) {
+        if (!this.ownerActions.reviewDeliveries) throw new Error("delivery_review_not_configured");
+        await this.ownerActions.reviewDeliveries(normalized.message);
+        this.acknowledge(envelope.headers.messageId);
+        return;
+      }
       if (parseDingTalkRequirementRecoveryRequest(normalized.message)) {
         if (!this.ownerActions.recoverRequirements) throw new Error("natural_intake_recovery_not_configured");
         await this.ownerActions.recoverRequirements(normalized.message);

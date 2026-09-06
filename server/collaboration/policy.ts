@@ -4,6 +4,7 @@ import type { DingTalkSender } from "../integrations/dingtalk/types.ts";
 import { resolveDingTalkPrincipal } from "./identity.ts";
 
 export type OwnerCapability =
+  | "delivery.review"
   | "control.consume"
   | "work.pause"
   | "work.resume"

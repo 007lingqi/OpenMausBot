@@ -102,6 +102,9 @@ export class InboundMessageProcessor {
     this.database.exec("BEGIN IMMEDIATE");
     try {
       assertLedgerArmed(this.database);
+      if (this.database.prepare("SELECT 1 FROM collaboration_owner_text_commands WHERE source_event_id=? AND json_extract(outcome_json,'$.kind')='delivery_review'").get(sourceEventId)) {
+        throw new Error("delivery_review_event_conflict");
+      }
       if (this.database.prepare("SELECT 1 FROM collaboration_natural_intake_recovery_requests WHERE source_event_id=?").get(sourceEventId)) {
         throw new Error("natural_intake_recovery_event_conflict");
       }

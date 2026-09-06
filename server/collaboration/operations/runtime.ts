@@ -40,6 +40,7 @@ import type { InboundMessageOutcome } from "../inbound.ts";
 import { assertCurrentInstanceLease, InstanceLeaseCoordinator, StaleFenceError, type InstanceLease } from "../leases.ts";
 import { OutboxDispatcher, type DispatchOutcome, type OutboxDispatcherOptions } from "../outbox-dispatcher.ts";
 import { readDeliveryHealth, type DeliveryHealth } from "./delivery-health.ts";
+import { requestDeliveryReview, isDeliveryReviewEvent } from "../delivery-review.ts";
 import { enqueueInboundCard, type OutboxDeliveryPort } from "../outbox.ts";
 import { renderCommandStatusCard, renderPlanStatusCard } from "../message-renderer.ts";
 import { syncWorkItemMetaBundle } from "../meta-bundle.ts";
@@ -99,6 +100,7 @@ export interface RuntimeStream {
 }
 
 export interface RuntimeDingTalkSinks {
+  reviewDeliveries(message: DingTalkInboundMessage): ReturnType<typeof requestDeliveryReview>;
   recoverRequirements(message: DingTalkInboundMessage): ReturnType<typeof recoverNaturalIntake>;
   recoverProjection(message: DingTalkInboundMessage): ReturnType<typeof recoverAttachmentProjection>;
   ingest(message: DingTalkInboundMessage): InboundMessageOutcome;
@@ -911,6 +913,7 @@ export class CollaborationHeadlessRuntime {
 
   performDingTalkOwnerAction(action: DingTalkCardAction): OwnerActionOutcome {
     this.assertOperational();
+    if (isDeliveryReviewEvent(this.database!, action.transportEventId)) throw new Error("delivery_review_event_conflict");
     let workItemId: string | null = null;
     try {
       const outcome = this.service!.performOwnerAction({
@@ -953,9 +956,19 @@ export class CollaborationHeadlessRuntime {
     });
   }
 
+  reviewDingTalkDeliveries(message: DingTalkInboundMessage): ReturnType<typeof requestDeliveryReview> {
+    this.assertOperational();
+    const database = this.database!, lease = this.lease!;
+    return requestDeliveryReview(database, message, this.clock.now(), () => {
+      this.assertOperational();
+      assertCurrentInstanceLease(database, lease, this.clock.now());
+    });
+  }
+
   private performDingTalkOwnerTextCommandInternal(command: DingTalkOwnerTextCommand): DingTalkOwnerTextCommandOutcome {
     this.assertOperational();
     const database = this.database!;
+    if (isDeliveryReviewEvent(database, command.transportEventId)) throw new Error("delivery_review_event_conflict");
     if (database.prepare("SELECT 1 FROM collaboration_natural_intake_recovery_requests WHERE source_event_id=?").get(command.transportEventId)) {
       throw new Error("natural_intake_recovery_event_conflict");
     }
@@ -1840,6 +1853,7 @@ export class CollaborationHeadlessRuntime {
           performCommand: (command) => this.performDingTalkOwnerTextCommand(command),
           recoverProjection: (message) => this.recoverDingTalkAttachmentProjection(message),
           recoverRequirements: (message) => this.recoverDingTalkRequirements(message),
+          reviewDeliveries: (message) => this.reviewDingTalkDeliveries(message),
         },
         this.logger,
       );

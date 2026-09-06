@@ -1,5 +1,6 @@
 import type { InboundMessageOutcome } from "../../collaboration/inbound.ts";
 import type { OwnerActionOutcome } from "../../collaboration/actions.ts";
+import type { DeliveryReviewOutcome } from "../../collaboration/delivery-review.ts";
 import type {
   DingTalkCardAction,
   DingTalkInboundMessage,
@@ -19,6 +20,7 @@ export interface DingTalkInboundSink {
 }
 
 export interface DingTalkOwnerActionSink {
+  reviewDeliveries?(message: DingTalkInboundMessage): MaybePromise<DeliveryReviewOutcome>;
   recoverRequirements?(message: DingTalkInboundMessage): MaybePromise<DingTalkRequirementRecoveryOutcome>;
   recoverProjection?(message: DingTalkInboundMessage): MaybePromise<DingTalkProjectionRecoveryOutcome>;
   perform(action: DingTalkCardAction): MaybePromise<OwnerActionOutcome>;

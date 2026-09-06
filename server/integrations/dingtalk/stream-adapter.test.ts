@@ -114,6 +114,20 @@ class FakeSdk implements DingTalkStreamSdkPort {
 }
 
 describe("DingTalk Stream adapter", () => {
+  it("routes natural delivery review to its durable sink, ACKs only on success and creates no task", async () => {
+    const sdk = new FakeSdk();
+    const ingest = vi.fn((message: DingTalkInboundMessage) => inboundOutcome(message));
+    const reviewDeliveries = vi.fn().mockRejectedValueOnce(new Error("fixture_storage_failed")).mockResolvedValue({kind:"delivery_review",allowed:true,duplicate:false,total:0,items:[],ownerGeneration:1,conversationId:"group",reason:"delivery_review_returned"});
+    const adapter = new DingTalkStreamAdapter(sdk,{ingest},{perform:()=>ownerOutcome(),reviewDeliveries},new DingTalkSessionReplyRegistry());
+    await adapter.start();
+    const packet = envelope("bot-message-text.json","review-query");
+    const body = JSON.parse(packet.data) as Record<string,unknown>; body.text={content:"查看待核查回复"};
+    const request={...packet,data:JSON.stringify(body)};
+    await sdk.emit("robot",request); expect(sdk.acknowledgements).toEqual([]);
+    await sdk.emit("robot",request); expect(sdk.acknowledgements).toEqual(["review-query"]);
+    expect(reviewDeliveries).toHaveBeenCalledTimes(2); expect(ingest).not.toHaveBeenCalled();
+    adapter.stop();
+  });
   it("does not ACK requirement recovery until its durable sink succeeds", async () => {
     const sdk = new FakeSdk();
     const ingest = vi.fn((message: DingTalkInboundMessage) => inboundOutcome(message));

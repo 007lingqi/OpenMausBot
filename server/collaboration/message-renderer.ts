@@ -28,7 +28,7 @@ export interface InvalidReferenceCard {
 
 export interface ClarificationCard {
   type: "clarification_card";
-  headline: "需要澄清" | "正在读取附件" | "附件读取未完成" | "需求整理未完成" | "已恢复需求整理";
+  headline: "需要澄清" | "正在读取附件" | "附件读取未完成" | "需求整理未完成" | "已恢复需求整理" | "回复投递核查";
   workItemId: string;
   snapshotRevision: number;
   questions: Array<{
