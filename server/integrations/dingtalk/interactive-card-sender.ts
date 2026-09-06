@@ -10,6 +10,7 @@ type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
 const ACCESS_TOKEN_URL = "https://api.dingtalk.com/v1.0/oauth2/accessToken";
 const CREATE_AND_DELIVER_URL = "https://api.dingtalk.com/v1.0/card/instances/createAndDeliver";
 const GROUP_MESSAGE_URL = "https://api.dingtalk.com/v1.0/robot/groupMessages/send";
+const GROUP_MESSAGE_QUERY_URL = "https://api.dingtalk.com/v1.0/robot/groupMessages/query";
 
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
@@ -105,7 +106,27 @@ export class FetchDingTalkInteractiveCardSender implements DingTalkActiveSendPor
     if (!card && !hasMessageReceipt) {
       return { ok: false, status: response.status, code: "dingtalk_group_message_unconfirmed", deliveryState: "unknown" };
     }
+    if (!card) return this.confirmGroupDelivery(accessToken, credentials.clientId, conversationId, String(result.processQueryKey));
     return { ok: true, status: response.status };
+  }
+
+  private async confirmGroupDelivery(accessToken: string, robotCode: string, openConversationId: string, processQueryKey: string): Promise<DingTalkHttpResult> {
+    // This is a query/recall key, not a verified inbound reply-message ID. Never
+    // copy it into source-event aliases, public errors, logs or model context.
+    if (processQueryKey.length > 4096 || processQueryKey.trim() !== processQueryKey || /[\u0000-\u001f\u007f]/u.test(processQueryKey)) {
+      return { ok: false, status: 502, code: "dingtalk_group_receipt_invalid", deliveryState: "unknown" };
+    }
+    try {
+      const response = await boundedReplyRequest(this.fetcher, GROUP_MESSAGE_QUERY_URL, {
+        method: "POST", redirect: "error",
+        headers: { "content-type": "application/json", "x-acs-dingtalk-access-token": accessToken },
+        body: JSON.stringify({ robotCode, openConversationId, processQueryKey, maxResults: 1 }),
+      }, 16 * 1024, 4_000);
+      if (response.ok && response.record?.sendStatus === "SUCCESS" && inspectDingTalkBusinessStatus(response.record, true) === "clear") {
+        return { ok: true, status: response.status };
+      }
+    } catch { /* The send was accepted: even a failed query is not permission to resend. */ }
+    return { ok: false, status: 502, code: "dingtalk_group_delivery_unconfirmed", deliveryState: "unknown" };
   }
 
   private async accessToken(credentials: DingTalkCredentials): Promise<string | null> {

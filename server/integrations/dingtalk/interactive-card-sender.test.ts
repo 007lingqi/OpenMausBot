@@ -89,7 +89,7 @@ describe("DingTalk interactive card sender", () => {
         if (String(url).endsWith("/v1.0/oauth2/accessToken")) {
           return new Response(JSON.stringify({ accessToken: "access-token", expireIn: 7200 }), { status: 200 });
         }
-        return new Response(JSON.stringify({ processQueryKey: "message-query-key" }), { status: 200 });
+        return new Response(JSON.stringify(String(url).endsWith("/query") ? { sendStatus: "SUCCESS" } : { processQueryKey: "message-query-key" }), { status: 200 });
       },
     );
     await expect(sender.send({
@@ -108,6 +108,8 @@ describe("DingTalk interactive card sender", () => {
       },
     })).resolves.toEqual({ ok: true, status: 200 });
     expect(calls[1]?.url).toBe("https://api.dingtalk.com/v1.0/robot/groupMessages/send");
+    expect(calls).toHaveLength(3);
+    expect(calls[2]?.url).toBe("https://api.dingtalk.com/v1.0/robot/groupMessages/query");
     const body = JSON.parse(String(calls[1]?.init?.body)) as Record<string, unknown>;
     expect(body).toMatchObject({
       msgKey: "sampleMarkdown",

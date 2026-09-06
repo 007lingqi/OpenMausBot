@@ -10,6 +10,22 @@ const credentials = { load: () => ({ clientId: "synthetic-app", clientSecret: "s
 afterEach(() => { vi.useRealTimers(); });
 
 describe("bounded DingTalk reply transport", () => {
+  it.each(["headers", "body"])("bounds accepted-message query %s within the remaining outbox deadline", async phase => {
+    vi.useFakeTimers();
+    let result: unknown = "pending";
+    let signal: AbortSignal | null | undefined;
+    const sender = new FetchDingTalkInteractiveCardSender(credentials, async (url, init) => {
+      if (String(url).endsWith("/accessToken")) return new Response(JSON.stringify({ accessToken: "synthetic-token", expireIn: 7200 }));
+      if (String(url).endsWith("/send")) return new Response(JSON.stringify({ processQueryKey: "synthetic-query" }));
+      signal = init?.signal;
+      return phase === "headers" ? new Promise<Response>(() => {}) : new Response(new ReadableStream());
+    });
+    void sender.send(input).then(value => { result = value; });
+    await vi.advanceTimersByTimeAsync(4_001);
+    expect(result).toMatchObject({ ok: false, deliveryState: "unknown" });
+    expect(signal?.aborted).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
   it("shares a single deadline between response headers and body", async () => {
     vi.useFakeTimers();
     let result: unknown = "pending";

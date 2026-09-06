@@ -1,5 +1,12 @@
 # Meta 协作验证记录
 
+## 2026-09-06 主动群消息实际发送确认（完整链通过）
+
+- TDD e7aaa1 exit 1：7 失败 / 35 跳过，PROCESSING/RECALLED/未知/缺状态/HTTP 错误/失联/矛盾均错误返回成功。实现后 87284/ab791d exit 0：6 文件 / 126 项、typecheck/diff。
+- 查询时限 TDD 6bddef exit 1：2 失败 / 17 跳过；限定查询四秒后扩展 9542/6b4a99 exit 0：9 文件 / 185 项（5.23 秒）、typecheck/diff。生产 createDingTalkDelivery→OutboxDispatcher 在 PROCESSING 时 sent_at 保持空、重建不重发；query 的 group/app/key 来源固定，无原始回执进错误，模拟头/正文挂起均在四秒后取消。
+- 完整 pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-group-delivery-confirmation-typecheck && git diff --check：23002 在 fa2b11 exit 0。272 文件通过 / 1 跳过，2883 项通过 / 18 跳过（2901 注册），520.63 秒；broker 7、updater 15、viewer 5、package-link 2、save-file 10、无 node_modules 打包启动/9 路代理、类型/独立编译/diff 全通过。输出工具状态 group-delivery-confirmation-full-output，verbose 有截断但汇总及终态可见。
+- 无真实 API、模型、身份、容器或部署操作。查询契约使用上一批已核对官方文档；本批受控回执不证明真实送达，也不支持后台持续对账或引用映射。全部句柄终态。
+
 ## 2026-09-06 Docker 前置条件复核（未启动解析验证）
 
 - 7fd00c9 仅审计文档后，业务代码仍 943a0ed；任务工作区干净，用户 AGENTS.md/outputs 保留。没有业务代码或实际配置改动，旧完整回归不当作新 Docker 通过证据。

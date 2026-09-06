@@ -10,6 +10,34 @@ const input = { proactiveOpenConversationId: "synthetic-group", idempotencyKey: 
 const token = { accessToken: "synthetic-access", expireIn: 7200 };
 
 describe("DingTalk business receipt consistency", () => {
+  it.each([" receipt", "receipt\n", "a".repeat(4097)])("does not query malformed receipt %j", async receipt => {
+    let queries = 0;
+    const sender = new FetchDingTalkInteractiveCardSender(credentials, async url => {
+      if (String(url).endsWith("/accessToken")) return new Response(JSON.stringify(token));
+      if (String(url).endsWith("/query")) queries++;
+      return new Response(JSON.stringify({ processQueryKey: receipt }));
+    });
+    expect(await sender.send(input)).toMatchObject({ ok: false, deliveryState: "unknown" });
+    expect(queries).toBe(0);
+  });
+  it.each(["PROCESSING", "RECALLED", "unknown", "missing", "http-error", "lost", "contradictory"])("does not report accepted group messages as sent when query is %s", async mode => {
+    const requests: Array<{ url: string; body: unknown }> = [];
+    const sender = new FetchDingTalkInteractiveCardSender(credentials, async (url, init) => {
+      requests.push({ url: String(url), body: JSON.parse(String(init?.body)) });
+      if (String(url).endsWith("/accessToken")) return new Response(JSON.stringify(token));
+      if (String(url).endsWith("/send")) return new Response(JSON.stringify({ processQueryKey: "synthetic-query" }));
+      if (mode === "lost") throw new Error("synthetic-query-secret");
+      if (mode === "http-error") return new Response("error", { status: 503 });
+      return new Response(JSON.stringify(mode === "missing" ? {} : mode === "contradictory" ? { sendStatus: "SUCCESS", success: false } : { sendStatus: mode }));
+    });
+    const result = await sender.send(input);
+    expect(result).toMatchObject({ ok: false, deliveryState: "unknown" });
+    expect(JSON.stringify(result)).not.toContain("synthetic-query");
+    expect(requests.filter(row => row.url.endsWith("/send"))).toHaveLength(1);
+    expect(requests.at(-1)).toEqual({ url: "https://api.dingtalk.com/v1.0/robot/groupMessages/query", body: {
+      robotCode: "synthetic-app", openConversationId: "synthetic-group", processQueryKey: "synthetic-query", maxResults: 1,
+    } });
+  });
   it.each([
     { errcode: 0, success: false },
     { errcode: 310000, success: true },
@@ -69,7 +97,7 @@ describe("DingTalk business receipt consistency", () => {
 
   it.each([{}, { code: 0 }, { code: "0", success: true }])("preserves coherent message receipts: %j", async flags => {
     const sender = new FetchDingTalkInteractiveCardSender(credentials, async url => new Response(JSON.stringify(
-      String(url).endsWith("/accessToken") ? token : { processQueryKey: "synthetic-query", ...flags })));
+      String(url).endsWith("/accessToken") ? token : String(url).endsWith("/query") ? { sendStatus: "SUCCESS" } : { processQueryKey: "synthetic-query", ...flags })));
     expect(await sender.send(input)).toEqual({ ok: true, status: 200 });
   });
 

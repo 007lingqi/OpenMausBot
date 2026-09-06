@@ -1,7 +1,7 @@
 type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
-// A session attempt followed by token exchange and proactive send must fit
-// inside the runtime's default 30-second outbox claim, including body reads.
+// Session, token and send are each capped at 8s; the optional status query uses
+// 4s, keeping the path inside the default 30s claim, including body reads.
 const REQUEST_TIMEOUT_MS = 8_000;
 
 function cancelBody(response: Response): void {
@@ -64,13 +64,14 @@ async function readRecord(response: Response, maximumBytes: number, signal: Abor
 }
 
 /** No raw provider error or body escapes into a persisted delivery result. */
-export async function boundedReplyRequest(fetcher: FetchLike, url: string | URL, init: RequestInit, maximumBytes: number): Promise<{
+export async function boundedReplyRequest(fetcher: FetchLike, url: string | URL, init: RequestInit, maximumBytes: number, timeoutMs = REQUEST_TIMEOUT_MS): Promise<{
   ok: boolean;
   status: number;
   record: Record<string, unknown> | null;
 }> {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > REQUEST_TIMEOUT_MS) throw new Error("dingtalk_reply_deadline_invalid");
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await abortable(fetcher(url, { ...init, signal: controller.signal }), controller.signal, cancelBody);
     if (!response.ok) {

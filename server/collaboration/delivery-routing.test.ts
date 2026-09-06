@@ -40,6 +40,7 @@ function fixture(environment: NodeJS.ProcessEnv) {
   const destinations: string[] = [];
   const fetcher = vi.fn(async (url: string | URL, init?: RequestInit) => {
     if (String(url).includes("accessToken")) return new Response(JSON.stringify({ accessToken: "synthetic-token", expireIn: 7200 }));
+    if (String(url).endsWith("/groupMessages/query")) return new Response(JSON.stringify({ sendStatus: "SUCCESS" }));
     if (String(url).includes("groupMessages")) destinations.push(JSON.parse(String(init?.body)).openConversationId);
     return new Response(JSON.stringify({ errcode: 0, processQueryKey: "synthetic-receipt" }));
   });
@@ -49,6 +50,25 @@ function fixture(environment: NodeJS.ProcessEnv) {
 }
 
 describe("production delivery group routing", () => {
+  it("keeps an accepted but processing reply unconfirmed across dispatcher restart without sending again", async () => {
+    const f = fixture({ OMB_DINGTALK_ALLOWED_CONVERSATION_IDS: "group-a,group-b", OMB_DINGTALK_PROACTIVE_CONVERSATION_MAP: '{"group-a":"open-a","group-b":"open-b"}' });
+    let sends = 0;
+    f.fetcher.mockImplementation(async (url: string | URL) => {
+      if (String(url).endsWith("/accessToken")) return new Response(JSON.stringify({ accessToken: "synthetic-token", expireIn: 7200 }));
+      if (String(url).endsWith("/send")) { sends++; return new Response(JSON.stringify({ processQueryKey: "synthetic-query" })); }
+      return new Response(JSON.stringify({ sendStatus: "PROCESSING" }));
+    });
+    try {
+      f.db.prepare("UPDATE collaboration_outbox SET delivery_state='superseded',superseded_at=1000 WHERE source_event_id='event-group-b'").run();
+      const lease = new InstanceLeaseCoordinator(f.db, "query-test").acquire(2000, 10000)!;
+      const options = { maxAttempts: 3, claimTtlMs: 1000, baseBackoffMs: 10, maxBackoffMs: 100 };
+      expect(await new OutboxDispatcher(f.db, f.delivery, options).dispatchOne(lease, 2000)).toMatchObject({ state: "dead_letter" });
+      expect(f.db.prepare("SELECT sent_at,delivery_state FROM collaboration_outbox WHERE source_event_id='event-group-a'").get()).toEqual({ sent_at: null, delivery_state: "dead_letter" });
+      expect(await new OutboxDispatcher(f.db, f.delivery, options).dispatchOne(lease, 3000)).toBeNull();
+      expect(sends).toBe(1);
+      expect(JSON.stringify(f.db.prepare("SELECT last_error FROM collaboration_outbox").all())).not.toContain("synthetic-query");
+    } finally { f.db.close(); }
+  });
   it.each(["pause", "resume", "retry", "cancel", "approve_candidate", "reject_candidate"] as const)("rolls back %s decision if its reply cannot be saved", async commandName => {
     const f = fixture({});
     const owner = new LocalOwnerRegistry(join(f.root, "collaboration", "collaboration.sqlite"));
