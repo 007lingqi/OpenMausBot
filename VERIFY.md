@@ -1,5 +1,12 @@
 # Meta 协作验证记录
 
+## 2026-09-06 非生产镜像前置复核（未通过，无新增代码测试）
+
+- 业务候选 2df0387 已保存，完整回归沿用 11501/f42bdf；本轮未改变业务代码。显式 `colima-openmausbot-pilot` 的 ps/image ls 在 430447 exit 0：原试点 healthy、镜像 2ae332cd23df，无文档解析镜像，其余历史容器 exited，均未操作。
+- 沙箱内 Docker 访问被拒、curl DNS 失败；获准沙箱外只读后，官方 registry 的匿名 HEAD 在 cb3f64 exit 35（TLS 连接错误），不能继续声称本轮沙箱外结果是 DNS 超时。
+- 独立 Node fetch HEAD（各请求 10 秒超时，不加载凭据、不更改网络）在 session 26654 观察官方 registry ECONNRESET、public.ecr.aws 和 pypi.org TimeoutError；最终 45bddd exit 0 只表示错误已被脚本捕获、进程结束，不表示端点通过。输出存 pilot-prerequisite-independent-https / -final；三个失败对应不同端点，未对同一失败无限重试。
+- 本轮未构建/拉取/运行解析镜像、未发送群消息或调用模型。真实 Docker 隔离及六场景仍未验收。恢复前置为可信固定镜像/依赖可用或官方源连通恢复，以及用户指定 OpenCode 模型实际渠道；无运行中命令。
+
 ## 2026-09-06 文档容器创建回执丢失恢复（本地完整通过，非真实 Docker 验收）
 
 - TDD 历史证据：92645/6d8162 exit 1，12 项新增断言失败、23 项既有测试通过，复现未知 ID 被跳过、无持久查询尝试及取消/接管边界。实现后 80090/c75972 exit 0，恢复/账本/提取器/摄取四文件 99 项、typecheck/diff 通过。追加真实生产提取器与重建恢复器的受控端口联通测试后，接续原 session 11501，不重复启动。
