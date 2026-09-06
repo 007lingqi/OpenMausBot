@@ -19,6 +19,12 @@ export interface AttachmentTextExtractionInput {
   displayName: string;
 }
 
+/** Trusted lifecycle controls; never derived from attachment contents. */
+export interface AttachmentExtractionContext {
+  signal?: AbortSignal;
+  assertActive?: () => void;
+}
+
 export interface AttachmentTextChunk {
   ordinal: number;
   lineStart: number;

@@ -1,5 +1,11 @@
 # Meta 协作验证记录
 
+## 2026-09-06 文档解析停止传播（完整链通过）
+
+- TDD 8468 exit 1（dcee4c），8 失败 / 51 通过，其中 2 个 native ESM spy 夹具失败；更正为透传真实 spawn 后 34754 exit 1（8aec05），2 行为失败 / 2 通过，证实已有 abort 不生效。
+- 初修 57925 exit 0（838723）：3 文件 / 59 项、typecheck/diff。扩展 document-extractor/docker-containment/attachment-ingestion/document-extractor-smoke/docker-command-runner/docker-patch-agent/runtime-lifecycle-recovery/headless：58471 exit 0（1e0575），8 文件 / 126 项及 typecheck/diff 通过。真实本地子进程被取消后观察 SIGKILL 和 close；Docker 容器部分仍为受控端口，未运行实际文档。
+- 完整命令 `pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-document-stop-typecheck && git diff --check`，30505 在 20751d exit 0：270 文件通过 / 1 跳过，2801 项通过 / 18 跳过（2819 注册），390.25 秒；broker 7、updater 15、viewer 5、package-link 2、save-file 10、打包脱离 node_modules 启动及 9 路代理、typecheck、独立服务端编译和 diff 均通过。所有句柄终态。没有实际 Docker 文档/模型/钉钉/主机重启证据，不将取消 CLI 的局部证明提升为无遗留容器保证。
+
 ## 2026-09-06 文档解析 headless 装配（完整链已通过）
 
 - 沙箱外授权复验同一完整链：72315 在 92ea6e exit 0。270 文件通过 / 1 跳过，2793 项通过 / 18 跳过（2811 注册），314.68 秒；broker 7、updater 15、viewer 5、package-link 2、save-file 10、打包脱离 node_modules 启动及 9 路代理、pnpm typecheck、独立服务端编译、diff 均通过。失败范围中的通信/端口用例全部重验，未改这些测试、未删除断言或增加跳过。

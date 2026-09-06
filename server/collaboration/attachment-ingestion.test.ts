@@ -115,11 +115,14 @@ describe("AttachmentIngestionCoordinator", () => {
     const source = Buffer.from("synthetic PDF fixture, never sent to a real parser");
     const controller = new AbortController();
     const download = vi.spyOn(FetchDingTalkAttachmentDownloader.prototype, "download").mockResolvedValue({ ok: true, bytes: source, sha256: hash(source), mediaType: "application/pdf" });
-    const docker = vi.spyOn(NodeDockerCommandPort.prototype, "run").mockImplementation(async args => {
+    const docker = vi.spyOn(NodeDockerCommandPort.prototype, "run").mockImplementation(async (args, options) => {
       if (args[0] === "create") return { exitCode: 0, stdout: Buffer.from(container), stderr: Buffer.alloc(0) };
       if (args[0] === "rm") return { exitCode: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
       if (mode === "failed") throw new Error("private parser stderr must not escape");
-      if (mode === "cancelled") controller.abort();
+      if (mode === "cancelled") {
+        expect(options?.signal).toBe(controller.signal);
+        controller.abort();
+      }
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.from(JSON.stringify({ version: 1, format: "pdf",
         records: [{ location: "page:2", text: "登录失败 access_token=never-persist-this" }],
         truncated: mode === "partial", warnings: mode === "partial" ? ["unread_images"] : [],

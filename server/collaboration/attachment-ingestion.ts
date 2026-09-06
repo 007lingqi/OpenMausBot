@@ -28,6 +28,7 @@ import {
   type AttachmentTextExtraction,
   type AttachmentTextExtractionInput,
   type AttachmentTextFormat,
+  type AttachmentExtractionContext,
 } from "./attachment-text-extractor.ts";
 import { AttachmentStore, type StoredAttachment } from "./attachment-store.ts";
 import { redactSensitiveText } from "./sensitive-text.ts";
@@ -74,7 +75,7 @@ export interface AttachmentIngestionCoordinatorInput {
   dataDirectory: string;
   vault: DingTalkAttachmentCapabilityVault;
   downloader: AttachmentDownloader;
-  extract?: (input: AttachmentTextExtractionInput) => AttachmentTextExtraction | Promise<AttachmentTextExtraction>;
+  extract?: (input: AttachmentTextExtractionInput, context?: AttachmentExtractionContext) => AttachmentTextExtraction | Promise<AttachmentTextExtraction>;
   onEvidence?: (notification: AttachmentEvidenceNotification) => void | Promise<void>;
 }
 
@@ -841,7 +842,7 @@ export class AttachmentIngestionCoordinator {
     const displayName = attachment.name ?? "attachment";
     let extraction: AttachmentTextExtraction;
     try {
-      extraction = await this.extract({ bytes: downloaded.bytes, mediaType, displayName });
+      extraction = await this.extract({ bytes: downloaded.bytes, mediaType, displayName }, { signal: this.signal, assertActive: assertClaim });
     } catch (error) {
       assertClaim();
       const errorCode = extractionErrorCode(error);

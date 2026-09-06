@@ -19,7 +19,7 @@ docker image inspect omb-document-parser:local --format '{{.Id}}'
 
 生产适配器 `DockerDocumentExtractor` 只接受最终镜像的固定 ID/digest；通过 stdin 传入文件，超时/失败后清理本次容器。headless 工厂已接入 `configuredDocumentExtractor`，默认关闭。完成真实容器隔离 smoke 后，才可在非生产配置中明确设置 `OMB_DOCUMENT_EXTRACTOR_ENABLED=1`、`OMB_DOCUMENT_EXTRACTOR_IMAGE`（已验证的固定 ID/digest）和 `OMB_DOCKER_CONTEXT`（明确的非生产 context）。仅设置镜像不启用；显式启用但缺少镜像/context 或使用可变标签时启动拒绝。不修改现有试点配置，也不设置代表“已验证”的替代标记。
 
-健康检查只验证配置，不拉取镜像、不启动解析容器、不读取文件。实际摄取仍经下载校验、受限解析、正文脱敏、来源账本和完整性门禁；部分正文不得当完整读取。服务失去认领或停止后，迟到解析结果不能落库；解析仍受现有命令超时和清理约束，本接入不提供即时取消容器或强杀后的持久清理 supervisor。装配与受控测试通过不代表真实文档/在线文档或钉钉试点已通过。
+健康检查只验证配置，不拉取镜像、不启动解析容器、不读取文件。实际摄取仍经下载校验、受限解析、正文脱敏、来源账本和完整性门禁；部分正文不得当完整读取。服务失去认领或停止后，迟到解析结果不能落库。协调器将停止信号和认领检查传入解析器；create 等待有界回执后先检查是否仍可 start，start 的 CLI 可取消并等待退出，随后仍执行不带取消信号的 rm。清理失败不会被停止掩盖。此路径不是强杀后的持久清理 supervisor，也未证明 Docker daemon 失联、创建迟到或真实主机重启下没有遗留容器。装配与受控测试通过不代表真实文档/在线文档或钉钉试点已通过。
 
 ## 生产适配器容器验证
 

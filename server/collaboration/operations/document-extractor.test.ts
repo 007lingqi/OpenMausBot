@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { configuredDocumentExtractor, DockerDocumentExtractor } from "./document-extractor.ts";
 import type { DockerCommandPort } from "./docker-containment.ts";
 import { NodeDockerCommandPort } from "./docker-containment.ts";
@@ -18,6 +18,46 @@ function harness(output: unknown, failStart = false, failCleanup = false) {
   return { calls, extractor: new DockerDocumentExtractor({ docker, image }) };
 }
 describe("isolated document extraction", () => {
+  it.each(["before", "created", "parsing", "cleanup", "claim"])("does not accept document work after stopping at %s", async stage => {
+    const controller = new AbortController();
+    let active = true;
+    if (stage === "before") controller.abort();
+    const run = vi.fn<DockerCommandPort["run"]>(async (args, options) => {
+      if (args[0] === "create") {
+        expect(options?.signal).toBeUndefined();
+        if (stage === "created") controller.abort();
+        if (stage === "claim") active = false;
+        return { exitCode: 0, stdout: Buffer.from(id), stderr: Buffer.alloc(0) };
+      }
+      if (args[0] === "rm") {
+        expect(options?.signal).toBeUndefined();
+        if (stage === "cleanup") controller.abort();
+        return { exitCode: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+      }
+      if (stage === "parsing") {
+        expect(options?.signal).toBe(controller.signal);
+        controller.abort();
+      }
+      return { exitCode: 0, stdout: Buffer.from(JSON.stringify({ version: 1, format: "pdf", records: [{ location: "page:1", text: "fixture" }], truncated: false, warnings: [] })), stderr: Buffer.alloc(0) };
+    });
+    await expect(new DockerDocumentExtractor({ docker: { run }, image }).extract(input, {
+      signal: controller.signal, assertActive() { if (!active) throw new Error("private lease data"); },
+    })).rejects.toThrow("attachment_document_inactive");
+    expect(run.mock.calls.map(call => call[0][0])).toEqual(stage === "before" ? [] : stage === "created" || stage === "claim" ? ["create", "rm"] : ["create", "start", "rm"]);
+  });
+  it("reports failed cleanup even when the caller has already stopped", async () => {
+    const controller = new AbortController();
+    const run = vi.fn<DockerCommandPort["run"]>(async args => {
+      if (args[0] === "create") {
+        controller.abort();
+        return { exitCode: 0, stdout: Buffer.from(id), stderr: Buffer.alloc(0) };
+      }
+      return { exitCode: 1, stdout: Buffer.alloc(0), stderr: Buffer.from("private Docker error") };
+    });
+    await expect(new DockerDocumentExtractor({ docker: { run }, image }).extract(input, { signal: controller.signal }))
+      .rejects.toThrow("attachment_document_cleanup_failed");
+    expect(run.mock.calls.map(call => call[0])).toEqual([expect.arrayContaining(["create"]), ["rm", "--force", id]]);
+  });
   it("requires explicit enablement, a fixed image and a named Docker context without running commands", () => {
     expect(configuredDocumentExtractor({})).toBeUndefined();
     expect(configuredDocumentExtractor({ OMB_DOCUMENT_EXTRACTOR_IMAGE: image })).toBeUndefined();

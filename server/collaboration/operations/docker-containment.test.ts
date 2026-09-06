@@ -1,9 +1,17 @@
 import { createHash } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import * as childProcess from "node:child_process";
+import { once } from "node:events";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("node:child_process", async () => {
+  const actual = await vi.importActual<typeof childProcess>("node:child_process");
+  return { ...actual, spawn: vi.fn(actual.spawn) };
+});
 
 import type { ContainmentBinding } from "../containment.ts";
 import {
   DockerCliContainmentSupervisor,
+  NodeDockerCommandPort,
   type DockerCommandPort,
   type DockerCommandResult,
 } from "./docker-containment.ts";
@@ -38,6 +46,31 @@ function result(exitCode: number, stdout = "", stderr = ""): DockerCommandResult
 }
 
 describe("Docker CLI containment supervisor", () => {
+  it("does not spawn an already cancelled command", async () => {
+    const controller = new AbortController();
+    controller.abort("private reason");
+    const spawn = vi.spyOn(childProcess, "spawn");
+    try {
+      await expect(new NodeDockerCommandPort({ executable: process.execPath }).run(["-e", "process.exit(0)"], { signal: controller.signal }))
+        .rejects.toThrow("docker_command_aborted");
+      expect(spawn).not.toHaveBeenCalled();
+    } finally { spawn.mockRestore(); }
+  });
+  it("reaps a running CLI before rejecting cancellation and removes its abort listener", async () => {
+    const controller = new AbortController();
+    const remove = vi.spyOn(controller.signal, "removeEventListener");
+    const spawn = vi.spyOn(childProcess, "spawn");
+    const pending = new NodeDockerCommandPort({ executable: process.execPath }).run(["-e", "setInterval(() => {}, 1000)"], { signal: controller.signal, timeoutMs: 2000 });
+    const assertion = expect(pending).rejects.toThrow("docker_command_aborted");
+    const child = spawn.mock.results[0].value as childProcess.ChildProcess;
+    try {
+      await once(child, "spawn");
+      controller.abort("private reason");
+      await assertion;
+      expect(child.signalCode).toBe("SIGKILL");
+      expect(remove).toHaveBeenCalledWith("abort", expect.any(Function));
+    } finally { child.kill("SIGKILL"); spawn.mockRestore(); remove.mockRestore(); }
+  });
   it("binds a proof to Docker labels, host generation, and the scheduler fence", async () => {
     const docker = new FakeDocker();
     const supervisor = new DockerCliContainmentSupervisor({

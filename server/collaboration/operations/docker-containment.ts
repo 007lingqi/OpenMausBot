@@ -23,7 +23,7 @@ export interface DockerCommandResult {
 }
 
 export interface DockerCommandPort {
-  run(args: readonly string[], options?: { input?: Buffer; timeoutMs?: number; maxOutputBytes?: number }): Promise<DockerCommandResult>;
+  run(args: readonly string[], options?: { input?: Buffer; timeoutMs?: number; maxOutputBytes?: number; signal?: AbortSignal }): Promise<DockerCommandResult>;
 }
 
 export class NodeDockerCommandPort implements DockerCommandPort {
@@ -38,8 +38,9 @@ export class NodeDockerCommandPort implements DockerCommandPort {
 
   async run(
     args: readonly string[],
-    options: { input?: Buffer; timeoutMs?: number; maxOutputBytes?: number } = {},
+    options: { input?: Buffer; timeoutMs?: number; maxOutputBytes?: number; signal?: AbortSignal } = {},
   ): Promise<DockerCommandResult> {
+    if (options.signal?.aborted) throw new Error("docker_command_aborted");
     const timeoutMs = options.timeoutMs ?? 30_000;
     const maxOutputBytes = options.maxOutputBytes ?? 4 * 1024 * 1024;
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new Error("docker_timeout_invalid");
@@ -62,6 +63,13 @@ export class NodeDockerCommandPort implements DockerCommandPort {
       let limited = false;
       let timedOut = false;
       let inputFailed = false;
+      let aborted = false;
+      const abort = () => {
+        aborted = true;
+        child.kill("SIGKILL");
+      };
+      options.signal?.addEventListener("abort", abort, { once: true });
+      if (options.signal?.aborted) abort();
       const timer = setTimeout(() => {
         timedOut = true;
         child.kill("SIGKILL");
@@ -81,12 +89,18 @@ export class NodeDockerCommandPort implements DockerCommandPort {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        options.signal?.removeEventListener("abort", abort);
         reject(error);
       });
       child.once("close", (code) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        options.signal?.removeEventListener("abort", abort);
+        if (aborted) {
+          reject(new Error("docker_command_aborted"));
+          return;
+        }
         if (limited) {
           reject(new Error("docker_output_limit_exceeded"));
           return;

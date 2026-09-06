@@ -1,7 +1,7 @@
 import { extname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { extractAttachmentText, MAX_ATTACHMENT_BYTES, type AttachmentTextExtractionInput, type AttachmentTextExtraction } from "../attachment-text-extractor.ts";
+import { extractAttachmentText, MAX_ATTACHMENT_BYTES, type AttachmentTextExtractionInput, type AttachmentTextExtraction, type AttachmentExtractionContext } from "../attachment-text-extractor.ts";
 import { NodeDockerCommandPort, type DockerCommandPort } from "./docker-containment.ts";
 
 const formats = { ".pdf": "application/pdf", ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -18,7 +18,14 @@ export class DockerDocumentExtractor {
     if (!/^(?:sha256:[a-f0-9]{64}|[a-zA-Z0-9./:_-]+@sha256:[a-f0-9]{64})$/.test(input.image)) throw new Error("attachment_document_image_not_fixed");
     this.docker = input.docker; this.image = input.image;
   }
-  async extract(input: AttachmentTextExtractionInput): Promise<AttachmentTextExtraction> {
+  async extract(input: AttachmentTextExtractionInput, context: AttachmentExtractionContext = {}): Promise<AttachmentTextExtraction> {
+    const assertActive = () => {
+      try {
+        if (context.signal?.aborted) throw new Error();
+        context.assertActive?.();
+      } catch { throw new Error("attachment_document_inactive"); }
+    };
+    assertActive();
     const extension = extname(input.displayName).toLowerCase() as keyof typeof formats;
     if (!(extension in formats)) return extractAttachmentText(input);
     if (!(input.bytes instanceof Uint8Array) || input.bytes.length > MAX_ATTACHMENT_BYTES) throw new Error("attachment_file_too_large");
@@ -34,7 +41,10 @@ export class DockerDocumentExtractor {
       const candidate = created.stdout.toString("utf8").trim();
       if (created.exitCode !== 0 || !/^[a-f0-9]{64}$/.test(candidate)) throw new Error("create_failed");
       id = candidate;
-      const result = await this.docker.run(["start", "--attach", "--interactive", id], { input: Buffer.from(input.bytes), timeoutMs: 30_000, maxOutputBytes: 2 * 1024 * 1024 });
+      // Let create settle before cleanup so a normal stop cannot lose its receipt.
+      assertActive();
+      const result = await this.docker.run(["start", "--attach", "--interactive", id], { input: Buffer.from(input.bytes), timeoutMs: 30_000, maxOutputBytes: 2 * 1024 * 1024, signal: context.signal });
+      assertActive();
       if (result.exitCode !== 0) throw new Error("parse_failed");
       const parsed = outputSchema.parse(JSON.parse(result.stdout.toString("utf8")));
       if (parsed.format !== extension.slice(1) || (!parsed.truncated && parsed.warnings.length)) throw new Error("invalid_result");
@@ -45,18 +55,19 @@ export class DockerDocumentExtractor {
       return { ...extraction, format: parsed.format, truncated, warnings,
         extractor: { name: "docker-document", version: `1:${this.image}` },
         chunks: extraction.chunks.map(chunk => ({ ...chunk, truncated, warnings })) };
-    } catch { throw new Error("attachment_document_extraction_failed"); }
+    } catch { assertActive(); throw new Error("attachment_document_extraction_failed"); }
     finally {
       {
         let removed = false;
         try { removed = (await this.docker.run(["rm", "--force", id ?? ownedName], { timeoutMs: 10_000, maxOutputBytes: 4096 })).exitCode === 0; } catch { /* fail closed below */ }
         if (!removed) throw new Error("attachment_document_cleanup_failed");
+        assertActive();
       }
     }
   }
 }
 
-export function configuredDocumentExtractor(environment: NodeJS.ProcessEnv): ((input: AttachmentTextExtractionInput) => Promise<AttachmentTextExtraction>) | undefined {
+export function configuredDocumentExtractor(environment: NodeJS.ProcessEnv): ((input: AttachmentTextExtractionInput, context?: AttachmentExtractionContext) => Promise<AttachmentTextExtraction>) | undefined {
   const enabled = environment.OMB_DOCUMENT_EXTRACTOR_ENABLED?.trim();
   if (!enabled || enabled === "0") return undefined;
   if (enabled !== "1") throw new Error("attachment_document_enable_invalid");
@@ -67,5 +78,5 @@ export function configuredDocumentExtractor(environment: NodeJS.ProcessEnv): ((i
   const extractor = new DockerDocumentExtractor({ image, docker: new NodeDockerCommandPort({
     executable: environment.OMB_DOCKER_EXECUTABLE, context,
   }) });
-  return input => extractor.extract(input);
+  return (input, context) => extractor.extract(input, context);
 }
