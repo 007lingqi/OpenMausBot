@@ -1,5 +1,13 @@
 # Meta 协作验证记录
 
+## 2026-09-06 文档解析 Docker 前置复核（未执行解析测试）
+
+- 业务候选仍为 4b20d9c；本轮只有文档记录变化。此前该候选完整回归通过不等于文档 Docker 或真实钉钉试点通过。
+- 671e66：沙箱不能连接 Colima socket。cell 951：自动权限审查超时，进程未启动；一次重试后 8a6d98 exit 0，显式 context=colima-openmausbot-pilot 的 ps/image ls 确認当前试点 healthy、其他历史容器 exited、没有解析镜像；docker manifest --help 确认内置 inspect 可用，未执行远端清单查询。
+- 匿名官方仓库 HEAD：curl --head --silent --show-error --connect-timeout 10 --max-time 20 https://registry-1.docker.io/v2/。沙箱内 c164b2 exit 6；沙箱外 55383 / 859561 exit 28，DNS 解析约 10 秒超时。没有收到注册表业务响应，不判断镜像存在性或 digest。
+- 无构建、拉取或文档 smoke 进程启动；未更改配置/网络/身份/凭据、未发送群消息。cell 954 和 session 55383 均已终态。主服务尚未装配 configuredDocumentExtractor，真实文档支持未上线。
+- 文档更新首次补丁因 VERIFY 标题不匹配整体未应用，按实际标题修正；无业务代码变化。恢复入口为 document-parser/README.md 的固定镜像构建和正式 smoke，不安装 buildx 作为必需前置，不以宿主机解析替代隔离验证。
+
 ## 2026-09-06 自然恢复回复来源（当前批）
 
 - TDD `pnpm vitest run server/collaboration/delivery-routing.test.ts`，70865 exit 1（5e50ba）：2 失败 / 17 通过，缺来源导致生产装配返回 delivery_unroutable。扩展 `delivery-routing / natural-intake-recovery / attachment-ingestion`，48909 exit 1（20b862）：4 失败 / 68 通过。

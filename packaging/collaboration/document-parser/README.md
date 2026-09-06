@@ -38,6 +38,8 @@ node --experimental-strip-types server/collaboration/operations/document-extract
 
 ## 验证边界
 
+2026-09-06 最新前置复核（业务候选 4b20d9c）：显式 `colima-openmausbot-pilot` 查询确认现有试点 healthy，本地没有本解析器镜像。Docker CLI 缺少 buildx，但已有 `docker manifest inspect`，因此查询固定基础镜像不要求额外安装插件。沙箱外匿名访问官方 `registry-1.docker.io/v2/` 仍在 DNS 解析约 10 秒后超时；本次没有启动拉取、构建或 smoke，没有修改 DNS/代理或现有容器。网络恢复后先通过官方清单取得可信 digest，再执行上述两个构建目标和正式 smoke。主服务尚未装配解析器；容器测试通过也不能单独证明群内真实附件可用。
+
 截至 2026-09-05，已有自生成夹具的本地 Python 测试与 TypeScript Docker 命令端口测试。Colima 下载基础镜像遇 DNS 超时，宿主机镜像清单请求及备用 GitHub 运行时下载也未成功，因此尚无本目录镜像构建或 Linux 运行证据。
 
 2026-09-06：新增上述可重复容器验证入口及故障注入测试。本地 Python 13 项通过；官方 Docker Hub 清单 EOF、Colima 拉取 DNS 超时，备用公开入口 public.ecr.aws 的宿主机 DNS 检查同样超时。没有修改 DNS/代理、借用凭据或重复拉取。真实镜像构建和本验证程序的 Docker 执行仍未完成，不能启用真实附件处理或宣称六类试点通过。

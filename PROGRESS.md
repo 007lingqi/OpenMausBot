@@ -17,6 +17,15 @@
 
 ## 本批执行记录
 
+### 文档解析 Docker 前置复核（2026-09-06，未构建）
+
+- 前一轮仅交接摘要，分类 no progress；本轮重新读取目标、技能和当前工作区，基于 4b20d9c 接续。初始只有用户 AGENTS.md/outputs 未跟踪，保持不动。
+- 首次沙箱 Docker 查询 671e66 被套接字权限拒绝；cell 951 权限审查超时，未启动沙箱外 Docker 进程。按提示重试一次，cell 954 / 8a6d98 exit 0：指定 colima-openmausbot-pilot 的现有服务 Up 2 days (healthy)，其余历史容器为 Exited；没有文档解析镜像。未重启、删除或替换容器。
+- Docker 有内置 manifest inspect，不必为清单查询安装 buildx。上一续办 buildx 缺失没有触发网络请求；本轮另行匿名检查官方 registry-1.docker.io/v2/，沙箱内 c164b2 无法解析，沙箱外 55383 / 859561 exit 28 为 Resolving timed out after 10011 milliseconds。这是 DNS 超时，不是镜像不存在或解析器测试失败。
+- 因无法取得可信基础镜像清单、且本地没有 Python 解析镜像，本轮未启动构建、拉取或文档 smoke。未改 DNS/代理、安装插件、借用凭据或在宿主机解析真实附件。所有命令/cell 均终态，无待轮询句柄。
+- 只读确认 configuredDocumentExtractor 尚未由主服务工厂使用。隔离 smoke 日后通过后，仍需测试先行完成显式装配、正文来源/恢复与真实群验收，不能只设置环境变量宣称上线。本轮仅更新文档，未重跑未变业务代码的完整回归。
+- 接续：网络恢复后取得固定 Python 镜像，分别构建 runtime/parser-tests 并执行正式 Docker smoke；网络受阻期间可推进普通 Owner 控制回复的持久化来源。模型授权、六类真实试点、主机重启及人工验收仍未完成，Goal active，未将网络前置阻碍认定为全目标无路可进。
+
 ### 自然需求/附件恢复回复来源（2026-09-06 当前批）
 
 - 上批 ab92f12 已提交且全量通过，分类 progress。本批读取 goal-protocol 接续，初始仅用户 AGENTS.md/outputs 未跟踪，保持不动；schema 25 不变。
