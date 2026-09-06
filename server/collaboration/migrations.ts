@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { OPENMAUSBOT_SOURCE_BASELINE } from "./config.ts";
 
-export const COLLABORATION_SCHEMA_VERSION = 27;
+export const COLLABORATION_SCHEMA_VERSION = 28;
 
 interface Migration {
   version: number;
@@ -1315,6 +1315,37 @@ const migrations: readonly Migration[] = [
           WHEN NEW.instance_owner IS NOT OLD.instance_owner OR NEW.instance_fence IS NOT OLD.instance_fence
             OR NEW.recovery_attempts<OLD.recovery_attempts OR NEW.recovery_verified_absent<OLD.recovery_verified_absent
           BEGIN SELECT RAISE(ABORT,'document recovery identity is immutable'); END;
+      `);
+    },
+  },
+  {
+    version: 28, name: "durable-delivery-query-attempts", checksum: "v28:bounded-fenced-query-only-outbox-recovery",
+    apply(database) {
+      database.exec(`
+        CREATE TABLE collaboration_delivery_queries (
+          outbox_id TEXT NOT NULL REFERENCES collaboration_outbox(id),
+          attempt INTEGER NOT NULL CHECK(attempt BETWEEN 1 AND 3),
+          snapshot_hash TEXT NOT NULL,
+          instance_owner TEXT NOT NULL,
+          instance_fence INTEGER NOT NULL,
+          started_at INTEGER NOT NULL,
+          expires_at INTEGER NOT NULL,
+          next_attempt_at INTEGER NOT NULL,
+          completed_at INTEGER,
+          outcome TEXT CHECK(outcome IN ('confirmed','unconfirmed','no_receipt','superseded')),
+          PRIMARY KEY(outbox_id,attempt)
+        ) STRICT;
+        CREATE TRIGGER delivery_queries_ordered BEFORE INSERT ON collaboration_delivery_queries
+          WHEN NEW.attempt != (SELECT COALESCE(MAX(attempt),0)+1 FROM collaboration_delivery_queries WHERE outbox_id=NEW.outbox_id)
+          BEGIN SELECT RAISE(ABORT,'delivery query attempt out of order'); END;
+        CREATE TRIGGER delivery_queries_immutable BEFORE UPDATE ON collaboration_delivery_queries
+          WHEN NEW.outbox_id!=OLD.outbox_id OR NEW.attempt!=OLD.attempt OR NEW.snapshot_hash!=OLD.snapshot_hash
+            OR NEW.instance_owner!=OLD.instance_owner OR NEW.instance_fence!=OLD.instance_fence
+            OR NEW.started_at!=OLD.started_at OR NEW.expires_at!=OLD.expires_at OR NEW.next_attempt_at!=OLD.next_attempt_at
+            OR OLD.completed_at IS NOT NULL OR NEW.completed_at IS NULL OR NEW.outcome IS NULL
+          BEGIN SELECT RAISE(ABORT,'delivery query evidence is immutable'); END;
+        CREATE TRIGGER delivery_queries_no_delete BEFORE DELETE ON collaboration_delivery_queries
+          BEGIN SELECT RAISE(ABORT,'delivery query evidence cannot be deleted'); END;
       `);
     },
   },

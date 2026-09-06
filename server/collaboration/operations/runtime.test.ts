@@ -106,6 +106,56 @@ function seedRunningRun(dataDirectory: string, ownerId: string): { proof: Contai
 }
 
 describe("production-isomorphic collaboration runtime", () => {
+  it("stops the drain when maintenance returns after lease expiry", async () => {
+    let now = 1000;
+    const runtime = new CollaborationHeadlessRuntime({ dataDirectory: temporaryDirectory(), platform: "linux",
+      instanceLeaseTtlMs: 1000, clock: { now: () => now },
+      maintenanceFactory: () => ({ run: async () => { now += 1001; } }) });
+    await runtime.start();
+    try {
+      expect(await runtime.drainOnce()).toEqual({ dispatched: null, maintained: true });
+      expect(runtime.health()).toMatchObject({ ready: false, reason: "lease_failed", instanceLease: "not_held" });
+    } finally { await runtime.stop(); }
+  });
+  it.each(["pending", "dead_letter"])("does not begin %s work with a lease that expired during Stream maintenance", async state => {
+    const dataDirectory = temporaryDirectory(); let now = 1000;
+    const deliver = vi.fn(async () => ({ outcome: "sent" as const }));
+    const query = vi.fn(async () => ({ outcome: "sent" as const }));
+    const runtime = new CollaborationHeadlessRuntime({ dataDirectory, platform: "linux", instanceLeaseTtlMs: 1000,
+      clock: { now: () => now }, outboxDelivery: { retryPolicy: "only-confirmed-unsent", deliver, reconcile: query },
+      dingTalk: { enabled: true, credentials: { load: () => ({ clientId: "synthetic", clientSecret: "synthetic" }) },
+        createStream: () => ({ start: async () => "connected", stop() {}, state: () => "connected",
+          maintain: async () => { now += 1001; return "connected"; } }) } });
+    await runtime.start();
+    const db = new DatabaseSync(join(dataDirectory, "collaboration", "collaboration.sqlite"));
+    try {
+      runtime.ingestDingTalkMessage(message("expired-maintenance"));
+      if (state === "dead_letter") db.exec("UPDATE collaboration_outbox SET delivery_state='dead_letter',attempt=1,last_error='proactive_delivery_unconfirmed'");
+      expect(await runtime.drainOnce()).toEqual({ dispatched: null, maintained: false });
+      expect(deliver).not.toHaveBeenCalled(); expect(query).not.toHaveBeenCalled();
+      expect(db.prepare("SELECT count(*) AS n FROM collaboration_delivery_queries").get()).toEqual({ n: 0 });
+      expect(runtime.health()).toMatchObject({ ready: false, reason: "lease_failed", instanceLease: "not_held" });
+    } finally { await runtime.stop(); db.close(); }
+  });
+  it("queries an uncertain reply after service restart without a new send", async () => {
+    const dataDirectory = temporaryDirectory();
+    const deliver = vi.fn(async () => ({ outcome: "unknown" as const, error: "proactive_delivery_unconfirmed" }));
+    const first = new CollaborationHeadlessRuntime({ dataDirectory, ownerId: "query-first", platform: "linux",
+      outboxDelivery: { retryPolicy: "only-confirmed-unsent", deliver } });
+    await first.start();
+    first.ingestDingTalkMessage(message("query-restart"));
+    expect(await first.drainOnce()).toMatchObject({ dispatched: { state: "dead_letter" } });
+    await first.stop();
+    const query = vi.fn(async () => ({ outcome: "sent" as const }));
+    const second = new CollaborationHeadlessRuntime({ dataDirectory, ownerId: "query-second", platform: "linux",
+      outboxDelivery: { retryPolicy: "only-confirmed-unsent", deliver, reconcile: query } });
+    try {
+      await second.start();
+      expect(await second.drainOnce()).toMatchObject({ dispatched: { state: "sent", operation: "reconcile" } });
+      expect(await second.drainOnce()).toMatchObject({ dispatched: null });
+      expect(query).toHaveBeenCalledTimes(1); expect(deliver).toHaveBeenCalledTimes(1);
+    } finally { await second.stop(); }
+  });
   it("includes a concrete bounded diff in the candidate status delivered to DingTalk", () => {
     const repository = temporaryDirectory();
     execFileSync("git", ["init", "-q", repository]);

@@ -77,6 +77,7 @@ describe("runtime passive lifecycle recovery", () => {
       const stalled = dispatcher.dispatchOne(lease, Date.now());
       await vi.advanceTimersByTimeAsync(8_001);
       expect(await stalled).toMatchObject({ state: "dead_letter" });
+      expect(await dispatcher.dispatchOne(lease, Date.now())).toMatchObject({ state: "dead_letter", operation: "reconcile" });
       expect(await dispatcher.dispatchOne(lease, Date.now())).toMatchObject({ state: "sent" });
       const restarted = new OutboxDispatcher(f.db, createDingTalkDelivery(sessions, {}, f.root), options);
       expect(await restarted.dispatchOne(lease, Date.now())).toBeNull();
@@ -100,7 +101,8 @@ describe("runtime passive lifecycle recovery", () => {
       const options = { maxAttempts: 3, claimTtlMs: 1000, baseBackoffMs: 1, maxBackoffMs: 10 };
       expect(await new OutboxDispatcher(f.db, delivery, options).dispatchOne(lease, Date.now())).toMatchObject({ state: "dead_letter" });
       const restarted = createDingTalkDelivery(new DingTalkSessionReplyRegistry(), {}, f.root);
-      expect(await new OutboxDispatcher(f.db, restarted, options).dispatchOne(lease, Date.now()+100)).toBeNull();
+      expect(await new OutboxDispatcher(f.db, restarted, options).dispatchOne(lease, Date.now()+100)).toMatchObject({ state: "dead_letter", operation: "reconcile" });
+      expect(await new OutboxDispatcher(f.db, restarted, options).dispatchOne(lease, Date.now()+200)).toBeNull();
       expect(fetcher).toHaveBeenCalledTimes(1);
       expect(f.db.prepare("SELECT sent_at,last_error FROM collaboration_outbox WHERE id=?").get(row.id))
         .toEqual({ sent_at: null, last_error: "session_delivery_unconfirmed" });

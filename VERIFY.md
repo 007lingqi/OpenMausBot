@@ -1,5 +1,50 @@
 # Meta 协作验证记录
 
+## 2026-09-06 自动核查与实时租约批次完整通过
+
+- 完整命令pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-query-reconciliation-typecheck && git diff --check；80357/bd32bb exit0，主集274文件通过/1跳过，2907项通过/18跳过（2925注册），347.65秒。
+- 后续broker7、updater15、desktop-viewer5、package-link2、save-file10全通过；packaged-server实际脱离node_modules启动及9路代理路径检查通过；类型检查、独立服务端编译、diff检查均通过。原始观察存reconciliation-final-full-output，终态reconciliation-final-full-last。所有句柄终态。
+- 上轮env-path失败的调查：vite配置fileParallelism=false，每文件临时HOME；原用例真实execFile异步探测并由waitFor观察。当前证据不能确定上轮延迟/失败机制，没有修改该实现、测试或超时。隔离复测13项通过及本次完整链通过证明当前信号成功，不证明偶发故障根治；保留历史失败，若再次出现应捕获子进程退出/输出/时间证据而不是盲目加大超时。
+- 本批相关覆盖包括消息入站/事项关联/Owner权限、真实SQLite Ledger/迁移、Outbox不重复发送、生产运输的受控查询回执、服务重建、三次查询预算与迟到结果拒绝。HTTP和身份为合成测试材料；不是实际钉钉送达、Linux强隔离或六类真实试点证明。
+- 20个任务文件经diff审查，无新增真实凭据；保存本地批次、不push，用户AGENTS.md/outputs排除。实际提交结果以Git为准。真实模型/文档/入口授权与解析镜像等仍缺，Goal不标complete。
+
+## 2026-09-06 Owner授权后的完整回归（1项失败，隔离复测通过）
+
+- Owner明确“运行”后启动完整命令：pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-query-reconciliation-typecheck && git diff --check。16187/28528b exit1：273文件通过/1失败/1跳过，2906项通过/1失败/18跳过（2925注册），423.58秒。
+- 唯一失败：server/env-path.test.ts第95行，keeps the last login-shell PATH available during a rescan，等待PATH包含临时shell输出路径未满足。该文件及实现均未修改。之前完整链的五项失败已在本轮通过；本批钉钉相关测试通过。不据此断言失败只是环境问题或已经修复。
+- 隔离复测：pnpm exec vitest run server/env-path.test.ts && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-query-reconciliation-typecheck && git diff --check；19519/4c744e exit0，13项通过/7平台跳过、972ms，后续类型/编译/diff全通过。隔离通过不覆盖完整链失败；完整pnpm test的broker、updater、viewer、package-link、save-file、packaged-server因前段失败没有执行。
+- 本轮无代码修补、没有放宽测试、没有本地提交/push/部署/真实钉钉或Docker操作。执行权限已解除，原生Goal查询为active；下方历史blocked记录不再代表当前授权。所有句柄终态。证据：approved-full-regression-output（部分早期输出截断，终态汇总完整）、approved-full-regression-last、approved-full-regression-followup。下一步定位全量时序失败并重新完整验证，真实试点及Owner最终验收仍待进行。
+
+## 2026-09-06 阻塞收束（没有新增验证）
+
+- 工作区/HEAD2445b52及历史真实工具终态复核：本轮无业务代码变化、无运行中的验证、无新的授权输入。最近相关验证仍为80343/934f41 exit0，最近完整链仍为37204/a7c432 exit1；不能将状态记录或旧通过项当作全量通过。
+- 原生Goal按连续阻塞条件转blocked而非complete：同一完整回归执行权限问题已连续多个目标续办轮次存在，cell1252及唯一重试1255均未启动子进程。局部安全验证/修复已完成，目前无可替代全量门禁的安全路径。保留全部未提交改动，等待Owner明确授权或权限环境变化；恢复后再执行完整验证，不自动部署或变更真实身份。
+
+## 2026-09-06 异步租约时效漏洞修复（相关回归通过，完整回归待权限）
+
+- TDD 9b69f3 exit1：4失败/30跳过。证明Stream维护期间实例过期后仍会发送或查询，以及普通发送在claim/实例超期后仍能落sent。实现后31184/bb704c exit0：3文件43项/typecheck/diff。
+- 补充维护返回过期反例d3d338 exit1：1失败/23跳过，健康仍被误报ready。修复后80343/934f41 exit0：12文件220项（28.10秒）、typecheck、独立服务端编译/tmp/openmausbot-live-lease-time-typecheck及diff通过。含恢复/正常消息交替/同仓串行/Verifier重试/自然需求/健康/钉钉接收与生产运输装配。原始终态保存在live-lease-time-related。
+- 所有本轮执行句柄终态；没有新增沙箱外申请或真实网络/身份/部署操作。最新完整链仍是37204/a7c432失败，不能用局部通过声称完整通过；等待此前请求的Owner执行授权/权限处理。本批不提交，不改用户AGENTS.md/outputs。
+
+## 2026-09-06 自动核查修正的接续验证（完整回归仍未通过）
+
+- 无网络启动的后续检查41037/c797ec exit0：broker7、updater15、desktop-viewer5、package-link2、save-file10及服务端打包构建/diff通过；未执行packaged-server的实际启动smoke，不能据构建成功称运行验证完成。全部已启动命令终态。
+
+- 原 functions.exec cell1252 及允许的一次重试 cell1255 均在权限自动审查阶段超时，未创建测试进程；不是测试运行超时，不重复启动。两cell均已终态，无遗留待查询的执行句柄。
+- 现有权限下 41964/f3c810 exit 0：runtime-lifecycle-recovery/runtime-repository-serialization/outbox-reconciliation/delivery-routing/db/runtime/group-receipt-vault/stream-adapter/outbox-dispatcher 共9文件168项通过（16.61秒），typecheck、独立服务端编译和diff通过。此前五项失败均在此范围内，不削弱重发与后续发送断言。
+- 完整测试最新结果仍为37204/a7c432 exit1；局部修正验证不替代完整pnpm test及打包启动，不提交或部署本批。等待Owner明确执行授权/权限处理后再运行完整链。本轮不改变实际模型/钉钉/容器身份配置。
+
+## 2026-09-06 自动只查询核查与重启恢复（首条完整链失败，已修测试待验证）
+
+- 最终检查点优先于下方启动记录：37204/a7c432 exit 1，272 文件通过/2 失败/1 跳过，2897 通过/5 失败/18 跳过（2920注册），354.76秒。四项生命周期回复测试仍假定不进行只读核查或下一轮立即发送，另一个 v15升级夹具漏删新增查询表；已改两文件，未再次取得测试结果，不宣称修复已验证。
+- 接续验证：functions.exec cell1252 仍未返回，不能确认 exec_command 子进程启动。后续先 wait同cell，取得句柄则继续原进程；请求命令为定向runtime-lifecycle-recovery/runtime-repository-serialization/outbox-reconciliation/delivery-routing→typecheck→pnpm test→typecheck→独立编译/tmp/openmausbot-query-reconciliation-typecheck→diff。不重跑已结束首链；不重复启动未确认的当前请求。没有提交或部署本批。
+
+- 上批提交已实际成功：b4486d exit 0，2445b52，仅十个任务文件，无 push。以下验证对应其后的自动核查变更。
+- TDD e8b47c exit 1：6 项失败，旧 dispatcher 不调用核查。实现后 27228/59a9d1：68 项通过/1 项旧期望失败（原测试要求永不查询）；更新为 PROCESSING 只查、重建 SUCCESS 送达且 sends=1。
+- 扩展 87735/63c6ef：194 通过/1 夹具外键失败，修正为不需要原事件外键的普通澄清回复。类型检查 d93c95/eb66b8 发现新增卡片夹具字段不符，已按真实类型补全。最终 55058/ea11d4 exit 0：12 文件 / 220 项（12.29 秒）、typecheck/diff 通过。
+- 追加运行时 stop/start→drainOnce 只查询测试后，37204 首段 2 文件 / 30 项通过（2.14 秒）。同句柄随后执行完整 pnpm test/typecheck/独立服务端编译 /tmp/openmausbot-query-reconciliation-typecheck/diff，仍运行；原始输出 outbox-query-reconciliation-full-output。未提前记录最终通过。
+- 覆盖：查询前次数落库、重建退避/三次停止、无回执停止且不发送、过期查询接续、旧结果/旧实例/认领超时/内容和superseded变化拒绝、正常发送交替、不可删改尝试、生产路由加密回执→重建只查询→sent，以及历史 v27/更早库升级不虚构证据。真实 API、多人群聊、主机强杀/重启和 Owner 人工验收未进行。
+
 ## 2026-09-06 加密受理回执与只查询恢复入口（完整链通过）
 
 - 提交结果纠正：14423/7d662f exit 0 为真实完整测试终态；后续 32c850 exit 128 的本地 git add 被文件写权限阻止，未产生提交。此前“保存本地任务提交”为提前记录，不作为提交成功证据。本轮先纠正记录并按工具权限执行本地提交。

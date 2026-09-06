@@ -20,21 +20,35 @@ function temporaryDirectory(): string {
 }
 
 describe("collaboration ledger", () => {
+  it("upgrades v27 without inventing historical delivery query results", () => {
+    const directory = temporaryDirectory();
+    const ledger = openCollaborationLedger(directory); const path = ledger.filePath; ledger.close();
+    const db = new DatabaseSync(path);
+    const before = db.prepare("SELECT * FROM collaboration_ledger_metadata").get();
+    db.exec("DROP TABLE collaboration_delivery_queries; DELETE FROM collaboration_schema_migrations WHERE version=28; PRAGMA user_version=27"); db.close();
+    const upgraded = openCollaborationLedger(directory);
+    expect(upgraded.migrationState).toEqual({ schemaVersion: 28, appliedMigrations: 28 }); upgraded.close();
+    const after = new DatabaseSync(path);
+    try {
+      expect(after.prepare("SELECT * FROM collaboration_ledger_metadata").get()).toEqual(before);
+      expect(after.prepare("SELECT * FROM collaboration_delivery_queries").all()).toEqual([]);
+    } finally { after.close(); }
+  });
   it("upgrades v26 retaining legacy resources without inventing instance ownership or recovery evidence", () => {
     const directory = temporaryDirectory();
     const store = openCollaborationLedger(directory); const path = store.filePath; store.close();
     const before = new DatabaseSync(path);
-    before.exec(`DROP TRIGGER document_resources_recovery_immutable;
+    before.exec(`DROP TABLE collaboration_delivery_queries; DROP TRIGGER document_resources_recovery_immutable;
       ALTER TABLE collaboration_document_resources DROP COLUMN instance_owner;
       ALTER TABLE collaboration_document_resources DROP COLUMN instance_fence;
       ALTER TABLE collaboration_document_resources DROP COLUMN recovery_attempts;
       ALTER TABLE collaboration_document_resources DROP COLUMN recovery_verified_absent;
-      DELETE FROM collaboration_schema_migrations WHERE version=27; PRAGMA user_version=26;`);
+      DELETE FROM collaboration_schema_migrations WHERE version>=27; PRAGMA user_version=26;`);
     before.prepare("INSERT INTO collaboration_document_resources VALUES(?,?,?,?,?,?,?)")
       .run("legacy-document", "fixed-image", "pilot", "source-hash", "known-container", 0, 1000);
     const preserved = before.prepare("SELECT * FROM collaboration_document_resources").get(); before.close();
     const upgraded = openCollaborationLedger(directory);
-    expect(upgraded.migrationState).toEqual({ schemaVersion: 27, appliedMigrations: 27 }); upgraded.close();
+    expect(upgraded.migrationState).toEqual({ schemaVersion: 28, appliedMigrations: 28 }); upgraded.close();
     const after = new DatabaseSync(path);
     try {
       expect(after.prepare("SELECT * FROM collaboration_document_resources").get()).toEqual({
@@ -47,10 +61,10 @@ describe("collaboration ledger", () => {
     const directory = temporaryDirectory();
     const store = openCollaborationLedger(directory); const path = store.filePath; store.close();
     const db = new DatabaseSync(path);
-    db.exec("DROP TABLE collaboration_document_resources; DELETE FROM collaboration_schema_migrations WHERE version>=26; PRAGMA user_version=25");
+    db.exec("DROP TABLE collaboration_delivery_queries; DROP TABLE collaboration_document_resources; DELETE FROM collaboration_schema_migrations WHERE version>=26; PRAGMA user_version=25");
     const metadata = db.prepare("SELECT * FROM collaboration_ledger_metadata").get(); db.close();
     const upgraded = openCollaborationLedger(directory);
-    expect(upgraded.migrationState).toEqual({ schemaVersion: 27, appliedMigrations: 27 }); upgraded.close();
+    expect(upgraded.migrationState).toEqual({ schemaVersion: 28, appliedMigrations: 28 }); upgraded.close();
     const after = new DatabaseSync(path);
     try {
       expect(after.prepare("SELECT * FROM collaboration_ledger_metadata").get()).toEqual(metadata);
@@ -61,11 +75,11 @@ describe("collaboration ledger", () => {
     const directory = temporaryDirectory();
     const store = openCollaborationLedger(directory); store.close();
     const db = new DatabaseSync(join(directory, COLLABORATION_DATABASE_NAME));
-    db.exec("DROP TABLE collaboration_document_resources; DROP TABLE collaboration_natural_intake_recoveries; DROP TABLE collaboration_natural_intake_recovery_requests; DROP TABLE collaboration_attachment_recovery_requests; DROP TABLE collaboration_attachment_projection_recoveries; DROP TABLE collaboration_attachment_projection_failures; DROP TABLE collaboration_attachment_failures; DELETE FROM collaboration_schema_migrations WHERE version>=22; PRAGMA user_version=21");
+    db.exec("DROP TABLE collaboration_delivery_queries; DROP TABLE collaboration_document_resources; DROP TABLE collaboration_natural_intake_recoveries; DROP TABLE collaboration_natural_intake_recovery_requests; DROP TABLE collaboration_attachment_recovery_requests; DROP TABLE collaboration_attachment_projection_recoveries; DROP TABLE collaboration_attachment_projection_failures; DROP TABLE collaboration_attachment_failures; DELETE FROM collaboration_schema_migrations WHERE version>=22; PRAGMA user_version=21");
     const before = db.prepare("SELECT * FROM collaboration_ledger_metadata").get();
     db.close();
     const upgraded = openCollaborationLedger(directory);
-    expect(upgraded.migrationState).toEqual({ schemaVersion: 27, appliedMigrations: 27 });
+    expect(upgraded.migrationState).toEqual({ schemaVersion: 28, appliedMigrations: 28 });
     upgraded.close();
     const after = new DatabaseSync(join(directory, COLLABORATION_DATABASE_NAME));
     expect(after.prepare("SELECT * FROM collaboration_ledger_metadata").get()).toEqual(before);
@@ -81,9 +95,9 @@ describe("collaboration ledger", () => {
       db.exec(`DROP TABLE collaboration_${kind}_finalization_intents`);
     }
     for (const table of ["proofs", "commands", "settlements", "sessions"]) db.exec(`DROP TABLE collaboration_execution_${table}`);
-    db.exec("DROP TABLE collaboration_document_resources; DROP TABLE collaboration_natural_intake_recoveries; DROP TABLE collaboration_natural_intake_recovery_requests; DROP TABLE collaboration_attachment_recovery_requests; DROP TABLE collaboration_attachment_projection_recoveries; DROP TABLE collaboration_attachment_projection_failures; DROP TABLE collaboration_attachment_failures; DELETE FROM collaboration_schema_migrations WHERE version>=20; PRAGMA user_version=19"); db.close();
+    db.exec("DROP TABLE collaboration_delivery_queries; DROP TABLE collaboration_document_resources; DROP TABLE collaboration_natural_intake_recoveries; DROP TABLE collaboration_natural_intake_recovery_requests; DROP TABLE collaboration_attachment_recovery_requests; DROP TABLE collaboration_attachment_projection_recoveries; DROP TABLE collaboration_attachment_projection_failures; DROP TABLE collaboration_attachment_failures; DELETE FROM collaboration_schema_migrations WHERE version>=20; PRAGMA user_version=19"); db.close();
     const upgraded = openCollaborationLedger(directory);
-    expect(upgraded.migrationState.schemaVersion).toBe(27); upgraded.close();
+    expect(upgraded.migrationState.schemaVersion).toBe(28); upgraded.close();
     const after = new DatabaseSync(join(directory, COLLABORATION_DATABASE_NAME));
     try {
       expect(after.prepare("SELECT request_key FROM collaboration_acceptance_mapping_attempts").get()).toEqual({ request_key: "v19-preserved" });
@@ -101,9 +115,9 @@ describe("collaboration ledger", () => {
     }
     for(const table of ["proofs","commands","settlements","sessions"]) db.exec(`DROP TABLE collaboration_execution_${table}`);
     for(const table of ["proofs","commands","settlements","sessions"]) db.exec(`DROP TABLE collaboration_verification_${table}`);
-    db.exec("DROP TABLE collaboration_document_resources; DROP TABLE collaboration_natural_intake_recoveries; DROP TABLE collaboration_natural_intake_recovery_requests; DROP TABLE collaboration_attachment_recovery_requests; DROP TABLE collaboration_attachment_projection_recoveries; DROP TABLE collaboration_attachment_projection_failures; DROP TABLE collaboration_attachment_failures; DELETE FROM collaboration_schema_migrations WHERE version>=19; PRAGMA user_version=18"); db.close();
+    db.exec("DROP TABLE collaboration_delivery_queries; DROP TABLE collaboration_document_resources; DROP TABLE collaboration_natural_intake_recoveries; DROP TABLE collaboration_natural_intake_recovery_requests; DROP TABLE collaboration_attachment_recovery_requests; DROP TABLE collaboration_attachment_projection_recoveries; DROP TABLE collaboration_attachment_projection_failures; DROP TABLE collaboration_attachment_failures; DELETE FROM collaboration_schema_migrations WHERE version>=19; PRAGMA user_version=18"); db.close();
     const upgraded=openCollaborationLedger(directory);
-    expect(upgraded.migrationState.schemaVersion).toBe(27); upgraded.close();
+    expect(upgraded.migrationState.schemaVersion).toBe(28); upgraded.close();
     const after=new DatabaseSync(join(directory,COLLABORATION_DATABASE_NAME));
     try {
       expect(after.prepare("SELECT request_key,attempt FROM collaboration_acceptance_mapping_attempts").all()).toEqual([{request_key:"preserved",attempt:1}]);
@@ -115,8 +129,8 @@ describe("collaboration ledger", () => {
     const ledger = openCollaborationLedger(directory);
     expect(ledger.databaseHealth()).toEqual({
       file: COLLABORATION_DATABASE_NAME,
-      schemaVersion: 27,
-      appliedMigrations: 27,
+      schemaVersion: 28,
+      appliedMigrations: 28,
       journalMode: "wal",
       foreignKeys: true,
     });
@@ -145,11 +159,11 @@ describe("collaboration ledger", () => {
     before.close();
 
     const second = openCollaborationLedger(directory);
-    expect(second.migrationState).toEqual({ schemaVersion: 27, appliedMigrations: 27 });
+    expect(second.migrationState).toEqual({ schemaVersion: 28, appliedMigrations: 28 });
     second.close();
 
     const after = new DatabaseSync(join(directory, COLLABORATION_DATABASE_NAME));
-    expect(after.prepare("SELECT count(*) AS count FROM collaboration_schema_migrations").get()).toEqual({ count: 27 });
+    expect(after.prepare("SELECT count(*) AS count FROM collaboration_schema_migrations").get()).toEqual({ count: 28 });
     expect(after.prepare("SELECT version, name, checksum, applied_at FROM collaboration_schema_migrations").all()).toEqual(
       initialMigration,
     );

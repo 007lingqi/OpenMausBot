@@ -96,7 +96,15 @@ describe("production delivery group routing", () => {
       const options = { maxAttempts: 3, claimTtlMs: 1000, baseBackoffMs: 10, maxBackoffMs: 100 };
       expect(await new OutboxDispatcher(f.db, f.delivery, options).dispatchOne(lease, 2000)).toMatchObject({ state: "dead_letter" });
       expect(f.db.prepare("SELECT sent_at,delivery_state FROM collaboration_outbox WHERE source_event_id='event-group-a'").get()).toEqual({ sent_at: null, delivery_state: "dead_letter" });
-      expect(await new OutboxDispatcher(f.db, f.delivery, options).dispatchOne(lease, 3000)).toBeNull();
+      expect(await new OutboxDispatcher(f.db, f.delivery, options).dispatchOne(lease, 3000)).toMatchObject({ operation: "reconcile", state: "retry_scheduled" });
+      f.fetcher.mockImplementation(async (url: string | URL) => {
+        if (String(url).endsWith("/accessToken")) return new Response(JSON.stringify({ accessToken: "synthetic-token", expireIn: 7200 }));
+        if (String(url).endsWith("/send")) sends++;
+        return new Response(JSON.stringify({ sendStatus: "SUCCESS" }));
+      });
+      expect(await new OutboxDispatcher(f.db, createDingTalkDelivery(f.sessions, {
+        OMB_DINGTALK_ALLOWED_CONVERSATION_IDS: "group-a,group-b", OMB_DINGTALK_PROACTIVE_CONVERSATION_MAP: '{"group-a":"open-a","group-b":"open-b"}',
+      }, f.root), options).dispatchOne(lease, 4000)).toMatchObject({ operation: "reconcile", state: "sent" });
       expect(sends).toBe(1);
       expect(JSON.stringify(f.db.prepare("SELECT last_error FROM collaboration_outbox").all())).not.toContain("synthetic-query");
     } finally { f.db.close(); }

@@ -1959,13 +1959,18 @@ export class CollaborationHeadlessRuntime {
       }
     }
     let dispatched: DispatchOutcome | null = null;
+    const dispatchNow = this.clock.now();
+    if (!this.checkDrainLease(dispatchNow)) return { dispatched: null, maintained: false };
     const serviceReady = !this.reason && this.service!.health().ready;
-    if (serviceReady && this.dispatcher) dispatched = await this.dispatcher.dispatchOne(this.lease, now);
+    if (serviceReady && this.dispatcher) dispatched = await this.dispatcher.dispatchOne(this.lease!, dispatchNow);
+    const maintenanceNow = this.clock.now();
+    if (!this.checkDrainLease(maintenanceNow)) return { dispatched, maintained: false };
     let maintained = false;
     if (serviceReady && this.maintenance) {
-      await this.maintenance.run(this.lease, now);
+      await this.maintenance.run(this.lease!, maintenanceNow);
       maintained = true;
     }
+    if (!this.checkDrainLease(this.clock.now())) return { dispatched, maintained };
     if (serviceReady && this.attachmentIngestion) {
       this.startAttachmentProcessing();
       maintained = true;
@@ -1978,7 +1983,7 @@ export class CollaborationHeadlessRuntime {
     }
     if (serviceReady && this.options.naturalIntake && !this.naturalIntakeTask) {
       // Do not block lease renewal, Stream maintenance or other group messages on model latency.
-      this.naturalIntakeTask = this.service!.processNaturalIntake(now).then(workItemId => {
+      this.naturalIntakeTask = this.service!.processNaturalIntake(this.clock.now()).then(workItemId => {
         if (!workItemId || this.currentState !== "running") return;
         this.syncMetaBundleBestEffort(workItemId, true);
         if (this.options.autoExecuteReady) this.scheduleReadyExecution(workItemId);
@@ -2047,6 +2052,20 @@ export class CollaborationHeadlessRuntime {
         .run(row.work_item_id, row.plan_revision, row.node_id);
     }
     return containmentEmpty;
+  }
+
+  private checkDrainLease(now: number): boolean {
+    if (!this.database || !this.lease || this.currentState === "draining" || this.currentState === "stopped") return false;
+    try {
+      assertCurrentInstanceLease(this.database, this.lease, now);
+      return true;
+    } catch {
+      this.reason = "lease_failed";
+      this.attachmentAbort.abort();
+      this.currentState = "degraded";
+      this.lease = null;
+      return false;
+    }
   }
 
   private async terminateUnresolvedContainment(rows: readonly UnresolvedRun[], deadline: number): Promise<boolean> {

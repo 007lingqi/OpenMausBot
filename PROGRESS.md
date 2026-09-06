@@ -2,6 +2,37 @@
 
 ## 当前状态
 
+- 最新完整验收（2026-09-06，优先于以下历史）：80357/bd32bb exit0，完整pnpm test、pnpm typecheck、独立服务端编译/tmp/openmausbot-query-reconciliation-typecheck及diff全部通过。主集274文件通过/1跳过，2907项通过/18跳过（2925注册），347.65秒；broker7、updater15、viewer5、package-link2、save-file10、打包无node_modules启动及9路代理通过。记录保存于reconciliation-final-full-output/last，所有执行句柄终态。
+- 本轮分类progress：关闭本批完整验证门禁，没有改PATH实现、测试断言或超时。上一轮PATH等待失败在隔离复测和本次完整链均未重现，但尚未确定根因，不能宣称永久消除。测试按独立临时HOME、文件串行执行，未发现与本批改动的直接因果证据。
+- 保存范围：schema28自动只查询核查、异步租约时效保护、相关测试及四份状态文档共20个任务文件；提交结果以Git实际状态为准，不push。用户AGENTS.md/outputs不提交不修改。无真实钉钉、模型、凭据、容器或部署操作。
+- 下一恢复入口：核对本批本地提交后转向真实试点前置条件，不能继续以本地通过替代产品验收。仍缺已授权真实模型服务/模型名/安全凭据文件位置、真实文档读取及群事件入口授权、解析镜像隔离验证、六类非生产群聊证据和Owner最终验收；未知容器创建回执、独立cgroup监督及主机恢复也未完成。Goal保持active而非complete，本轮没有再次构成连续三轮同一真实环境阻塞。
+
+### 前序执行记录（以下失败与权限状态不覆盖上述最新结果）
+
+- 最新执行结果（2026-09-06，优先于以下历史）：Owner明确回复“运行”后已获得执行权限，原生Goal实际为active。完整本地回归16187/28528b已终态exit1：273文件通过/1失败/1跳过，2906项通过/1失败/18跳过，423.58秒。之前五项失败及本批钉钉恢复/时效测试均通过；唯一失败是未修改的server/env-path.test.ts登录shell路径等待断言，不能因此把全量结果记通过。
+- 隔离复测19519/4c744e exit0：env-path为13通过/7平台跳过（972ms），随后pnpm typecheck、独立服务端编译/tmp/openmausbot-query-reconciliation-typecheck、git diff --check通过。该失败可能具有时序偶发性，尚未确认根因，没有改用例或放宽断言。完整命令中后续broker/打包启动检查因前段失败未执行。
+- 当前恢复入口：权限阻塞已解除，不沿用下方历史blocked/等待授权结论。继续核查完整套件下的PATH等待失败并取得新的完整pnpm test终态；在全量通过前不提交本批。HEAD2445b52，schema28及租约修复保持未提交、未部署；用户AGENTS.md/outputs保留。所有本轮命令已终态，原始观察存approved-full-regression-output，终态approved-full-regression-last，隔离复测approved-full-regression-followup。真实钉钉/Docker六场景与Owner验收仍未通过，总目标不标complete。
+
+### 历史检查点（以下状态不覆盖上述最新结果）
+
+- 阻塞收束（2026-09-06，最高优先）：原生Goal已标记blocked，非complete。本轮仅复核，分类no progress；工作区与2445b52及上一轮未提交改动一致。完整回归所需沙箱外执行权限的自动审查超时，在接续验证、异步租约修复和本轮连续存在；允许的一次重试已耗尽，没有新的Owner明确回复。前两轮曾推进局部验证/修复，但当前交付关卡仍无法跨越；不继续扩大未验证变更，不用无关实现或重复局部测试替代全量门禁。
+- 已确认的终态：80343/934f41为12文件220项/typecheck/独立编译通过；37204/a7c432为旧完整链失败（所报5项已由后续局部验证覆盖修正，但当前代码尚无完整重跑通过）；cell1252/1255均审批超时、未启动子进程，其他已知句柄均终态。本轮未发新权限申请、未启动测试或部署，无Secret/身份/容器改动。
+- 恢复所需输入：Owner明确允许沙箱外完整本地回归或修复执行权限。获得后先核对工作区，再运行完整pnpm test/typecheck/独立编译/diff，成功后仅本地提交任务文件，排除用户AGENTS.md/outputs，不push。之后仍需真实模型/文档及事件入口授权、解析镜像/隔离验证、六类真实群聊和Owner最终验收；全目标保持原范围，不因受阻视为完成。恢复后按新一轮阻塞审计计数。
+
+- 本轮最新（2026-09-06，最高优先）：在未取得新的外部执行授权时继续了安全本地工作，发现并修复真实租约时效漏洞。TDD 9b69f3为4项失败，d3d338为1项失败；修复Stream维护后/发送后/后台维护后的当前租约检查、普通发送落账时效，及需求整理认领时间。80343/934f41 exit0：12文件220项（28.10秒）、typecheck、独立服务端编译/tmp/openmausbot-live-lease-time-typecheck与diff通过。全部本轮句柄终态，分类progress，Goal active。
+- 当前阻碍与恢复：没有重试已耗尽的沙箱外权限申请，也没有把自动Goal续办当Owner同意。完整回归仍待授权/权限处理；HEAD2445b52不变，schema28自动核查及本轮时间修复均未提交未部署，用户AGENTS.md/outputs保留。下一步取得权限后运行完整pnpm test/typecheck/独立编译/diff，通过后仅提交任务文件。真实钉钉入口/文档/模型/解析镜像及六场景保持未验收；本轮相关证据live-lease-time-related，不可宣称产品整体完成。
+
+- 最新接续核验（2026-09-06，最高优先）：cell1252 已终态失败，权限自动审查超时，exec_command 未创建测试进程；按工具许可唯一重试 cell1255 也在同一审批阶段超时，未运行，不再重复申请。此前 37204/a7c432 的完整链失败仍是真实完整结果，不能当作已通过。
+- 已验证修正：现有权限内 41964/f3c810 exit 0，9 文件 / 168 项（16.61 秒）、pnpm typecheck、独立服务端编译 /tmp/openmausbot-query-reconciliation-typecheck 和 diff 通过，覆盖此前五项失败，断言仍保留不重复发送和后续回复继续。无新增业务代码；本轮分类 progress 为完成了修正后的实际验证。HEAD2445b52，本批自动核查/schema28仍未提交，用户 AGENTS.md/outputs 保留。
+- 恢复入口：完整本地回归与打包启动仍需沙箱外测试用套接字权限；当前连续审批超时不代表安全拒绝，不无限重试，也不通过改测试绕过。向 Owner 请求明确执行授权/权限处理后再启动完整链，不复用已终态cell1252/1255。真实模型/入口/文档/镜像/六类试点仍待授权和实测；Goal active，不能缩减验收。本批并行离线检查输出见 outbox-query-reconciliation-offline-checks，相关验证终态见 outbox-query-reconciliation-recovery-validation。
+
+- 本批最终检查点（2026-09-06，最高优先）：自动 query-only 核查实现尚未提交。完整链 37204 在 a7c432 exit 1 结束：272 文件通过/2 失败/1 跳过，2897 项通过/5 失败/18 跳过，354.76 秒；后续打包/typecheck串联未执行。失败来自 runtime-lifecycle-recovery 的四项旧调用流程期望和 runtime-repository-serialization 的 v15 迁移夹具漏删 schema28表，现已修改这两个测试，保留原消息不重发与后续消息可继续断言。
+- 当前恢复调用：functions.exec cell 1252 尚未返回（两次 wait 无新输出），内部 exec_command 请求定向4文件→typecheck→完整 pnpm test→typecheck→独立编译/diff；不能确认子进程已启动，也没有可用 write_stdin session ID。下次先 functions.wait(cell_id=1252) 取得同次请求状态，若返回 session 再轮询该 session；不得重复申请或另启同测试。与之前已终止 37204 区分。工具状态 outbox-query-reconciliation-full-output 保存第一条失败链观察（部分 verbose 截断），outbox-query-reconciliation-last 为 a7c432。
+- 本轮20工具轮收束，分类 progress，Goal active。HEAD仍2445b52（上一批私有回执已提交）；本批 schema28/自动核查/测试/四份状态文档为未提交任务改动，用户 AGENTS.md/outputs 未触碰。无真实身份/凭据/容器/部署变更。必须等待最终完整回归通过后，才提交本批任务文件；不能沿用上批成功结果替代本批失败。
+
+- 本轮最新（优先）：上一批十文件已在 b4486d 成功保存为本地 2445b52，原 index.lock 限制已通过授权工具解除，没有 push。本轮从该版本推进 schema 28 自动 query-only 核查；追加独立三次预算、退避、过期查询接续、旧实例/内容漂移拒绝、正常发送交替和运行时重启验证。12 文件 / 220 项及 typecheck/diff 通过；追加运行时测试后 2 文件 / 30 项通过。完整链 37204 正在运行，不先记通过或提交。用户 AGENTS.md/outputs 保留，无部署或实际凭据/容器修改。
+- 本轮恢复入口：先核实完整测试句柄 37204（输出 outbox-query-reconciliation-full-output），不重跑仍活跃进程；终态通过再保存任务提交。下一阶段验证真实平台回执与引用映射、三次耗尽后的唯一 Owner 安全恢复、未知发送/容器创建回执，以及真实模型/文档/解析镜像及六类试点授权。旧投递记录无回执不可重发；目标仍 active。
+
 - 提交状态纠正（2026-09-06，最高优先）：上批完整链已在 14423/7d662f exit 0 结束，但随后 32c850 的 git add 因 index.lock 写权限失败（exit 128），没有形成本地提交。下方提前写入“形成本地提交”为记录错误；本轮恢复先纠正并在授权范围内完成本地保存，绝不 push。工作区十个任务文件仍在，用户 AGENTS.md/outputs 保留。
 
 - 本批最终检查点（最高优先）：完整链 14423/7d662f exit 0，pnpm test、typecheck、独立服务端编译和 diff 全通过。Test Files 273 passed | 1 skipped (274) Tests 2891 passed | 18 skipped (2909) Start at 14:54:20 Duration 343.80s (transform 1.90s, setup 7.26s, import 4.47s, tests 312.82s, environment 13ms) 本轮 20 工具轮收束，分类 progress；受理回执存储和只查询入口已实现，后台调度未接入，Goal active。全部原始观察保存在工具状态 durable-group-receipts-full-output，最后结果 durable-group-receipts-full-terminal；此前两次初始观察另见 4019f1/75007d。本批仅十个任务文件形成本地提交，不 push。 用户 AGENTS.md/outputs 保留；schema 27、实际身份凭据和容器不变。下一步先核实终态/提交，然后接入有界 query-only 队列恢复。

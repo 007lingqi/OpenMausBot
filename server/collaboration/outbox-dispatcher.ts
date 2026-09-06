@@ -7,6 +7,7 @@ import { isCurrentRecoveryNotification } from "./recovery-notification.ts";
 import { isCurrentAttachmentFeedback } from "./attachment-feedback.ts";
 import { isCurrentNaturalIntakeFailureNotice } from "./natural-intake-recovery.ts";
 import { isCurrentDeliveryReviewNotice } from "./delivery-review.ts";
+import { reconcileOutboxOne } from "./outbox-reconciler.ts";
 
 interface DispatchRow {
   id: string;
@@ -31,6 +32,7 @@ export interface OutboxDispatcherOptions {
 }
 
 export interface DispatchOutcome {
+  operation?: "reconcile";
   id: string;
   state: "sent" | "retry_scheduled" | "dead_letter" | "superseded";
   attempt: number;
@@ -44,6 +46,7 @@ export class OutboxDispatcher {
   private readonly database: DatabaseSync;
   private readonly transport: OutboxDeliveryPort;
   private readonly options: OutboxDispatcherOptions;
+  private preferQuery = false;
 
   constructor(database: DatabaseSync, transport: OutboxDeliveryPort, options: OutboxDispatcherOptions) {
     this.database = database;
@@ -56,8 +59,15 @@ export class OutboxDispatcher {
   }
 
   async dispatchOne(instance: Pick<InstanceLease, "ownerId" | "fence">, now: number): Promise<DispatchOutcome | null> {
+    if (this.preferQuery && this.transport.reconcile) {
+      this.preferQuery = false;
+      const queried = await reconcileOutboxOne(this.database, this.transport.reconcile.bind(this.transport), this.options, instance, now);
+      if (queried) return queried;
+    }
     const row = this.claim(instance, now);
-    if (!row) return null;
+    if (!row) return this.transport.reconcile
+      ? reconcileOutboxOne(this.database, this.transport.reconcile.bind(this.transport), this.options, instance, now) : null;
+    this.preferQuery = true;
     if (!this.isLatestClaim(instance, row, now)) return { id: row.id, state: "superseded", attempt: row.attempt };
     const transportStartedAt = Date.now();
     let result: Awaited<ReturnType<OutboxDeliveryPort["deliver"]>>;
@@ -172,7 +182,7 @@ export class OutboxDispatcher {
   ): DispatchOutcome {
     this.database.exec("BEGIN IMMEDIATE");
     try {
-      assertCurrentInstanceLease(this.database, instance, now);
+      assertCurrentInstanceLease(this.database, instance, deliveredAt);
       let state: DispatchOutcome["state"];
       let update;
       if (result.outcome === "sent") {
@@ -182,7 +192,7 @@ export class OutboxDispatcher {
             "claim_owner = NULL, claim_fence = NULL, claim_expires_at = NULL " +
             "WHERE id = ? AND delivery_state = 'claimed' AND claim_owner = ? AND claim_fence = ? " +
             "AND claim_expires_at > ? AND superseded_at IS NULL",
-        ).run(now, row.id, instance.ownerId, instance.fence, now);
+        ).run(now, row.id, instance.ownerId, instance.fence, deliveredAt);
       } else if (result.outcome === "permanent_failure" || row.attempt >= this.options.maxAttempts ||
         (result.outcome === "unknown" && this.transport.retryPolicy === "only-confirmed-unsent")) {
         state = "dead_letter";
@@ -191,7 +201,7 @@ export class OutboxDispatcher {
             "claim_owner = NULL, claim_fence = NULL, claim_expires_at = NULL " +
             "WHERE id = ? AND delivery_state = 'claimed' AND claim_owner = ? AND claim_fence = ? " +
             "AND claim_expires_at > ? AND superseded_at IS NULL",
-        ).run(now, result.error, row.id, instance.ownerId, instance.fence, now);
+        ).run(now, result.error, row.id, instance.ownerId, instance.fence, deliveredAt);
       } else {
         state = "retry_scheduled";
         const exponent = Math.min(this.options.maxBackoffMs, this.options.baseBackoffMs * 2 ** (row.attempt - 1));
@@ -203,7 +213,7 @@ export class OutboxDispatcher {
             "AND claim_expires_at > ? AND superseded_at IS NULL",
         ).run(now + exponent + jitter,
           this.transport.retryPolicy === "only-confirmed-unsent" ? `delivery_confirmed_unsent:${result.error}` : result.error,
-          row.id, instance.ownerId, instance.fence, now);
+          row.id, instance.ownerId, instance.fence, deliveredAt);
       }
       if (update.changes !== 1) {
         const superseded = this.database

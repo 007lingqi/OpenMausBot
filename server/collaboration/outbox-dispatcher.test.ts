@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { openCollaborationLedger } from "./db.ts";
 import { InstanceLeaseCoordinator, StaleFenceError } from "./leases.ts";
@@ -41,6 +41,17 @@ function enqueue(db: DatabaseSync, version: number, now: number): string {
 }
 
 describe("fenced outbox dispatcher", () => {
+  it.each(["claim", "instance"])("rejects a successful send returned after its %s expires without a takeover", async boundary => {
+    const db = database(); enqueue(db, 1, 1000);
+    const lease = new InstanceLeaseCoordinator(db, "late-sender").acquire(1000, boundary === "instance" ? 100 : 10000)!;
+    let wall = 0; const clock = vi.spyOn(Date, "now").mockImplementation(() => wall);
+    const dispatcher = new OutboxDispatcher(db, { async deliver() { wall = 101; return { outcome: "sent" }; } },
+      { maxAttempts: 3, claimTtlMs: boundary === "claim" ? 100 : 10000, baseBackoffMs: 10, maxBackoffMs: 100 });
+    try {
+      await expect(dispatcher.dispatchOne(lease, 1000)).rejects.toThrow(StaleFenceError);
+      expect(db.prepare("SELECT sent_at FROM collaboration_outbox").get()).toEqual({ sent_at: null });
+    } finally { clock.mockRestore(); db.close(); }
+  });
   it("does not replay legacy pending attempts without proof of non-delivery", async () => {
     const db = database();
     const id = enqueue(db, 1, 1000);
