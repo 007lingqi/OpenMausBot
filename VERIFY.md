@@ -1,5 +1,13 @@
 # Meta 协作验证记录
 
+## 2026-09-06 文档资源实例绑定恢复（完整链通过）
+
+- 接续已有未提交实现。先行扩展恢复测试：46761 在 dcd7b3 exit 1，5 失败 / 14 通过，复现取消、接管和实时租约过期在末条记录被吞掉。修复后回归覆盖身份不匹配、无 ID、旧归属、迟到 ID、缺失容器查证、删除/查询失败、取消边界、预算持久化与摘要镜像。
+- 39467 在 7995fe exit 0：db/attachment-ingestion 两文件 53 项，真实 v26 升级保留旧行、headless 工厂恢复后再摄取和重建去重通过。此前 typecheck 缺 fixture.instance 已修复，未放宽生产类型。
+- 90098 在 fced42 exit 0：13 文件 / 218 项（18.15 秒）、pnpm typecheck、git diff --check 全通过。SQLite/工厂实际执行，Docker/下载为受控合成端口，不是实际解析容器验收。
+- 完整命令：pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-document-recovery-typecheck && git diff --check。99898 在 db403f exit 0：272 文件通过 / 1 跳过，2833 项通过 / 18 跳过（2851 注册），262.12 秒；broker 7、updater 15、viewer 5、package-link 2、save-file 10、打包脱离 node_modules 启动/9 路代理、typecheck、独立编译及 diff 全通过。全部验证句柄终态，受控恢复证据不替代真实 Docker 或群聊验收。
+- 非生产只读 e27b6e exit 0：指定 colima-openmausbot-pilot 的现有试点 healthy，其他历史容器保持 exited，未更换/删除/暂停。沙箱内读取 socket 被拒（100ee4）后获准只读查询；未尝试修网络或重复拉镜像。
+
 ## 2026-09-06 文档资源持久归属（完整链通过）
 
 - 72516 exit 1（0da3f2）：4 行为失败 / 39 通过及缺新模块的收集失败。13698 exit 0（41e50c）：4 文件 / 67 项/typecheck/diff。27460 exit 1（c5d9c3）：标签先行回归与 2 个启动/版本问题；12000 exit 1（df8336）只剩后两项。

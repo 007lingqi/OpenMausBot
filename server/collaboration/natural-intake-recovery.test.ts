@@ -166,7 +166,7 @@ describe("Owner-bound natural requirement recovery", () => {
     h.db.exec("DROP TABLE collaboration_document_resources; DROP TABLE collaboration_natural_intake_recoveries; DROP TABLE collaboration_natural_intake_recovery_requests; DELETE FROM collaboration_schema_migrations WHERE version>=25; PRAGMA user_version=24");
     h.db.close();
     const upgraded = openCollaborationLedger(join(h.directory, "collaboration"));
-    expect(upgraded.migrationState).toEqual({ schemaVersion: 26, appliedMigrations: 26 }); upgraded.close();
+    expect(upgraded.migrationState).toEqual({ schemaVersion: 27, appliedMigrations: 27 }); upgraded.close();
     const db = new DatabaseSync(h.file);
     try {
       expect(db.prepare("SELECT * FROM collaboration_natural_intake_jobs").all()).toEqual(jobs);

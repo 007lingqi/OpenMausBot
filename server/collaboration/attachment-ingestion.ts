@@ -69,6 +69,7 @@ export interface AttachmentEvidenceNotification {
 }
 
 export interface AttachmentIngestionCoordinatorInput {
+  beforeProcess?: (now: number) => Promise<void>;
   signal?: AbortSignal;
   assertActive?: () => void;
   databaseFile: string;
@@ -642,8 +643,10 @@ export class AttachmentIngestionCoordinator {
   private readonly downloader: AttachmentDownloader;
   private readonly extract: NonNullable<AttachmentIngestionCoordinatorInput["extract"]>;
   private readonly onEvidence: ((notification: AttachmentEvidenceNotification) => void | Promise<void>) | undefined;
+  private readonly beforeProcess: AttachmentIngestionCoordinatorInput["beforeProcess"];
 
   constructor(input: AttachmentIngestionCoordinatorInput) {
+    this.beforeProcess = input.beforeProcess;
     this.signal = input.signal;
     this.activeGuard = input.assertActive;
     this.databaseFile = input.databaseFile;
@@ -685,6 +688,8 @@ export class AttachmentIngestionCoordinator {
     try {
       this.assertActive();
       this.persistActiveCapabilities(database, privateCapabilities);
+      await this.beforeProcess?.(now);
+      this.assertActive();
       this.recoverTerminalFeedback(database, now);
       await this.projectUnprojectedEvidence(database, now);
       this.assertActive();

@@ -462,7 +462,7 @@ describe("runtime repository single-writer scheduling", () => {
     const original = db.prepare("SELECT * FROM collaboration_execution_dispatches").get();
     await h.runtime.start();
     try {
-      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 26 });
+      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 27 });
       expect(db.prepare("SELECT * FROM collaboration_execution_dispatches").get()).toEqual(original);
       expect(db.prepare("SELECT state FROM collaboration_execution_preparation_results").get()).toEqual({ state: "interrupted" });
     } finally { db.close(); await stopHarness(h); }

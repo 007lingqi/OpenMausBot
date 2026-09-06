@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { OPENMAUSBOT_SOURCE_BASELINE } from "./config.ts";
 
-export const COLLABORATION_SCHEMA_VERSION = 26;
+export const COLLABORATION_SCHEMA_VERSION = 27;
 
 interface Migration {
   version: number;
@@ -1300,6 +1300,21 @@ const migrations: readonly Migration[] = [
         CREATE TRIGGER document_resources_no_delete BEFORE DELETE ON collaboration_document_resources
           BEGIN SELECT RAISE(ABORT,'document resource journal cannot be deleted'); END;
         CREATE INDEX document_resources_unresolved ON collaboration_document_resources(docker_context,cleanup_acknowledged,created_at);
+      `);
+    },
+  },
+  {
+    version: 27, name: "fenced-document-resource-recovery", checksum: "v27:instance-bound-document-recovery-budget",
+    apply(database) {
+      database.exec(`
+        ALTER TABLE collaboration_document_resources ADD COLUMN instance_owner TEXT;
+        ALTER TABLE collaboration_document_resources ADD COLUMN instance_fence INTEGER;
+        ALTER TABLE collaboration_document_resources ADD COLUMN recovery_attempts INTEGER NOT NULL DEFAULT 0 CHECK(recovery_attempts BETWEEN 0 AND 3);
+        ALTER TABLE collaboration_document_resources ADD COLUMN recovery_verified_absent INTEGER NOT NULL DEFAULT 0 CHECK(recovery_verified_absent IN (0,1));
+        CREATE TRIGGER document_resources_recovery_immutable BEFORE UPDATE ON collaboration_document_resources
+          WHEN NEW.instance_owner IS NOT OLD.instance_owner OR NEW.instance_fence IS NOT OLD.instance_fence
+            OR NEW.recovery_attempts<OLD.recovery_attempts OR NEW.recovery_verified_absent<OLD.recovery_verified_absent
+          BEGIN SELECT RAISE(ABORT,'document recovery identity is immutable'); END;
       `);
     },
   },

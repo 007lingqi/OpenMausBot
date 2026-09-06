@@ -20,6 +20,7 @@ import { renderDingTalkSessionMessage } from "../integrations/dingtalk/session-m
 import { createDingTalkDelivery, runCollaborationHeadless } from "../collaboration-headless.ts";
 import { CollaborationHeadlessRuntime, type CollaborationHeadlessRuntimeOptions } from "./operations/runtime.ts";
 import { NodeDockerCommandPort } from "./operations/docker-containment.ts";
+import { DocumentResourceJournal } from "./operations/document-resource-journal.ts";
 import { FetchDingTalkAttachmentDownloader } from "../integrations/dingtalk/attachment-downloader.ts";
 import { DingTalkSessionReplyRegistry } from "../integrations/dingtalk/reply-router.ts";
 import { LocalOwnerRegistry } from "./owner.ts";
@@ -106,19 +107,36 @@ function row(databaseFile: string, ref = REF_A): Record<string, unknown> {
 }
 
 describe("AttachmentIngestionCoordinator", () => {
-  it.each(["complete", "partial", "failed", "disabled", "cancelled"] as const)("uses the headless document pipeline with %s evidence", async mode => {
+  it.each(["complete", "partial", "failed", "disabled", "cancelled", "recovered"] as const)("uses the headless document pipeline with %s evidence", async mode => {
     const setup = context([resource({ name: "bugs.pdf", mimeType: "application/pdf" })]);
     const credentialFile = join(setup.dataDirectory, "credentials.json");
     writeFileSync(credentialFile, JSON.stringify({ clientId: "fixture-app", clientSecret: VAULT_SECRET }), { mode: 0o600 });
     const image = `sha256:${"d".repeat(64)}`;
     const container = "e".repeat(64);
+    const oldName = "omb-document-00000000-0000-4000-8000-000000000001", oldId = "f".repeat(64);
+    const leaseDb = new DatabaseSync(setup.databaseFile);
+    if (mode === "recovered") {
+      const prior = new InstanceLeaseCoordinator(leaseDb, "old").acquire(100, 10)!;
+      const journal = new DocumentResourceJournal(setup.databaseFile, "fixture-nonproduction", prior);
+      journal.reserve(oldName, image, "c".repeat(64)); journal.created(oldName, oldId);
+    }
+    const instance = new InstanceLeaseCoordinator(leaseDb, "current").acquire(1000, 10_000)!;
+    leaseDb.close();
     const source = Buffer.from("synthetic PDF fixture, never sent to a real parser");
     const controller = new AbortController();
     const download = vi.spyOn(FetchDingTalkAttachmentDownloader.prototype, "download").mockResolvedValue({ ok: true, bytes: source, sha256: hash(source), mediaType: "application/pdf" });
     const docker = vi.spyOn(NodeDockerCommandPort.prototype, "run").mockImplementation(async (args, options) => {
+      if (args[0] === "inspect") return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.from(JSON.stringify([
+        { Id: oldId, Name: `/${oldName}`, Image: image, Config: { Labels: { "com.openmausbot.document.resource": oldName } } },
+      ])) };
+      if (args[0] === "container") return { exitCode: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
       if (args[0] === "create") {
         const journalDb = new DatabaseSync(setup.databaseFile);
-        try { expect(journalDb.prepare("SELECT container_name, docker_context FROM collaboration_document_resources").get()).toEqual({ container_name: args[args.indexOf("--name") + 1], docker_context: "fixture-nonproduction" }); }
+        try {
+          expect(journalDb.prepare("SELECT container_name,docker_context,instance_owner,instance_fence FROM collaboration_document_resources WHERE container_name=?").get(args[args.indexOf("--name") + 1]))
+            .toEqual({ container_name: args[args.indexOf("--name") + 1], docker_context: "fixture-nonproduction", instance_owner: instance.ownerId, instance_fence: instance.fence });
+          if (mode === "recovered") expect(journalDb.prepare("SELECT recovery_verified_absent FROM collaboration_document_resources WHERE container_name=?").get(oldName)).toEqual({ recovery_verified_absent: 1 });
+        }
         finally { journalDb.close(); }
         return { exitCode: 0, stdout: Buffer.from(container), stderr: Buffer.alloc(0) };
       }
@@ -144,7 +162,7 @@ describe("AttachmentIngestionCoordinator", () => {
     expect(docker).not.toHaveBeenCalled();
     expect(download).not.toHaveBeenCalled();
     const onEvidence = vi.fn();
-    const factoryContext = { databaseFile: setup.databaseFile, dataDirectory: setup.dataDirectory, signal: controller.signal, assertActive() {}, onEvidence };
+    const factoryContext = { databaseFile: setup.databaseFile, dataDirectory: setup.dataDirectory, signal: controller.signal, assertActive() {}, onEvidence, instance };
     const coordinator = options.attachmentIngestionFactory!(factoryContext);
     if (mode === "cancelled") {
       await expect(coordinator.process([capability()], 1000)).rejects.toThrow("attachment_ingestion_inactive");
@@ -153,7 +171,7 @@ describe("AttachmentIngestionCoordinator", () => {
     } else {
       await coordinator.process([capability()], 1000);
       await options.attachmentIngestionFactory!(factoryContext).process([], 2000);
-      if (mode === "complete" || mode === "partial") {
+      if (mode === "complete" || mode === "partial" || mode === "recovered") {
         expect(onEvidence).toHaveBeenCalledTimes(1);
         expect(onEvidence).toHaveBeenCalledWith(WORK_ITEM_ID, expect.objectContaining({ sourceEventId: "source-event-1", contentHash: hash(source),
           format: "pdf", truncated: mode === "partial", warnings: mode === "partial" ? ["unread_images"] : [],
@@ -172,9 +190,10 @@ describe("AttachmentIngestionCoordinator", () => {
     expect(download).toHaveBeenCalledTimes(1);
     if (mode === "disabled") expect(docker).not.toHaveBeenCalled();
     else {
-      expect(docker).toHaveBeenCalledTimes(3);
-      expect(docker.mock.calls[0][0]).toContain(image);
-      expect(docker.mock.calls[2][0]).toEqual(["rm", "--force", container]);
+      expect(docker).toHaveBeenCalledTimes(mode === "recovered" ? 6 : 3);
+      expect(docker.mock.calls[mode === "recovered" ? 3 : 0][0]).toContain(image);
+      expect(docker.mock.calls.at(-1)![0]).toEqual(["rm", "--force", container]);
+      if (mode === "recovered") expect(docker.mock.calls.map(c => c[0][0])).toEqual(["inspect", "rm", "container", "create", "start", "rm"]);
     }
   });
   async function recoveryFixture(count = 1) {
@@ -287,7 +306,7 @@ describe("AttachmentIngestionCoordinator", () => {
     db.exec("DROP TABLE collaboration_document_resources; DROP TABLE collaboration_natural_intake_recoveries; DROP TABLE collaboration_natural_intake_recovery_requests; DROP TABLE collaboration_attachment_recovery_requests; DROP TABLE collaboration_attachment_projection_recoveries; DROP TABLE collaboration_attachment_projection_failures; DELETE FROM collaboration_schema_migrations WHERE version>=23; PRAGMA user_version=22");
     db.close();
     const upgraded = openCollaborationLedger(join(setup.dataDirectory, "collaboration"));
-    expect(upgraded.migrationState).toEqual({ schemaVersion: 26, appliedMigrations: 26 });
+    expect(upgraded.migrationState).toEqual({ schemaVersion: 27, appliedMigrations: 27 });
     upgraded.close();
     const after = new DatabaseSync(setup.databaseFile);
     expect(after.prepare("SELECT * FROM collaboration_attachment_failures").all()).toEqual(failures);
@@ -301,7 +320,7 @@ describe("AttachmentIngestionCoordinator", () => {
     f.db.exec("DROP TABLE collaboration_document_resources; DROP TABLE collaboration_natural_intake_recoveries; DROP TABLE collaboration_natural_intake_recovery_requests; DROP TABLE collaboration_attachment_recovery_requests; DROP TABLE collaboration_attachment_projection_recoveries; DELETE FROM collaboration_schema_migrations WHERE version>=24; PRAGMA user_version=23");
     f.db.close();
     const upgraded = openCollaborationLedger(join(f.dataDirectory, "collaboration"));
-    expect(upgraded.migrationState).toEqual({ schemaVersion: 26, appliedMigrations: 26 });
+    expect(upgraded.migrationState).toEqual({ schemaVersion: 27, appliedMigrations: 27 });
     upgraded.close();
     const db = new DatabaseSync(f.databaseFile);
     try {

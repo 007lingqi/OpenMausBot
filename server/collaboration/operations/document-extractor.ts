@@ -1,6 +1,6 @@
 import { extname } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
-import { DocumentResourceJournal } from "./document-resource-journal.ts";
+import { DocumentResourceJournal, type DocumentResourceOwner } from "./document-resource-journal.ts";
 import { z } from "zod";
 import { extractAttachmentText, MAX_ATTACHMENT_BYTES, type AttachmentTextExtractionInput, type AttachmentTextExtraction, type AttachmentExtractionContext } from "../attachment-text-extractor.ts";
 import { NodeDockerCommandPort, type DockerCommandPort } from "./docker-containment.ts";
@@ -73,7 +73,7 @@ export class DockerDocumentExtractor {
   }
 }
 
-export function configuredDocumentExtractor(environment: NodeJS.ProcessEnv, databaseFile?: string): ((input: AttachmentTextExtractionInput, context?: AttachmentExtractionContext) => Promise<AttachmentTextExtraction>) | undefined {
+export function configuredDocumentExtractor(environment: NodeJS.ProcessEnv, databaseFile?: string, instance?: DocumentResourceOwner): ((input: AttachmentTextExtractionInput, context?: AttachmentExtractionContext) => Promise<AttachmentTextExtraction>) | undefined {
   const enabled = environment.OMB_DOCUMENT_EXTRACTOR_ENABLED?.trim();
   if (!enabled || enabled === "0") return undefined;
   if (enabled !== "1") throw new Error("attachment_document_enable_invalid");
@@ -81,7 +81,7 @@ export function configuredDocumentExtractor(environment: NodeJS.ProcessEnv, data
   if (!image) throw new Error("attachment_document_image_required");
   const context = environment.OMB_DOCKER_CONTEXT?.trim();
   if (!context) throw new Error("attachment_document_context_required");
-  const extractor = new DockerDocumentExtractor({ image, ...(databaseFile ? { journal: new DocumentResourceJournal(databaseFile, context) } : {}), docker: new NodeDockerCommandPort({
+  const extractor = new DockerDocumentExtractor({ image, ...(databaseFile ? { journal: new DocumentResourceJournal(databaseFile, context, instance) } : {}), docker: new NodeDockerCommandPort({
     executable: environment.OMB_DOCKER_EXECUTABLE, context,
   }) });
   return (input, context) => extractor.extract(input, context);

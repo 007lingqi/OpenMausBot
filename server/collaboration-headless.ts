@@ -65,6 +65,8 @@ import type { AcceptanceCondition } from "./collaboration/snapshot.ts";
 import { configuredNaturalIntake } from "./collaboration/operations/natural-intake-model.ts";
 import { configuredAcceptanceMapping } from "./collaboration/operations/acceptance-mapping-model.ts";
 import { configuredDocumentExtractor } from "./collaboration/operations/document-extractor.ts";
+import { DocumentResourceJournal } from "./collaboration/operations/document-resource-journal.ts";
+import { DocumentResourceRecovery } from "./collaboration/operations/document-resource-recovery.ts";
 import { proactiveConversationRoutes, proactiveDestination, hasOwnerTextCommandReceipt } from "./collaboration/delivery-routing.ts";
 
 interface HeadlessArguments {
@@ -558,7 +560,7 @@ function productionRuntimeOptions(
     },
     ...(dingTalkEnabled
       ? {
-          attachmentIngestionFactory: ({ databaseFile, dataDirectory, onEvidence, signal, assertActive }) => {
+          attachmentIngestionFactory: ({ databaseFile, dataDirectory, onEvidence, signal, assertActive, instance }) => {
             const credentials = credentialProvider.load();
             if (!credentials) throw new Error("dingtalk_credentials_missing");
             const vault = new DingTalkAttachmentCapabilityVault(
@@ -567,7 +569,13 @@ function productionRuntimeOptions(
             );
             return new AttachmentIngestionCoordinator({
               signal, assertActive,
-              ...(documentExtractor ? { extract: configuredDocumentExtractor(environment, databaseFile) } : {}),
+              ...(documentExtractor ? {
+                extract: configuredDocumentExtractor(environment, databaseFile, instance),
+                beforeProcess: (now: number) => new DocumentResourceRecovery(
+                  new DocumentResourceJournal(databaseFile, environment.OMB_DOCKER_CONTEXT!.trim(), instance),
+                  new NodeDockerCommandPort({ executable: environment.OMB_DOCKER_EXECUTABLE, context: environment.OMB_DOCKER_CONTEXT }),
+                ).run(instance, now, assertActive, signal),
+              } : {}),
               databaseFile,
               dataDirectory,
               vault,

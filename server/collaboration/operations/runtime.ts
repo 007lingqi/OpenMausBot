@@ -117,6 +117,7 @@ export interface RuntimeAttachmentIngestionPort {
 }
 
 export interface RuntimeAttachmentIngestionContext {
+  instance: Pick<InstanceLease, "ownerId" | "fence">;
   databaseFile: string;
   dataDirectory: string;
   signal: AbortSignal;
@@ -746,7 +747,7 @@ export class CollaborationHeadlessRuntime {
         this.attachmentIngestion = this.options.attachmentIngestionFactory({
           databaseFile: join(this.options.dataDirectory, "collaboration", "collaboration.sqlite"),
           dataDirectory: this.options.dataDirectory,
-          signal, assertActive,
+          signal, assertActive, instance: { ownerId: lease.ownerId, fence: lease.fence },
           onEvidence: (workItemId, evidence) => {
             assertActive();
             this.service!.observeAttachmentEvidence(workItemId, evidence, this.clock.now());

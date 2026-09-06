@@ -1,5 +1,12 @@
 # Meta 协作决策记录
 
+## D-073 — 按旧实例、固定 ID 和独立无遗留查询恢复文档资源
+
+- schema 27 在资源创建前绑定运行实例 owner/fence；旧版行保留空归属，迁移不制造删除权限。恢复只查同 context、较旧 fence、已知 ID 的未清理行（每批最多 20 条），不按名称前缀扫描或删除。
+- Docker 操作前持久化尝试预算；核对 ID/name/label/固定 image 后才执行 rm，再用独立 container ls 确认该 ID 缺失。失败和三次耗尽保留原始身份与未完成状态，重建对象或服务不重置预算。没有 ID 时不猜测删除；后来入账的固定 ID 可以在后续批次核查。
+- headless 在附件后台批次前装配恢复，使用实际主账本、受信任显式 context 和运行时 lease/signal。调用方的 assertActive 使用实时 clock；批次 now 只用于补充账本检查，不能代替实时租约检查。取消/过期必须传播，不能被通用 Docker 异常处理吞掉。
+- 本地 SQLite/故障注入不等于真实 Docker 重启证明。未启用现有试点解析器、不更换运行容器；真实镜像隔离 smoke、未知回执、独立 supervisor、三次耗尽的 Owner 恢复和完整主机重启仍待验收。
+
 ## D-072 — 先记录文档资源身份，再执行 Docker 副作用
 
 - 原解析器仅在内存中保存随机名称和 ID，finally 无法覆盖服务强杀。增加 schema 26 主账本资源表；reserve/created/cleanupAcknowledged 使用独立短事务连接、FULL 同步，分别位于 create/start/交付结果之前，不保存正文、文件名或能力凭据。

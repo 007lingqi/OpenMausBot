@@ -1,4 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
+import { assertCurrentInstanceLease, type InstanceLease } from "../leases.ts";
+
+export type DocumentResourceOwner = Pick<InstanceLease, "ownerId" | "fence">;
 
 export interface DocumentResourceRecord {
   container_name: string;
@@ -8,16 +11,23 @@ export interface DocumentResourceRecord {
   container_id: string | null;
   cleanup_acknowledged: number;
   created_at: number;
+  instance_owner: string | null;
+  instance_fence: number | null;
+  recovery_attempts: number;
+  recovery_verified_absent: number;
 }
 
 /** Ownership evidence only. An unresolved entry is not permission to delete a container. */
 export class DocumentResourceJournal {
   private readonly databaseFile: string;
   private readonly dockerContext: string;
-  constructor(databaseFile: string, dockerContext: string) {
+  private readonly instance: DocumentResourceOwner | undefined;
+  constructor(databaseFile: string, dockerContext: string, instance?: DocumentResourceOwner) {
     if (!dockerContext.trim()) throw new Error("attachment_document_context_required");
     this.databaseFile = databaseFile;
     this.dockerContext = dockerContext;
+    if (instance && (!instance.ownerId.trim() || !Number.isSafeInteger(instance.fence) || instance.fence < 1)) throw new Error("attachment_document_owner_invalid");
+    this.instance = instance ? { ...instance } : undefined;
   }
   private use<T>(action: (db: DatabaseSync) => T): T {
     const db = new DatabaseSync(this.databaseFile);
@@ -29,8 +39,8 @@ export class DocumentResourceJournal {
   }
   reserve(name: string, image: string, sourceHash: string): void {
     if (!/^omb-document-[a-f0-9-]{36}$/.test(name) || !/^[a-f0-9]{64}$/.test(sourceHash)) throw new Error("attachment_document_journal_invalid");
-    this.use(db => db.prepare("INSERT INTO collaboration_document_resources(container_name,image,docker_context,source_hash,created_at) VALUES(?,?,?,?,?)")
-      .run(name, image, this.dockerContext, sourceHash, Date.now()));
+    this.use(db => db.prepare("INSERT INTO collaboration_document_resources(container_name,image,docker_context,source_hash,created_at,instance_owner,instance_fence) VALUES(?,?,?,?,?,?,?)")
+      .run(name, image, this.dockerContext, sourceHash, Date.now(), this.instance?.ownerId ?? null, this.instance?.fence ?? null));
   }
   created(name: string, id: string): void {
     if (!/^[a-f0-9]{64}$/.test(id)) throw new Error("attachment_document_journal_invalid");
@@ -50,5 +60,37 @@ export class DocumentResourceJournal {
   readUnresolved(): DocumentResourceRecord[] {
     return this.use(db => db.prepare("SELECT * FROM collaboration_document_resources WHERE docker_context=? AND cleanup_acknowledged=0 ORDER BY created_at,container_name LIMIT 100")
       .all(this.dockerContext) as unknown as DocumentResourceRecord[]);
+  }
+  recoveryCandidates(owner: DocumentResourceOwner, now: number): DocumentResourceRecord[] {
+    return this.use(db => {
+      assertCurrentInstanceLease(db, owner, now);
+      return db.prepare("SELECT * FROM collaboration_document_resources WHERE docker_context=? AND cleanup_acknowledged=0 AND container_id IS NOT NULL AND instance_owner IS NOT NULL AND instance_fence<? AND recovery_attempts<3 ORDER BY created_at,container_name LIMIT 20")
+        .all(this.dockerContext, owner.fence) as unknown as DocumentResourceRecord[];
+    });
+  }
+  claimRecovery(name: string, owner: DocumentResourceOwner, now: number): boolean {
+    return this.use(db => {
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        assertCurrentInstanceLease(db, owner, now);
+        const result = db.prepare("UPDATE collaboration_document_resources SET recovery_attempts=recovery_attempts+1 WHERE container_name=? AND docker_context=? AND cleanup_acknowledged=0 AND container_id IS NOT NULL AND instance_owner IS NOT NULL AND instance_fence<? AND recovery_attempts<3")
+          .run(name, this.dockerContext, owner.fence);
+        db.exec("COMMIT"); return result.changes === 1;
+      } catch (error) { db.exec("ROLLBACK"); throw error; }
+    });
+  }
+  assertRecovering(owner: DocumentResourceOwner, now: number): void {
+    this.use(db => assertCurrentInstanceLease(db, owner, now));
+  }
+  recovered(name: string, owner: DocumentResourceOwner, now: number): void {
+    this.use(db => {
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        assertCurrentInstanceLease(db, owner, now);
+        db.prepare("UPDATE collaboration_document_resources SET cleanup_acknowledged=1,recovery_verified_absent=1 WHERE container_name=? AND docker_context=? AND instance_fence<? AND recovery_attempts>0")
+          .run(name, this.dockerContext, owner.fence);
+        db.exec("COMMIT");
+      } catch (error) { db.exec("ROLLBACK"); throw error; }
+    });
   }
 }
