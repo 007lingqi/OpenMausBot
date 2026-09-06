@@ -23,6 +23,7 @@ import { recoverAttachmentProjection } from "./attachment-projection-recovery.ts
 import { isCurrentProjectionFeedback } from "./attachment-projection-retry.ts";
 import { InboundMessageProcessor } from "./inbound.ts";
 import type { DingTalkInboundMessage } from "../integrations/dingtalk/types.ts";
+import { proactiveDestination } from "./delivery-routing.ts";
 
 const VAULT_SECRET = "attachment-ingestion-test-secret-at-least-32-bytes";
 const WORK_ITEM_ID = "WI-attachment-ingestion";
@@ -125,6 +126,7 @@ describe("AttachmentIngestionCoordinator", () => {
       const work = f.db.prepare("SELECT * FROM collaboration_work_items").all();
       const before = f.db.prepare("SELECT * FROM collaboration_attachment_extractions").all();
       expect(f.recover()).toMatchObject({ allowed: true, duplicate: false, workItemId: WORK_ITEM_ID });
+      expect(proactiveDestination(f.databaseFile, f.message.sourceEventId, new Map([["external-C1", "open-C1"]]))).toBe("open-C1");
       expect(f.recover()).toMatchObject({ allowed: true, duplicate: true });
       const ingress = new InboundMessageProcessor(f.databaseFile);
       try { expect(() => ingress.processDingTalkMessage({ ...f.message, text: "创建另一项任务" })).toThrow("attachment_recovery_event_conflict"); }

@@ -1,5 +1,14 @@
 # Meta 协作验证记录
 
+## 2026-09-06 自然恢复回复来源（当前批）
+
+- TDD `pnpm vitest run server/collaboration/delivery-routing.test.ts`，70865 exit 1（5e50ba）：2 失败 / 17 通过，缺来源导致生产装配返回 delivery_unroutable。扩展 `delivery-routing / natural-intake-recovery / attachment-ingestion`，48909 exit 1（20b862）：4 失败 / 68 通过。
+- 生产实现后六文件路由/自然恢复/附件/Stream/runtime/Outbox回归与 typecheck/diff，55508 exit 0（5a50ad）：123 项通过。扩展实际 Outbox 派发后 60598 exit 0（582add）：同 123 项/typecheck/diff 通过。新增回滚用例的定向终态另记。
+- 本地临时 SQLite、模拟凭据及受控 fetch；成功和拒绝恢复的来源、同事件改群冲突、收据不可变/事务回滚、历史缺来源不补造、发送器重建后不重复发送。没有真实钉钉、模型或在线文档调用，没有部署/身份/凭据变更。
+- 回滚扩展路由单文件 15995 exit 0（043cd2）：21 项/typecheck/diff 通过。完整命令 `pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-recovery-origin-typecheck && git diff --check`，64739 exit 0（a8c966）：270 文件通过 / 1 跳过，2760 项通过 / 18 跳过，2778 注册，314.01 秒。
+- broker 7、updater 15、desktop-viewer 5、package-link 2、save-file 10 通过；打包服务无 node_modules 可访问启动、9 路 spawned proxy、typecheck、独立服务端编译/diff 全通过，所有命令终态。
+- Docker 仅只读核查（b64fcf）：现有非生产试点 healthy、restart=unless-stopped，其他容器/镜像均未修改；列表未见专用 document-parser 镜像。未读取容器环境变量/凭据，不代表本批新代码或真实六类场景已在 Docker 验收。
+
 ## 2026-09-06 多群路由及 API 隔离最终完整验证（当前批）
 
 - `pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-delivery-routing-typecheck && git diff --check`，获得本地监听所需沙箱外权限后启动 13203，最终 exit 0（9e00ed）。期间始终等待同一会话，无超时误重启。

@@ -17,6 +17,16 @@
 
 ## 本批执行记录
 
+### 自然需求/附件恢复回复来源（2026-09-06 当前批）
+
+- 上批 ab92f12 已提交且全量通过，分类 progress。本批读取 goal-protocol 接续，初始仅用户 AGENTS.md/outputs 未跟踪，保持不动；schema 25 不变。
+- TDD 70865 exit 1（5e50ba）：17 通过 / 2 失败，恢复请求无可用备用路由。扩展成功恢复来源断言后 48909 exit 1（20b862）：68 通过 / 4 失败，确认需求和附件允许恢复的收据同样缺来源。
+- 两类恢复结果新增可选 conversationId 并在原事务持久化；路由从现有不可变收据读取。55508 exit 0（5a50ad）：6 文件 / 123 项、typecheck/diff 通过。追加真实 Outbox dispatch 和发送器重建不重发后，60598 exit 0（582add）：同 123 项/typecheck/diff 通过；随后补来源插入失败整体回滚断言。
+- 覆盖真实生产装配+SQLite+受控 fetch、改群重放拒绝、旧收据不补造路由、拒绝恢复仍正确回原群、允许恢复/原证据和权限不变、发送成功后不重复。此为本地受控数据，不是真实钉钉/主机重启证明。
+- 15995 exit 0（043cd2）：新增回滚用例后路由 21 项及 typecheck/diff 通过。完整链 64739 exit 0（a8c966）：270 文件通过 / 1 跳过，2760 项通过 / 18 跳过，2778 注册，314.01 秒。附属测试、打包无 node_modules 启动与 9 路代理、typecheck、独立服务端编译及 diff 全通过；所有句柄终态。本批 11 个任务文件按规则保存本地提交，不 push、不部署。
+- docker-helper 只读核查 b64fcf：指定 colima-openmausbot-pilot 中现有 openmausbot-collaboration-pilot running/healthy、restart=unless-stopped，镜像 local 的本地 ID 2ae332cd23df；其他现有容器均保留，未重启/删除/替换。镜像列表未见专用文档解析镜像；此检查不是新代码已运行、真实 Stream 已连接或文档试点通过的证明。后续可从 packaging/collaboration/document-parser/Dockerfile 与 server/collaboration/operations/document-extractor.smoke.ts 继续准备隔离解析试点。
+- 仍无真实模型授权配置答复。恢复入口为本批 Git 提交、本节及 VERIFY；普通 Owner 文本/卡片回复的来源、真实文档/模型六类试点、历史输入回补、下载恢复和完整主机重启/人工验收仍未完成。Goal active，按 20 工具轮内收束，不把全量本地回归当产品最终验收。
+
 ### 多群路由与测试隔离完整验收收束（2026-09-06 当前批）
 
 - 上轮分类 progress；恢复核对 8 个任务文件及用户原有 AGENTS.md/outputs，未覆盖他人修改。目标仍为完整 PMO 自然协作闭环，不缩为路由或测试修复。

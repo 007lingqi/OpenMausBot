@@ -11,6 +11,10 @@ import type { OutboxDeliveryPort } from "./outbox.ts";
 import { proactiveConversationRoutes } from "./delivery-routing.ts";
 import { requestDeliveryReview } from "./delivery-review.ts";
 import { LocalOwnerRegistry } from "./owner.ts";
+import { recoverNaturalIntake } from "./natural-intake-recovery.ts";
+import { recoverAttachmentProjection } from "./attachment-projection-recovery.ts";
+import { OutboxDispatcher } from "./outbox-dispatcher.ts";
+import { InstanceLeaseCoordinator } from "./leases.ts";
 
 const roots: string[] = [];
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -43,6 +47,60 @@ function fixture(environment: NodeJS.ProcessEnv) {
 }
 
 describe("production delivery group routing", () => {
+  it.each([
+    ["继续整理需求", recoverNaturalIntake, "collaboration_natural_intake_recovery_requests"],
+    ["继续整理附件", recoverAttachmentProjection, "collaboration_attachment_recovery_requests"],
+  ] as const)("rolls back the %s response if its immutable origin receipt cannot be stored", (text, recover, table) => {
+    const f = fixture({});
+    try {
+      const request = { sourceEventId: "rollback-query", transportMessageId: "rollback-query", conversationId: "group-b",
+        addressedToBot: true, text, sender: { senderCorpId: "corp", senderStaffId: "staff", senderId: "sender", displayName: "Member" } };
+      const before = f.db.prepare("SELECT * FROM collaboration_outbox ORDER BY id").all();
+      f.db.exec(`CREATE TEMP TRIGGER reject_origin BEFORE INSERT ON ${table} BEGIN SELECT RAISE(ABORT,'synthetic_origin_write_failure'); END`);
+      expect(() => recover(f.db, request, 2000, () => {})).toThrow("synthetic_origin_write_failure");
+      expect(f.db.prepare(`SELECT count(*) n FROM ${table}`).get()).toEqual({ n: 0 });
+      expect(f.db.prepare("SELECT * FROM collaboration_outbox ORDER BY id").all()).toEqual(before);
+      f.db.exec("DROP TRIGGER reject_origin");
+      expect(recover(f.db, request, 2001, () => {}).duplicate).toBe(false);
+      expect(() => f.db.exec(`UPDATE ${table} SET outcome_json='{}'`)).toThrow("immutable");
+    } finally { f.db.close(); }
+  });
+  it.each([
+    ["继续整理需求", recoverNaturalIntake, "collaboration_natural_intake_recovery_requests"],
+    ["继续整理附件", recoverAttachmentProjection, "collaboration_attachment_recovery_requests"],
+  ] as const)("routes a durable %s response to its actual request group after restart", async (text, recover, table) => {
+    const env = { OMB_DINGTALK_ALLOWED_CONVERSATION_IDS: "group-a,group-b", OMB_DINGTALK_PROACTIVE_CONVERSATION_MAP: '{"group-a":"open-a","group-b":"open-b"}' };
+    const f = fixture(env);
+    try {
+      const request = { sourceEventId: "recover-query", transportMessageId: "recover-query", conversationId: "group-b",
+        addressedToBot: true, text, receivedAt: 2000,
+        sender: { senderCorpId: "corp", senderStaffId: "staff", senderId: "sender", displayName: "Member" } };
+      expect(recover(f.db, request, 2000, () => {}).allowed).toBe(false);
+      const before = f.db.prepare(`SELECT * FROM ${table}`).all();
+      expect(() => recover(f.db, { ...request, conversationId: "group-a" }, 2001, () => {})).toThrow("event_conflict");
+      expect(recover(f.db, request, 2002, () => {}).duplicate).toBe(true);
+      expect(f.db.prepare(`SELECT * FROM ${table}`).all()).toEqual(before);
+      const response = { ...f.message("recover-query"), aggregateType: "association" as const };
+      const restarted = createDingTalkDelivery(new DingTalkSessionReplyRegistry(), env, f.root);
+      f.db.exec("UPDATE collaboration_outbox SET delivery_state='sent',sent_at=1 WHERE source_event_id<>'recover-query'");
+      const lease = new InstanceLeaseCoordinator(f.db, "recovery-routing-test").acquire(3000, 60000)!;
+      const options = { maxAttempts: 3, claimTtlMs: 10000, baseBackoffMs: 10, maxBackoffMs: 100 };
+      expect(await new OutboxDispatcher(f.db, restarted, options).dispatchOne(lease, 3000)).toMatchObject({ state: "sent" });
+      expect(await new OutboxDispatcher(f.db, createDingTalkDelivery(new DingTalkSessionReplyRegistry(), env, f.root), options).dispatchOne(lease, 3001)).toBeNull();
+      expect(f.destinations).toEqual(["open-b"]);
+      expect(JSON.parse(String((before[0] as { outcome_json: string }).outcome_json)).conversationId).toBe("group-b");
+      expect(f.db.prepare("SELECT count(*) n FROM collaboration_outbox WHERE source_event_id='recover-query'").get()).toEqual({ n: 1 });
+      // Old receipts cannot acquire new routing authority just by being replayed.
+      const row = before[0] as { payload_hash: string; outcome_json: string };
+      const legacyOutcome = JSON.parse(row.outcome_json);
+      delete legacyOutcome.conversationId;
+      f.db.prepare(`INSERT INTO ${table}(source_event_id,payload_hash,outcome_json,created_at) VALUES(?,?,?,?)`)
+        .run("legacy-query", row.payload_hash, JSON.stringify(legacyOutcome), 1000);
+      expect(recover(f.db, { ...request, sourceEventId: "legacy-query" }, 2003, () => {}).duplicate).toBe(true);
+      expect(await restarted.deliver({ ...response, dedupeKey: "dingtalk:event:legacy-query:ack" })).toMatchObject({ outcome: "permanent_failure" });
+      expect(f.destinations).toEqual(["open-b"]);
+    } finally { f.db.close(); }
+  });
   it.each(["not-json", "[]", "{}", '{"group-c":"open-c"}', '{"group-a":""}', '{"group-a":42}',
     '{"group-a":"open-a","group-b":"open-a"}', '{"group-a":" open-a"}', '{"group-a":"open\\na"}'])
   ("rejects invalid/untrusted configuration without echoing it: %s", raw => {

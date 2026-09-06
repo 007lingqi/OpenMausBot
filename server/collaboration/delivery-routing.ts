@@ -39,8 +39,10 @@ export function proactiveDestination(databaseFile: string, sourceEventId: string
       "JOIN collaboration_conversation_aliases a ON a.conversation_id=e.conversation_id AND a.source='dingtalk' " +
       "WHERE e.source='dingtalk' AND e.source_event_id=? UNION " +
       "SELECT json_extract(outcome_json,'$.conversationId') AS conversation FROM collaboration_owner_text_commands " +
-      "WHERE source_event_id=? AND json_extract(outcome_json,'$.kind')='delivery_review'",
-    ).all(sourceEventId, sourceEventId) as Array<{ conversation: string }>;
-    return origins.length === 1 ? routes.get(origins[0]!.conversation) : undefined;
+      "WHERE source_event_id=? AND json_extract(outcome_json,'$.kind')='delivery_review' UNION " +
+      "SELECT json_extract(outcome_json,'$.conversationId') AS conversation FROM collaboration_natural_intake_recovery_requests WHERE source_event_id=? UNION " +
+      "SELECT json_extract(outcome_json,'$.conversationId') AS conversation FROM collaboration_attachment_recovery_requests WHERE source_event_id=?",
+    ).all(sourceEventId, sourceEventId, sourceEventId, sourceEventId) as Array<{ conversation: string | null }>;
+    return origins.length === 1 && origins[0]!.conversation ? routes.get(origins[0]!.conversation) : undefined;
   } finally { db.close(); }
 }

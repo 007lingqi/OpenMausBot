@@ -89,6 +89,8 @@ export interface DingTalkOwnerTextCommandOutcome {
 }
 
 export interface DingTalkProjectionRecoveryOutcome {
+  /** Durable origin for new replies; absent on legacy receipts, never inferred on replay. */
+  conversationId?: string;
   allowed: boolean;
   duplicate: boolean;
   workItemId: string | null;

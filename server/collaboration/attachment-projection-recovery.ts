@@ -30,7 +30,7 @@ export function recoverAttachmentProjection(db: DatabaseSync, message: DingTalkI
     if (db.prepare("SELECT 1 FROM collaboration_external_events WHERE source='dingtalk' AND source_event_id=? UNION ALL SELECT 1 FROM collaboration_owner_text_commands WHERE source_event_id=? UNION ALL SELECT 1 FROM collaboration_outbox WHERE source='dingtalk' AND source_event_id=?")
       .get(message.sourceEventId, message.sourceEventId, message.sourceEventId)) throw new Error("attachment_recovery_event_conflict");
     const policy = evaluateOwnerPolicy(db, { sender: message.sender, capability: "work.retry", now });
-    let outcome: DingTalkProjectionRecoveryOutcome = { allowed: false, duplicate: false, workItemId: null, reason: policy.reason };
+    let outcome: DingTalkProjectionRecoveryOutcome = { conversationId: message.conversationId, allowed: false, duplicate: false, workItemId: null, reason: policy.reason };
     let summary = "只有当前负责人可以恢复附件整理，请由负责人确认后操作。";
     let version = 1;
     let boundary: number | null = null;
@@ -50,7 +50,7 @@ export function recoverAttachmentProjection(db: DatabaseSync, message: DingTalkI
         version = target.version;
         db.prepare("INSERT INTO collaboration_attachment_projection_recoveries(id,attachment_id,boundary_sequence,source_event_id,actor_principal_id,owner_generation,created_at) VALUES(?,?,?,?,?,?,?)")
           .run(randomUUID(), target.id, boundary, message.sourceEventId, policy.principalId, policy.ownerGeneration!, now);
-        outcome = { allowed: true, duplicate: false, workItemId: target.work_item_id, reason: "attachment_projection_recovered" };
+        outcome = { conversationId: message.conversationId, allowed: true, duplicate: false, workItemId: target.work_item_id, reason: "attachment_projection_recovered" };
         summary = "已允许从保存的附件内容继续整理需求。历史记录会保留，需要确认的事项仍会单独追问；这不代表代码修改已完成。";
       } else {
         outcome.reason = candidates.length ? "attachment_projection_recovery_ambiguous" : "attachment_projection_not_recoverable";

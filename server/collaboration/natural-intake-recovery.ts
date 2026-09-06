@@ -24,7 +24,7 @@ export function recoverNaturalIntake(db: DatabaseSync, message: DingTalkInboundM
     if (db.prepare("SELECT 1 FROM collaboration_external_events WHERE source='dingtalk' AND source_event_id=? UNION ALL SELECT 1 FROM collaboration_owner_text_commands WHERE source_event_id=? UNION ALL SELECT 1 FROM collaboration_outbox WHERE source='dingtalk' AND source_event_id=? UNION ALL SELECT 1 FROM collaboration_attachment_recovery_requests WHERE source_event_id=?")
       .get(message.sourceEventId, message.sourceEventId, message.sourceEventId, message.sourceEventId)) throw new Error("natural_intake_recovery_event_conflict");
     const policy = evaluateOwnerPolicy(db, { sender: message.sender, capability: "work.retry", now });
-    let outcome: DingTalkRequirementRecoveryOutcome = { allowed: false, duplicate: false, workItemId: null, reason: policy.reason, recoveredInputs: 0 };
+    let outcome: DingTalkRequirementRecoveryOutcome = { conversationId: message.conversationId, allowed: false, duplicate: false, workItemId: null, reason: policy.reason, recoveredInputs: 0 };
     let summary = "只有当前负责人可以恢复需求整理，请由负责人确认后操作。";
     let version = 1;
     if (policy.decision === "allow") {
@@ -49,7 +49,7 @@ export function recoverNaturalIntake(db: DatabaseSync, message: DingTalkInboundM
           if (changed.changes !== 1) throw new Error("natural_intake_recovery_claim_changed");
         }
         if (!failed.length) throw new Error("natural_intake_recovery_source_missing");
-        outcome = { allowed: true, duplicate: false, workItemId: target.id, reason: "natural_intake_recovered", recoveredInputs: failed.length };
+        outcome = { conversationId: message.conversationId, allowed: true, duplicate: false, workItemId: target.id, reason: "natural_intake_recovered", recoveredInputs: failed.length };
         summary = `已允许继续整理这个事项中尚未成功的 ${failed.length} 条补充。原消息和失败记录均保留；需要确认的内容仍会追问，这不代表代码修改已完成。`;
       } else {
         outcome.reason = candidates.length ? "natural_intake_recovery_ambiguous" : "natural_intake_not_recoverable";

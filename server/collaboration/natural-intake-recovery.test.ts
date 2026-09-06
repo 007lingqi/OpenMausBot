@@ -14,6 +14,7 @@ import { OutboxDispatcher } from "./outbox-dispatcher.ts";
 import { InstanceLeaseCoordinator } from "./leases.ts";
 import type { NaturalIntakeRequest } from "./natural-intake.ts";
 import type { DingTalkInboundMessage } from "../integrations/dingtalk/types.ts";
+import { proactiveDestination } from "./delivery-routing.ts";
 
 const scratch: string[] = [];
 afterEach(() => { for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true }); });
@@ -83,6 +84,7 @@ describe("Owner-bound natural requirement recovery", () => {
       const work = h.db.prepare("SELECT * FROM collaboration_work_items").all();
       const sources = h.db.prepare("SELECT * FROM collaboration_external_events").all();
       expect(h.recover()).toMatchObject({ allowed: true, duplicate: false, workItemId: h.first.workItemId, recoveredInputs: 2 });
+      expect(proactiveDestination(h.file, h.request.sourceEventId, new Map([["external-group", "open-group"]]))).toBe("open-group");
       expect(h.recover()).toMatchObject({ allowed: true, duplicate: true, recoveredInputs: 2 });
       expect(h.db.prepare("SELECT * FROM collaboration_work_items").all()).toEqual(work);
       expect(h.db.prepare("SELECT * FROM collaboration_external_events").all()).toEqual(sources);
