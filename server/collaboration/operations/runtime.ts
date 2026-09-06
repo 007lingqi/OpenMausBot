@@ -920,12 +920,13 @@ export class CollaborationHeadlessRuntime {
     try {
       const outcome = this.service!.performOwnerAction({
         actionToken: action.actionToken,
+        request: { sourceEventId: action.transportEventId, origin: action.origin ?? "card",
+          ...(action.origin === "text" ? { conversationId: action.conversationId } : {}) },
         sender: action.sender,
         ...(action.reason ? { reason: action.reason } : {}),
         now: action.receivedAt,
       });
       workItemId = outcome.workItemId;
-      if (action.origin === "text") this.enqueueTextOwnerActionStatus(action, outcome);
       return outcome;
     } finally {
       if (workItemId) this.syncMetaBundleBestEffort(workItemId, true);

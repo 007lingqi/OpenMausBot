@@ -50,6 +50,7 @@ export interface DingTalkSessionReplyChannel {
 }
 
 export interface DingTalkCardAction {
+  conversationId?: string;
   /** Stream delivery identity, used by the durable sink for idempotency. */
   transportEventId: string;
   transportMessageId: string;

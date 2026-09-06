@@ -14,6 +14,7 @@ import {
   type WorkItemControlAction,
 } from "./policy.ts";
 import { assertLedgerArmed } from "./restore-guard.ts";
+import { prepareTokenActionReceipt, persistTokenActionReceipt, type TokenActionRequest } from "./token-action-receipt.ts";
 
 const TOKEN_VERSION = 1 as const;
 const DEFAULT_TOKEN_TTL_MS = 15 * 60_000;
@@ -43,6 +44,7 @@ export interface IssueOwnerActionInput {
 }
 
 export interface PerformOwnerActionInput {
+  request?: TokenActionRequest;
   actionToken: string;
   sender: DingTalkSender;
   reason?: string;
@@ -389,6 +391,16 @@ export class OwnerActionController {
     this.database.exec("BEGIN IMMEDIATE");
     try {
       assertLedgerArmed(this.database);
+      const receipt = prepareTokenActionReceipt(this.database, input);
+      if (receipt?.previous) {
+        this.database.exec("COMMIT");
+        return receipt.previous;
+      }
+      const finish = (decision: OwnerActionOutcome): OwnerActionOutcome => {
+        if (input.request && receipt) persistTokenActionReceipt(this.database, input.request, receipt.hash, decision, now);
+        this.database.exec("COMMIT");
+        return decision;
+      };
       const token = suppliedToken
         ? (this.database
             .prepare(
@@ -414,8 +426,7 @@ export class OwnerActionController {
           error: denied.reason,
           now,
         });
-        this.database.exec("COMMIT");
-        return denied;
+        return finish(denied);
       }
       if (policy.decision !== "allow") {
         const denied = outcome({
@@ -436,8 +447,7 @@ export class OwnerActionController {
           error: denied.reason,
           now,
         });
-        this.database.exec("COMMIT");
-        return denied;
+        return finish(denied);
       }
       if (policy.ownerGeneration !== token.owner_generation) {
         const denied = outcome({
@@ -458,8 +468,7 @@ export class OwnerActionController {
           error: denied.reason,
           now,
         });
-        this.database.exec("COMMIT");
-        return denied;
+        return finish(denied);
       }
       if (token.consumed_at !== null) {
         if (!token.decision_json) throw new Error("Consumed action token has no decision");
@@ -474,8 +483,7 @@ export class OwnerActionController {
           resource: { tokenId: token.id, originalReason: previous.reason },
           now,
         });
-        this.database.exec("COMMIT");
-        return { ...previous, duplicate: true };
+        return finish({ ...previous, duplicate: true });
       }
 
       let deniedReason: string | null = null;
@@ -521,8 +529,7 @@ export class OwnerActionController {
           error: deniedReason,
           now,
         });
-        this.database.exec("COMMIT");
-        return denied;
+        return finish(denied);
       }
       if (!workItem) throw new Error("Action preconditions did not load a Work Item");
       const beforeHash = stateHash(workItem);
@@ -573,8 +580,7 @@ export class OwnerActionController {
         afterHash: stateHash(applied.workItem),
         now,
       });
-      this.database.exec("COMMIT");
-      return allowed;
+      return finish(allowed);
     } catch (error) {
       this.database.exec("ROLLBACK");
       throw error;

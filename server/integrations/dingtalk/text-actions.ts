@@ -47,6 +47,7 @@ export function parseDingTalkOwnerTextAction(message: DingTalkInboundMessage): D
   const reject = matched[1] === "拒绝";
   const suppliedReason = matched[3]?.trim();
   return {
+    conversationId: message.conversationId,
     transportEventId: message.sourceEventId,
     transportMessageId: message.transportMessageId,
     actionToken: matched[2]!,

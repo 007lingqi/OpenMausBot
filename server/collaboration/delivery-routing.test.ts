@@ -16,7 +16,7 @@ import { recoverAttachmentProjection } from "./attachment-projection-recovery.ts
 import { OutboxDispatcher } from "./outbox-dispatcher.ts";
 import { InstanceLeaseCoordinator } from "./leases.ts";
 import { CollaborationHeadlessRuntime } from "./operations/runtime.ts";
-import { parseDingTalkOwnerTextCommand } from "../integrations/dingtalk/text-actions.ts";
+import { parseDingTalkOwnerTextCommand, parseDingTalkOwnerTextAction } from "../integrations/dingtalk/text-actions.ts";
 
 const roots: string[] = [];
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -49,6 +49,53 @@ function fixture(environment: NodeJS.ProcessEnv) {
 }
 
 describe("production delivery group routing", () => {
+  it("preserves rejected token text actions and their source after restart, without executing altered replay", async () => {
+    const env = { OMB_DINGTALK_ALLOWED_CONVERSATION_IDS: "group-a,group-b", OMB_DINGTALK_PROACTIVE_CONVERSATION_MAP: '{"group-a":"open-a","group-b":"open-b"}' };
+    const f = fixture(env);
+    let runtime = new CollaborationHeadlessRuntime({ dataDirectory: f.root, platform: "linux" });
+    try {
+      await runtime.start();
+      const request = { sourceEventId: "token-request", transportMessageId: "token-request", conversationId: "group-b", addressedToBot: true,
+        text: "接受 synthetic_unrecognized_action_token_1234567890", receivedAt: 2000,
+        sender: { senderCorpId: "corp", senderStaffId: "staff", senderId: "sender", displayName: "Member" } };
+      const action = parseDingTalkOwnerTextAction(request)!;
+      const first = runtime.performDingTalkOwnerAction(action);
+      expect(first.allowed).toBe(false);
+      expect(runtime.performDingTalkOwnerAction(action)).toEqual({ ...first, duplicate: true });
+      expect(() => runtime.performDingTalkOwnerAction({ ...action, actionToken: "other-token" })).toThrow("event_conflict");
+      for (const changed of [{ ...action, conversationId: "group-a" }, { ...action, origin: "card" as const },
+        { ...action, sender: { ...action.sender, senderStaffId: "other" } }]) {
+        expect(() => runtime.performDingTalkOwnerAction(changed)).toThrow("event_conflict");
+      }
+      expect(() => runtime.performDingTalkOwnerTextCommand({ transportEventId: action.transportEventId, transportMessageId: action.transportMessageId,
+        command: "status", workItemId: f.message("event-group-a").aggregateId, sender: action.sender, receivedAt: 2100 })).toThrow("event_conflict");
+      expect(() => runtime.ingestDingTalkMessage({ ...request, text: "新需求" })).toThrow("event_conflict");
+      await runtime.stop();
+      runtime = new CollaborationHeadlessRuntime({ dataDirectory: f.root, platform: "linux" });
+      await runtime.start();
+      expect(runtime.performDingTalkOwnerAction(action)).toEqual({ ...first, duplicate: true });
+      await runtime.stop();
+      expect(await createDingTalkDelivery(new DingTalkSessionReplyRegistry(), env, f.root).deliver({ ...f.message("token-request"), aggregateType: "association" })).toEqual({ outcome: "sent" });
+      expect(f.destinations).toEqual(["open-b"]);
+    } finally { await runtime.stop(); f.db.close(); }
+  });
+  it("deduplicates a card callback without guessing a group or creating an outbound message", async () => {
+    const f = fixture({});
+    const runtime = new CollaborationHeadlessRuntime({ dataDirectory: f.root, platform: "linux" });
+    try {
+      await runtime.start();
+      const action = { transportEventId: "card-request", transportMessageId: "card-request", actionToken: "invalid-card-token", origin: "card" as const,
+        conversationId: "unproven-card-field", receivedAt: 2000,
+        sender: { senderCorpId: "corp", senderStaffId: "staff", senderId: "sender", displayName: "Member" } };
+      const first = runtime.performDingTalkOwnerAction(action);
+      expect(first.allowed).toBe(false);
+      expect(runtime.performDingTalkOwnerAction(action)).toEqual({ ...first, duplicate: true });
+      const receipt = f.db.prepare("SELECT outcome_json FROM collaboration_owner_text_commands WHERE source_event_id='card-request'").get() as { outcome_json: string };
+      expect(JSON.parse(receipt.outcome_json)).toMatchObject({ kind: "token_action", outcome: { allowed: false } });
+      expect(receipt.outcome_json).not.toContain("unproven-card-field");
+      expect(f.db.prepare("SELECT count(*) n FROM collaboration_outbox WHERE source_event_id='card-request'").get()).toEqual({ n: 0 });
+    } finally { await runtime.stop(); f.db.close(); }
+  });
   it.each(["status", "refresh_approval"] as const)("persists %s outcome and group, preserving denial across restart and rejecting rewritten replay", async commandName => {
     const env = { OMB_DINGTALK_ALLOWED_CONVERSATION_IDS: "group-a,group-b", OMB_DINGTALK_PROACTIVE_CONVERSATION_MAP: '{"group-a":"open-a","group-b":"open-b"}' };
     const f = fixture(env);

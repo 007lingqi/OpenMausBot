@@ -1,5 +1,11 @@
 # Meta 协作验证记录
 
+## 2026-09-06 Token 审批事件与文本回复原子化（已验证）
+
+- TDD actions/delivery-routing/text-actions：9740 exit 1（5158fb），3 失败 / 49 通过。初修 86895 exit 0（684535）：5 文件 / 94 项/typecheck/diff。
+- 扩展 actions/delivery-routing/text-actions/runtime/stream-adapter/headless/delivery-review：39221 exit 0（2d7d29），7 文件 / 119 项及 typecheck/diff 通过。包含动作与 token 消费回滚、原始拒绝结果、跨入口事件冲突、文本重启来源和卡片不猜群；全部合成数据，无真实发送。
+- 完整 `pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-token-action-typecheck && git diff --check`，54142 exit 0（64ea61）。pnpm test 串联主集/broker/updater/desktop-viewer/package-link/save-file/packaged-server 全通过，后续 typecheck、独立编译/diff 通过；打包脱离 node_modules 启动和 9 路代理实际通过。主集数量/耗时汇总输出被截断，未另行猜测统计；d9cf8a 临时 JSON 报告定位无匹配文件退出 1，不代表测试失败，不重跑已通过候选。所有句柄终态。本地原子性与受控发送不证明真实卡片回执或六类群聊通过。
+
 ## 2026-09-06 状态查询与刷新审批收据（已验证）
 
 - TDD delivery-routing：37157 exit 1（29f7c1），4 失败 / 29 通过；缺原始收据、拒绝重放误报成功及写失败无回滚。

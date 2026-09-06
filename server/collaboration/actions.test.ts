@@ -551,6 +551,47 @@ describe("Owner action tokens and Work Item controls", () => {
     context.service.close();
   });
 
+  it("persists a token action event and reply atomically without retaining the executable token", () => {
+    const context = harness();
+    const db = new DatabaseSync(context.databaseFile);
+    try {
+      const issued = context.service.issueOwnerAction({ action: "pause", workItemId: context.workItemId, expectedVersion: 1, now: 2000 });
+      const input = { actionToken: issued.token, sender: ownerSender(), now: 2100,
+        request: { sourceEventId: "token-request", origin: "text" as const, conversationId: "request-group" } };
+      const before = db.prepare("SELECT * FROM collaboration_work_items").all();
+      db.exec("CREATE TRIGGER fail_token_reply BEFORE INSERT ON collaboration_outbox WHEN NEW.source_event_id='token-request' BEGIN SELECT RAISE(ABORT,'synthetic_token_reply_failure'); END");
+      expect(() => context.service.performOwnerAction(input)).toThrow("synthetic_token_reply_failure");
+      expect(db.prepare("SELECT * FROM collaboration_work_items").all()).toEqual(before);
+      expect(db.prepare("SELECT count(*) n FROM collaboration_owner_text_commands").get()).toEqual({ n: 0 });
+      expect(db.prepare("SELECT consumed_at FROM collaboration_action_tokens").get()).toEqual({ consumed_at: null });
+      db.exec("DROP TRIGGER fail_token_reply");
+      expect(context.service.performOwnerAction(input)).toMatchObject({ allowed: true, duplicate: false });
+      expect(JSON.stringify(db.prepare("SELECT payload_json FROM collaboration_outbox WHERE source_event_id='token-request'").get())).not.toContain(issued.token);
+      const receipt = db.prepare("SELECT outcome_json FROM collaboration_owner_text_commands WHERE source_event_id='token-request'").get() as { outcome_json: string };
+      expect(JSON.parse(receipt.outcome_json)).toMatchObject({ kind: "token_action", conversationId: "request-group", outcome: { allowed: true } });
+      expect(receipt.outcome_json).not.toContain(issued.token);
+      expect(context.service.performOwnerAction(input)).toMatchObject({ allowed: true, duplicate: true });
+      expect(db.prepare("SELECT count(*) n FROM collaboration_outbox WHERE source_event_id='token-request'").get()).toEqual({ n: 1 });
+      expect(() => context.service.performOwnerAction({ ...input, request: { ...input.request, conversationId: "other-group" } })).toThrow("event_conflict");
+    } finally { db.close(); context.service.close(); }
+  });
+
+  it("keeps a denied token event denied after a separate Owner action and rejects sender replacement", () => {
+    const context = harness();
+    const db = new DatabaseSync(context.databaseFile);
+    try {
+      const issued = context.service.issueOwnerAction({ action: "pause", workItemId: context.workItemId, expectedVersion: 1, now: 2000 });
+      const deniedRequest = { actionToken: issued.token, sender: contributorSender(), now: 2100,
+        request: { sourceEventId: "denied-token", origin: "text" as const, conversationId: "request-group" } };
+      expect(context.service.performOwnerAction(deniedRequest)).toMatchObject({ allowed: false, duplicate: false, reason: "not_active_owner" });
+      expect(() => context.service.performOwnerAction({ ...deniedRequest, sender: ownerSender() })).toThrow("event_conflict");
+      expect(db.prepare("SELECT consumed_at FROM collaboration_action_tokens").get()).toEqual({ consumed_at: null });
+      expect(context.service.performOwnerAction({ ...deniedRequest, sender: ownerSender(), request: { ...deniedRequest.request, sourceEventId: "owner-token" } })).toMatchObject({ allowed: true });
+      expect(context.service.performOwnerAction(deniedRequest)).toMatchObject({ allowed: false, duplicate: true, reason: "not_active_owner" });
+      expect(db.prepare("SELECT count(*) n FROM collaboration_control_events").get()).toEqual({ n: 1 });
+    } finally { db.close(); context.service.close(); }
+  });
+
   it("rolls back the control mutation when its origin receipt cannot be persisted", () => {
     const context = harness();
     const db = new DatabaseSync(context.databaseFile);

@@ -42,6 +42,7 @@ describe("DingTalk Owner text actions", () => {
   });
   it("turns a copied acceptance command into the existing opaque-token action contract", () => {
     expect(parseDingTalkOwnerTextAction(message(`@研发助手 接受 ${token}`))).toEqual({
+      conversationId: "conversation-1",
       transportEventId: "source-1",
       transportMessageId: "transport-1",
       actionToken: token,

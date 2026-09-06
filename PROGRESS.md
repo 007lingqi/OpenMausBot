@@ -17,6 +17,16 @@
 
 ## 本批执行记录
 
+### Token 审批事件与文本回复原子化（2026-09-06，已验证）
+
+- 上轮 d6471b3 已提交/全量通过，分类 progress；本轮按 goal-protocol 接续。初始只有用户 AGENTS.md/outputs，保持不动；schema 25 不变，无真实身份/凭据/配置/钉钉/Docker 变更。
+- TDD 9740 exit 1（5158fb）：3 失败 / 49 通过，复现文本来源缺失、拒绝重放未去重及 Outbox 写失败不能撤销已提交控制。实现原控制器事务内 token_action 收据与文本回复，runtime 传递规范化来源、不再另行入队该文本回复。
+- 初修 86895 exit 0（684535）：5 文件 / 94 项/typecheck/diff 通过；扩展改群/身份/入口拒绝、拒绝不随后续合法动作变成功、卡片不猜群后 39221 exit 0（2d7d29）：7 文件 / 119 项/typecheck/diff 通过。
+- 验证实际 SQLite 控制/token 消费/收据/Outbox 整体回滚，重复事件无新动作/回复，规范化文本经 runtime 重建和生产发送器/受控 fetch 回到原群；卡片仅记录无群结果，不新增消息。独立旧 OwnerCardActionBridge 未在 headless 装配中使用，本批不迁移其独立库。
+- 完整链 54142 已 exit 0（64ea61）：pnpm test 全部子命令、typecheck、独立服务端编译与 diff 全通过；打包脱离 node_modules 启动及 9 路代理通过。主集汇总在 5f7c8d 输出截断区，本批不补造数量/耗时。后续临时 JSON 定位 d9cf8a 未找到文件而退出 1，属于只读报告检索失败，不是测试失败，也未重启完整测试。
+- 所有句柄终态。核心新模块 token-action-receipt.ts、八个修改代码/测试文件及四个状态文档共 13 文件保存本地提交；AGENTS.md/outputs 不动，不 push、不部署。
+- 剩余：普通直接控制的动作/回复跨事务恢复、卡片真实来源与送达回执、历史输入/下载恢复、真实文档/模型六类试点及完整主机重启/Owner 人工验收。Goal active，不部署、不 push。
+
 ### 状态查询与刷新审批收据（2026-09-06，已验证）
 
 - 上轮 c029190 已提交且全量通过，分类 progress；本轮按 goal-protocol 接续。初始只有用户 AGENTS.md/outputs，保持不动；schema 25 不变，无真实钉钉/模型/凭据/Docker 变更。
