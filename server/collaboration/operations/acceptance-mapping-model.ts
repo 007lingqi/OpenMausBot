@@ -15,12 +15,19 @@ export function configuredAcceptanceMapping(environment: NodeJS.ProcessEnv, depe
     const model=environment[`${prefix}_MODEL`]?.trim();
     const endpoint=environment[`${prefix}_ENDPOINT`]?.trim();
     const file=environment[`${prefix}_CREDENTIAL_FILE`]?.trim();
+    const transport=environment[`${prefix}_TRANSPORT`]?.trim() || "responses";
+    if (transport === "opencodex_local") {
+      if (!model || !endpoint || file) throw new Error("acceptance_mapping_configuration_required");
+      return {model,endpoint,transport:"opencodex_local" as const,reasoningEffort:environment[`${prefix}_REASONING_EFFORT`]?.trim() || "medium",file:undefined};
+    }
+    if (transport !== "responses" || environment[`${prefix}_REASONING_EFFORT`]) throw new Error("acceptance_mapping_configuration_required");
     if (!model || !endpoint || !file || !isAbsolute(file)) throw new Error("acceptance_mapping_configuration_required");
-    return {model,endpoint,file:resolve(file)};
+    return {model,endpoint,file:resolve(file),transport:"responses" as const};
   });
   const contexts=settings.map(setting => new ResponsesNaturalIntakeModel({model:setting.model,endpoint:setting.endpoint,
-    allowInsecureLoopback, fetch:dependencies.fetch, credential:() => {
-      const raw=readSecureCredentialFile(setting.file);
+    transport:setting.transport,reasoningEffort:setting.reasoningEffort,
+    allowInsecureLoopback, fetch:dependencies.fetch, credential:setting.file === undefined ? undefined : () => {
+      const raw=readSecureCredentialFile(setting.file!);
       try { return raw.toString("utf8").trim(); } finally { raw.fill(0); }
     } }));
   const policyId=`mapping-v1:${createHash("sha256").update(JSON.stringify({revision,settings,allowInsecureLoopback,protocol:1})).digest("hex")}`;

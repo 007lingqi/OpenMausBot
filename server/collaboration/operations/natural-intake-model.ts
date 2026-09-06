@@ -1,12 +1,15 @@
 import { isAbsolute } from "node:path";
 import { ModelNaturalIntakeInterpreter, type NaturalIntakeModelPort } from "../natural-intake.ts";
 import { readSecureCredentialFile } from "./credentials.ts";
+import { abortable, readOpenCodexStream } from "./opencodex-stream.ts";
 
 type ModelInput = Parameters<NaturalIntakeModelPort["complete"]>[0];
 interface Options {
   endpoint: string;
   model: string;
-  credential: () => string;
+  credential?: () => string;
+  transport?: "responses" | "opencodex_local";
+  reasoningEffort?: string;
   fetch?: typeof globalThis.fetch;
   allowInsecureLoopback?: boolean;
 }
@@ -48,10 +51,20 @@ function record(value: unknown): Record<string, unknown> | null {
 export class ResponsesNaturalIntakeModel implements NaturalIntakeModelPort {
   private readonly url: string;
   private readonly model: string;
-  private readonly credential: () => string;
+  private readonly credential: (() => string) | undefined;
+  private readonly streaming: boolean;
+  private readonly effort: string;
   private readonly fetcher: typeof globalThis.fetch;
   constructor(options: Options) {
-    this.url = endpoint(options.endpoint, options.allowInsecureLoopback);
+    if (options.transport && !["responses", "opencodex_local"].includes(options.transport)) throw new Error("natural_model_configuration_required");
+    this.streaming = options.transport === "opencodex_local";
+    this.effort = options.reasoningEffort ?? "medium";
+    if (this.streaming) {
+      let url: URL; try { url = new URL(options.endpoint); } catch { throw new Error("natural_model_endpoint_invalid"); }
+      if (!["127.0.0.1", "[::1]"].includes(url.hostname) || url.protocol !== "http:" || url.pathname !== "/v1/responses") throw new Error("natural_model_endpoint_invalid");
+      if (options.credential || !["low", "medium", "high", "xhigh", "max", "ultra"].includes(this.effort)) throw new Error("natural_model_configuration_required");
+    } else if (!options.credential || options.reasoningEffort !== undefined) throw new Error("natural_model_configuration_required");
+    this.url = endpoint(options.endpoint, this.streaming || options.allowInsecureLoopback);
     this.model = options.model.trim();
     if (!this.model || this.model.length > 200 || /[\r\n]/u.test(this.model)) throw new Error("natural_model_name_invalid");
     this.credential = options.credential;
@@ -62,22 +75,30 @@ export class ResponsesNaturalIntakeModel implements NaturalIntakeModelPort {
     const body = JSON.stringify({ model: this.model, instructions: input.system,
       input: [{ role: "user", content: [{ type: "input_text", text: input.user }] }],
       store: false, tools: [], tool_choice: "none", parallel_tool_calls: false,
+      ...(this.streaming ? { stream: true, reasoning: { effort: this.effort } } : {}),
       text: { format: { type: "json_schema", name: "natural_intake", strict: true, schema: input.responseSchema } },
     });
     if (Buffer.byteLength(body) > 128 * 1024) throw new Error("natural_model_input_limit");
-    let key: string;
-    try { key = this.credential().trim(); } catch { throw new Error("natural_model_credentials_unavailable"); }
-    if (!key || key.length > 16_384 || /[^\x21-\x7e]/u.test(key)) throw new Error("natural_model_credentials_unavailable");
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (!this.streaming) {
+      let key: string;
+      try { key = this.credential!().trim(); } catch { throw new Error("natural_model_credentials_unavailable"); }
+      if (!key || key.length > 16_384 || /[^\x21-\x7e]/u.test(key)) throw new Error("natural_model_credentials_unavailable");
+      headers.Authorization = `Bearer ${key}`;
+    }
+    const signal = AbortSignal.any([input.signal, AbortSignal.timeout(60_000)]);
     let response: Response;
     try {
-      response = await this.fetcher(this.url, { method: "POST", redirect: "error",
-        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body,
-        signal: AbortSignal.any([input.signal, AbortSignal.timeout(60_000)]),
-      });
+      response = await abortable(this.fetcher(this.url, { method: "POST", redirect: "error", headers, body, signal }), signal,
+        late => { void late.body?.cancel().catch(() => undefined); });
     } catch { throw new Error(input.signal.aborted ? "natural_model_cancelled" : "natural_model_transport_unavailable"); }
     if (!response.ok) {
       await response.body?.cancel().catch(() => undefined);
       throw new Error(`natural_model_http_${response.status}`);
+    }
+    if (this.streaming) {
+      try { return await readOpenCodexStream(response, this.model, this.effort, signal); }
+      catch (error) { if (input.signal.aborted) throw new Error("natural_model_cancelled"); throw error; }
     }
     let raw: unknown;
     try { raw = await boundedBody(response); } catch (error) {
@@ -107,6 +128,13 @@ export function configuredNaturalIntake(environment: NodeJS.ProcessEnv): ModelNa
   const model = environment.OMB_NATURAL_INTAKE_MODEL?.trim();
   const url = environment.OMB_NATURAL_INTAKE_ENDPOINT?.trim();
   const file = environment.OMB_NATURAL_INTAKE_CREDENTIAL_FILE?.trim();
+  const transport = environment.OMB_NATURAL_INTAKE_TRANSPORT?.trim() || "responses";
+  if (transport === "opencodex_local") {
+    if (!model || !url || file) throw new Error("natural_model_configuration_required");
+    return new ModelNaturalIntakeInterpreter(new ResponsesNaturalIntakeModel({ model, endpoint: url, transport,
+      reasoningEffort: environment.OMB_NATURAL_INTAKE_REASONING_EFFORT?.trim() || "medium" }));
+  }
+  if (transport !== "responses" || environment.OMB_NATURAL_INTAKE_REASONING_EFFORT) throw new Error("natural_model_configuration_required");
   if (!model || !url || !file || !isAbsolute(file)) throw new Error("natural_model_configuration_required");
   return new ModelNaturalIntakeInterpreter(new ResponsesNaturalIntakeModel({ model, endpoint: url,
     allowInsecureLoopback: environment.OMB_NATURAL_INTAKE_ALLOW_LOOPBACK_HTTP === "1",

@@ -1,5 +1,27 @@
 # 非生产模型配置（显式启用）
 
+## OpenCodex 本机无密钥模式
+
+Owner 本次选择为 OpenCodex、`gpt-6-astra`、`medium`，不是 OpenCode。无需修改 OpenCode 启动器或生成 API 密钥。三个角色分别显式配置；不要使用本文下方凭据挂载叠加模板来启动该模式。
+
+自然解释配置：
+
+```sh
+OMB_NATURAL_INTAKE_ENABLED=1
+OMB_NATURAL_INTAKE_TRANSPORT=opencodex_local
+OMB_NATURAL_INTAKE_MODEL=gpt-6-astra
+OMB_NATURAL_INTAKE_ENDPOINT=http://127.0.0.1:10100/v1/responses
+OMB_NATURAL_INTAKE_REASONING_EFFORT=medium
+```
+
+验收映射仍需 `OMB_ACCEPTANCE_MAPPING_ENABLED=1` 和显式 `OMB_ACCEPTANCE_MAPPING_POLICY_REVISION`。对于 `OMB_ACCEPTANCE_MAPPING_PROPOSER` 和 `OMB_ACCEPTANCE_MAPPING_VERIFIER`，分别设置同样的 `_TRANSPORT`、`_MODEL`、`_ENDPOINT`、`_REASONING_EFFORT` 后缀，构造独立无历史请求。此模式不得设置对应 `_CREDENTIAL_FILE`；默认传输仍为 `responses`，只有显式选择才允许不提供凭据。拼错传输名或非法推理值拒绝启动，不静默回退。
+
+无密钥模式只支持字面 `127.0.0.1` 或 `[::1]` 的 HTTP `/v1/responses`，禁止远端/带认证 URL/查询参数/重定向。没有关闭 OpenCodex 本身的认证或改变服务权限；若所配实例要求认证，请求会失败而非绕过。请求固定无工具、无会话复用且不存储，SSE 全部证据核对后才产生 JSON 结果。
+
+本机生产适配器的最小真实 Astra/medium 结构化请求已通过；完整自动化结果见 VERIFY.md。此示例未启用或部署任何服务。Docker 内的 `127.0.0.1` 指容器自己，**不能直接照抄当宿主 OpenCodex 地址**；容器接入方式、真实文档与六类试点仍需验证，不把无密钥模式放宽到远端解决。
+
+## 既有凭据模式
+
 默认 `compose.yaml` 不启用自然解释或验收映射；新增 `compose.models.yaml` 是可选叠加模板，不会自行部署。只有取得唯一 Owner 对所用模型服务、费用和凭据使用的明确授权后，才可以在非生产试点使用。不要借用其他功能或 Codex 登录的凭据。
 
 headless 验收映射配置：`OMB_ACCEPTANCE_MAPPING_ENABLED=1`、`OMB_ACCEPTANCE_MAPPING_POLICY_REVISION`，以及 `PROPOSER` 和 `VERIFIER` 各自的 `OMB_ACCEPTANCE_MAPPING_<ROLE>_MODEL`、`_ENDPOINT`、`_CREDENTIAL_FILE`。端点默认仅 HTTPS，无凭据的 URL；凭据通过绝对路径指向已有、受信任所有者且 mode `0600` 的文件，不通过 API_KEY 环境变量传正文。

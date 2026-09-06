@@ -2,6 +2,11 @@
 
 ## 当前状态
 
+- 最新实现批次（2026-09-06，最高优先）：原生 Goal 本轮查询为 active；上一轮真实无密钥连通为 progress，本轮完成产品流式适配并通过完整验证。自然解释及独立 Proposer/Verifier 工厂现可显式选 opencodex_local，不要求凭据文件，限定字面本机回环；请求发送指定模型与 medium，返回核对精确模型/强度和完整事件证据，不使用部分文本。旧凭据模式保留，配置混用/拼写错误/非法端点不降级。
+- 实际证据：生产 ResponsesNaturalIntakeModel 对本机 OpenCodex 的 schema 请求在 86269/3d52ac exit 0 返回 {result:OK}，Astra/medium 由适配器完成门禁检查。新旧模式相关三文件 44 项通过；完整链 27697/c3c563 exit 0，主集 275 文件通过/1 跳过、2949 项通过/18 跳过，448.03 秒；类型检查、独立服务端编译、broker/桌面/打包启动及 9 代理路径全部通过。所有命令终态，观察存 opencodex-adapter-full-output/last 与 opencodex-production-adapter-live。
+- 本批增加有界 SSE 解析及取消/迟到响应清理、配置和独立上下文测试、四份状态文档/模型配置说明；验证通过后仅本地提交本任务九个文件，不 push，用户 AGENTS.md/outputs 保留。没有实际启用/重建钉钉试点、修改全局客户端/身份/凭据或替换模型。新增模式通过既有工厂接线，但尚未在运行容器启用。
+- 恢复入口：先核实本批提交，再用真实模型核对自然需求/归并/验收映射语义，解决 Docker 到宿主模型的受控连接；不能把容器回环当宿主地址，也不能放开无密钥远程访问。真实文档/群事件授权、固定解析镜像及强隔离、六类群聊、独立 supervisor/主机重启和 Owner 验收仍未完成，Goal 不标 complete。无需再请求 OpenCode 修复或模型密钥。
+
 - 最新用户纠正（2026-09-06，最高优先）：使用的是 **OpenCodex，不是 OpenCode**。OpenCode 启动器认证修复属于误走方向，撤销该修复计划和授权请求，不修改启动器/全局包、不再以其报错阻塞本任务。模型固定 `gpt-6-astra`、推理 `medium`、无需用户提供密钥。原生 Goal 本轮查询仍返回 blocked（旧状态），没有可用于手工 resume 的状态工具，未虚称已修改原生状态；后续续办应按此新输入和真实进展重新审计，不延用旧认证阻塞。
 - 真实 OpenCodex 连通已验证：`opencodex access endpoints --json` 确认本机 `http://127.0.0.1:10100/v1/responses`；36610/239e91 对外模型清单含 Astra/medium。无 Authorization、无密钥读取、无业务数据、无工具的最小真实请求在 85096/8c9cba 返回 HTTP 200，流式 delta/done 文本均为 OK，response.completed 指明 model=gpt-6-astra、effort=medium。此前 56403/855bcf 已确认成功终态，但 completed.output 为空，不能仅靠该字段提取正文。
 - 当前真正的产品接入缺口：已有 ResponsesNaturalIntakeModel 强制 credential 文件、默认非流式 JSON，也没有发送 reasoning.effort；OpenCodex 实测要求 input 为列表和 stream=true。下一实现批次需先补测试：显式且仅受信任 loopback 的无密钥 OpenCodex 模式、有界增量 SSE 读取及真实 done/completed 语义、严格 medium 请求、取消/错误/截断/非文本工具事件拒绝，保留现有 HTTPS+凭据路径和独立验收上下文，不把目录或最小 OK 测试当产品闭环通过。

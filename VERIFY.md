@@ -1,5 +1,14 @@
 # Meta 协作验证记录
 
+## 2026-09-06 产品 OpenCodex 流式适配完整验证
+
+- TDD：276aa0 exit 1，新文件 22 失败/6 通过，其中 1 项为沙箱 listen EPERM（环境阻碍），其他失败复现未支持显式本地流式模式/工厂无密钥配置。获准本机套接字测试后 1142/ac33ae 三文件 42 项通过，778d25 exit 0 包含 pnpm typecheck。初次执行审查超时未启动，唯一重试成功，未把环境错误当业务红灯。
+- 边界 TDD：3153/aa2306 exit 1，两项新增测试复现取消后迟到响应、错误 Content-Type 响应未清理。修复后 27697/cfe4f1 三文件 44 项通过，后续完整链在 c3c563 exit 0。主集 275 passed/1 skipped，2949 passed/18 skipped，448.03s；broker7、updater15、viewer5、package-link2、save-file10，打包服务无可达 node_modules 启动、9 路代理、类型检查和独立编译/diff 全部通过。
+- 完整命令：`pnpm exec vitest run server/collaboration/operations/opencodex-model.test.ts server/collaboration/operations/natural-intake-model.test.ts server/collaboration/operations/acceptance-mapping-model.test.ts && pnpm typecheck && pnpm test && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-opencodex-stream-typecheck && git diff --check`。不改变旧断言/超时，不把跳过测试算通过。
+- 真实模型检查：86269/3d52ac exit 0，直接调用生产适配器，指定 opencodex_local、gpt-6-astra、medium、现有本机 /v1/responses，无凭据/Authorization；系统要求返回简单 JSON Schema，user 仅 Set result to OK，结果 {result:OK}。生产解析器已核对流的消息/text done/completed、响应身份和实际 model/effort；不是只读模型目录或假 fetch。该检查先于两项响应清理修复，最终清理版本由完整回归覆盖。
+- 覆盖：真实本机 HTTP 请求、JSON Schema/消息数组/stream/no-tools/no-store、跨块中文 UTF-8/CRLF、空 completed.output 的完整流证据；模型/强度/响应身份/消息归属不符、拒绝/工具/错误/中断/后续矛盾/重复结束/缺结束/非空冲突输出、畸形帧/错误类型/超量/取消及迟到 body 清理；未知传输/混合凭据/非回环/URL 能力拒绝，独立复核上下文及策略传输/强度绑定。旧 HTTPS+文件凭据模式回归通过。
+- 证据基于 116c0e2 加本批四个业务/测试文件；观察存 opencodex-adapter-full-output/last、opencodex-production-adapter-live，所有句柄终态。说明文档后续更新不改变已测代码，另做 diff 检查。没有部署、改全局包/密钥/身份或发送真实群任务，不能宣称 Docker 接入、真实复杂语义和六类产品场景完成。
+
 ## 2026-09-06 OpenCodex Astra/medium 无密钥真实连通通过
 
 - 用户明确纠正 OpenCodex（非 OpenCode）；此前 OpenCode launcher 管理认证问题不是所需路径，不再请求修复该启动器。e426bc 显示 OpenCodex 公开接口地址 `http://127.0.0.1:10100/v1/responses`；36610/239e91 exit 0，对外模型目录含 gpt-6-astra 与 medium。接口查询走现有 CLI，未调用 key 子命令或输出密钥。
