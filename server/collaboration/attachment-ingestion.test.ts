@@ -25,7 +25,7 @@ import { FetchDingTalkAttachmentDownloader } from "../integrations/dingtalk/atta
 import { DingTalkSessionReplyRegistry } from "../integrations/dingtalk/reply-router.ts";
 import { LocalOwnerRegistry } from "./owner.ts";
 import { recoverAttachmentProjection } from "./attachment-projection-recovery.ts";
-import { isCurrentProjectionFeedback } from "./attachment-projection-retry.ts";
+import { claimAttachmentProjection, finishAttachmentProjection, isCurrentProjectionFeedback } from "./attachment-projection-retry.ts";
 import { InboundMessageProcessor } from "./inbound.ts";
 import type { DingTalkInboundMessage } from "../integrations/dingtalk/types.ts";
 import { proactiveDestination } from "./delivery-routing.ts";
@@ -369,9 +369,14 @@ describe("AttachmentIngestionCoordinator", () => {
     reject(new Error("late secret detail"));
     await rejected;
     const db = new DatabaseSync(setup.databaseFile);
-    expect(db.prepare("SELECT count(*) AS n FROM collaboration_attachment_projection_failures").get()).toEqual({ n: 0 });
-    expect(db.prepare("SELECT count(*) AS n FROM collaboration_outbox").get()).toEqual({ n: 0 });
-    expect(row(setup.databaseFile).evidence_projected_at).toBe(mode === "aborted" ? null : 62000);
+    expect(db.prepare("SELECT count(*) AS n FROM collaboration_attachment_projection_failures").get()).toEqual({ n: mode === "aborted" ? 0 : 1 });
+    expect(db.prepare("SELECT count(*) AS n FROM collaboration_outbox").get()).toEqual({ n: mode === "aborted" ? 0 : 1 });
+    expect(row(setup.databaseFile).evidence_projected_at).toBeNull();
+    if (mode === "superseded") {
+      await new AttachmentIngestionCoordinator({ ...setup, downloader: { download }, onEvidence() {} }).process([], 63000);
+      expect(row(setup.databaseFile).evidence_projected_at).toBe(63000);
+      expect(db.prepare("SELECT count(*) AS n FROM collaboration_attachment_projection_failures").get()).toEqual({ n: 1 });
+    }
     db.close();
   });
 
@@ -385,8 +390,10 @@ describe("AttachmentIngestionCoordinator", () => {
     expect(db.prepare("SELECT count(*) AS n FROM collaboration_attachment_projection_failures").get()).toEqual({ n: 0 });
     expect(row(setup.databaseFile).evidence_projected_at).toBeNull();
     db.exec("DROP TRIGGER reject_projection_feedback");
-    await expect(coordinator.process([], 62000)).rejects.toThrow("callback failed");
+    await coordinator.process([], 62000);
     expect(db.prepare("SELECT count(*) AS n FROM collaboration_attachment_projection_failures").get()).toEqual({ n: 1 });
+    await expect(coordinator.process([], 63000)).rejects.toThrow("callback failed");
+    expect(db.prepare("SELECT count(*) AS n FROM collaboration_attachment_projection_failures").get()).toEqual({ n: 2 });
     expect(() => db.exec("DELETE FROM collaboration_attachment_projection_failures")).toThrow();
     db.close();
   });
@@ -416,6 +423,71 @@ describe("AttachmentIngestionCoordinator", () => {
     expect(rendered).toContain("需求整理未完成");
     expect(rendered).not.toContain(WORK_ITEM_ID);
     db.close();
+  });
+
+  it("counts interrupted projection claims across restarts and stops after three without rereading the attachment", async () => {
+    const setup = context([resource()]), bytes = Buffer.from("persisted bug description");
+    const download = vi.fn(async (): Promise<DingTalkAttachmentDownloadResult> => ({ ok: true, bytes, sha256: hash(bytes) }));
+    await new AttachmentIngestionCoordinator({ ...setup, downloader: { download } }).process([capability()], 1000);
+    const db = new DatabaseSync(setup.databaseFile), onEvidence = vi.fn();
+    try {
+      const id = (db.prepare("SELECT id FROM collaboration_attachments").get() as { id: string }).id;
+      const claims: string[] = [];
+      for (const now of [2000, 64000, 128000]) {
+        const token = claimAttachmentProjection(db, id, now, () => {});
+        expect(token).not.toBeNull(); claims.push(token!);
+        // Simulate process exit by leaving its durable claim without a callback result.
+        await new AttachmentIngestionCoordinator({ ...setup, downloader: { download }, onEvidence }).process([], now + 60000);
+        expect(onEvidence).not.toHaveBeenCalled();
+        expect(db.prepare("SELECT count(*) AS n FROM collaboration_attachment_projection_failures").get()).toEqual({ n: claims.length });
+        expect(() => finishAttachmentProjection(db, { attachmentId: id, token: token!, now: now + 60000, assertActive() {} })).toThrow("attachment_projection_claim_superseded");
+      }
+      for (const now of [200000, 300000]) await new AttachmentIngestionCoordinator({ ...setup, downloader: { download }, onEvidence }).process([], now);
+      expect(claimAttachmentProjection(db, id, 300000, () => {})).toBeNull();
+      expect(onEvidence).not.toHaveBeenCalled(); expect(download).toHaveBeenCalledTimes(1);
+      expect(db.prepare("SELECT claim_token FROM collaboration_attachment_projection_failures ORDER BY sequence").all())
+        .toEqual(claims.map(claim_token => ({ claim_token })));
+      const notices = db.prepare("SELECT payload_json FROM collaboration_outbox WHERE source_event_id LIKE '%:projection:%'").all() as Array<{ payload_json: string }>;
+      expect(notices).toHaveLength(2);
+      const reply = JSON.stringify(renderDingTalkSessionMessage(JSON.parse(notices[1]!.payload_json)));
+      expect(reply).toContain("连续 3 次"); expect(reply).toContain("已保留");
+      expect(reply).not.toMatch(/修改完成|读取失败|WI-/);
+      expect(row(setup.databaseFile)).toMatchObject({ ingest_state: "ready", evidence_projected_at: null });
+      const registry = new LocalOwnerRegistry(setup.databaseFile);
+      registry.bootstrap({ senderCorpId: "test-corp", senderStaffId: "test-owner", now: 300000 }); registry.close();
+      db.exec("INSERT INTO collaboration_conversation_aliases(source,external_id,conversation_id,created_at) VALUES('dingtalk','external-C1','C1',300000)");
+      const message: DingTalkInboundMessage = { sourceEventId: "resume-expired", transportMessageId: "transport-resume-expired", conversationId: "external-C1", addressedToBot: true,
+        text: "继续整理附件", sender: { senderCorpId: "test-corp", senderStaffId: "test-owner", senderId: "test-sender", displayName: "Owner" }, receivedAt: 300001 };
+      expect(recoverAttachmentProjection(db, { ...message, sourceEventId: "member-resume", sender: { ...message.sender, senderStaffId: "member" } }, 300001, () => {})).toMatchObject({ allowed: false });
+      expect(recoverAttachmentProjection(db, message, 300001, () => {})).toMatchObject({ allowed: true, duplicate: false });
+      expect(recoverAttachmentProjection(db, message, 300001, () => {})).toMatchObject({ allowed: true, duplicate: true });
+      await new AttachmentIngestionCoordinator({ ...setup, downloader: { download }, onEvidence }).process([], 300002);
+      expect(onEvidence).toHaveBeenCalledTimes(1); expect(download).toHaveBeenCalledTimes(1);
+      expect(row(setup.databaseFile).evidence_projected_at).toBe(300002);
+      expect(db.prepare("SELECT count(*) AS n FROM collaboration_attachment_projection_failures").get()).toEqual({ n: 3 });
+      expect(db.prepare("SELECT count(*) AS n FROM collaboration_attachment_projection_recoveries").get()).toEqual({ n: 1 });
+    } finally { db.close(); }
+  });
+
+  it("does not reclaim a live projection and atomically rolls back expired-claim feedback failures", async () => {
+    const setup = context([resource()]), bytes = Buffer.from("already extracted");
+    await new AttachmentIngestionCoordinator({ ...setup, downloader: { download: async () => ({ ok: true, bytes, sha256: hash(bytes) }) } }).process([capability()], 1000);
+    const db = new DatabaseSync(setup.databaseFile);
+    try {
+      const id = (db.prepare("SELECT id FROM collaboration_attachments").get() as { id: string }).id;
+      const token = claimAttachmentProjection(db, id, 2000, () => {})!;
+      expect(claimAttachmentProjection(db, id, 61999, () => {})).toBeNull();
+      expect(db.prepare("SELECT count(*) AS n FROM collaboration_attachment_projection_failures").get()).toEqual({ n: 0 });
+      db.exec("CREATE TRIGGER reject_expired_notice BEFORE INSERT ON collaboration_outbox BEGIN SELECT RAISE(ABORT,'notice_failed'); END");
+      expect(() => claimAttachmentProjection(db, id, 62000, () => {})).toThrow("notice_failed");
+      expect(db.prepare("SELECT evidence_projection_owner FROM collaboration_attachments").get()).toEqual({ evidence_projection_owner: token });
+      expect(db.prepare("SELECT count(*) AS n FROM collaboration_attachment_projection_failures").get()).toEqual({ n: 0 });
+      db.exec("DROP TRIGGER reject_expired_notice");
+      expect(claimAttachmentProjection(db, id, 62000, () => {})).toBeNull();
+      expect(db.prepare("SELECT count(*) AS n FROM collaboration_attachment_projection_failures").get()).toEqual({ n: 1 });
+      expect(claimAttachmentProjection(db, id, 62001, () => {})).toBeNull();
+      expect(claimAttachmentProjection(db, id, 63000, () => {})).not.toBeNull();
+    } finally { db.close(); }
   });
 
   it("backs off projection retries, then suppresses obsolete feedback after successful projection", async () => {

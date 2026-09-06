@@ -14,6 +14,15 @@ export function claimAttachmentProjection(db: DatabaseSync, attachmentId: string
   db.exec("BEGIN IMMEDIATE");
   try {
     assertActive();
+    const expired = db.prepare("SELECT evidence_projection_owner AS token FROM collaboration_attachments " +
+      "WHERE id=? AND ingest_state='ready' AND evidence_projected_at IS NULL AND evidence_projection_owner IS NOT NULL " +
+      "AND evidence_projection_expires_at<=?").get(attachmentId, now) as { token: string } | undefined;
+    if (expired) {
+      // Losing a process does not erase its attempt. Settle its unknown outcome
+      // and notice atomically before considering another claim.
+      settleAttachmentProjection(db, { attachmentId, token: expired.token, now, assertActive,
+        failure: new Error("attachment_projection_unavailable") });
+    }
     const state = retryState(db, attachmentId);
     let token: string | null = null;
     if (!state.stopped && state.nextAttemptAt <= now) {
@@ -29,11 +38,20 @@ export function claimAttachmentProjection(db: DatabaseSync, attachmentId: string
   } catch (error) { db.exec("ROLLBACK"); throw error; }
 }
 
-export function finishAttachmentProjection(db: DatabaseSync, input: {
+interface ProjectionSettlement {
   attachmentId: string; token: string; now: number; assertActive: () => void; failure?: unknown;
-}): void {
+}
+
+export function finishAttachmentProjection(db: DatabaseSync, input: ProjectionSettlement): void {
   db.exec("BEGIN IMMEDIATE");
   try {
+    settleAttachmentProjection(db, input);
+    db.exec("COMMIT");
+  } catch (error) { db.exec("ROLLBACK"); throw error; }
+}
+
+/** Called only inside the claim/finish transaction; never discards an old claim without evidence. */
+function settleAttachmentProjection(db: DatabaseSync, input: ProjectionSettlement): void {
     input.assertActive();
     if (!db.prepare("SELECT 1 FROM collaboration_attachments WHERE id=? AND ingest_state='ready' AND evidence_projected_at IS NULL AND evidence_projection_owner=?")
       .get(input.attachmentId, input.token)) throw new Error("attachment_projection_claim_superseded");
@@ -62,8 +80,6 @@ export function finishAttachmentProjection(db: DatabaseSync, input: {
       db.prepare("UPDATE collaboration_attachments SET evidence_projected_at=?,evidence_projection_owner=NULL,evidence_projection_expires_at=NULL WHERE id=?")
         .run(input.now, input.attachmentId);
     }
-    db.exec("COMMIT");
-  } catch (error) { db.exec("ROLLBACK"); throw error; }
 }
 
 export function isCurrentProjectionFeedback(db: DatabaseSync, message: { source_event_id: string; aggregate_id: string; aggregate_version: number }): boolean {
