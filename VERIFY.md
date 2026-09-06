@@ -1,5 +1,30 @@
 # Meta 协作验证记录
 
+## 2026-09-06 自然需求契约完整验证终态与 Docker 拒绝原因
+
+- 57677/d17126 exit 0：完整命令为 `pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-natural-answer-contract-typecheck && git diff --check`。275 文件通过/1 跳过，2958 项通过/18 跳过，2976 注册，457.59 秒；broker7、updater15、viewer5、package-link2、save-file10、打包无 node_modules 启动及9代理路径通过，后续类型与独立编译全部完成。存 natural-answer-full-final，原句柄终态。
+- 证据对应 c431d4b 加本批 natural-intake.ts/test.ts 改动；四份状态文档与模型说明不影响已验证行为。真实模型/SQLite 的入账、重放、重启及回答已在上一节逐项记录，不代表真实群或执行交付完成。此前未分类的模型失败不作已找到根因处理。
+- Docker d2a44a：显式 context colima-openmausbot-pilot；只读 ps 和格式化 inspect，不读取 Env/Secret。主容器 healthy、docker_default 网络，其余历史容器 exited，未修改。93213d exit0 仅表示探测命令完成；HTTP403/error.code=origin_rejected 明确为失败。
+- 来源核对 5b33d1：已安装 `/opt/homebrew/lib/node_modules/@bitkyc08/opencodex/src/server/auth-cors.ts`，isAllowedRequestOrigin 在无认证模式先要求 loopback Host；isApiAuthRequired 以 bind hostname 判断，非 loopback 服务必须有数据面凭据。源码另明确支持可信 SSH 本机转发的端口差异，但不意味着任意容器别名被授权。本轮未伪造 Host、关闭防护、增加凭据或改全局配置。
+- 受限本机通道会授予指定试点调用当前模型的能力，需 Owner 明确同意后实施与验证；不擅自扩成公网监听或全局无认证访问。当前新审批待答，Goal 保持 active 而非 complete/blocked。
+
+## 2026-09-06 业务问题输出 schema 与真实多轮接线
+
+- 新增三项生成约束测试；初始 af327d 的两项因测试参数表写法错误，修正表后 a26566 exit 1 三项均按预期因无枚举/maxItems=0 失败。实现后 65676/3d1419 exit 0：natural-intake/natural-association 两文件 56 项、pnpm typecheck 通过。原 reserved question/answer、来源/版本/Owner/重放/上下文完整性断言保留。
+- 7852/210e45 exit 0：本机无密钥 OpenCodex gpt-6-astra/medium，生产解释器/服务/真实 SQLite；明确登录提示需求入账、保留原话和两条验收、重放不变；另一合成群模糊页面需求重启后 applied、waiting_clarification，追问页面范围和可用性两个问题，Owner 未绑定。无执行器或 DingTalk transport，不能称线上完成。
+- 同一临时库追加自然回复：77404/cf8ad5 exit 0，answers 仅包含原 natural-page / natural-pain-point，quotes 精确对应用户补充，questions=[]，两项旧疑问均消除，重复事件未改变快照。前一 21522/6121fd exit 1 未取到 applied，无错误分类，随后同一消息第二次处理通过；原因未确定，不归因为本次修复或宣布稳定性已解决。
+- 97481/29d1d0 是探测脚本前提错误：明确需求已成功，但同群第二条模糊输入可进入关联澄清，没有 intake job。独立 intake/restart 测试改用另一合成群，不修改产品新事项判定、权限或关联规则。
+- 全量验证正在运行：session 57677，最近 7fd199 无退出码并继续输出通过的 executor/candidate-verification 等套件。命令 `pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-natural-answer-contract-typecheck && git diff --check`。本批不能记完整通过、不能提交，恢复时轮询原句柄。旧 61494 只覆盖上轮版本，不代替当前完整结果。
+
+## 2026-09-06 自然目标确认契约与真实持久化接线复测
+
+- TDD f30f2c exit 1：新增精确目标契约测试失败，25 项通过；补充模型指令后相关三文件 83 项通过。首次组合执行 447d70 exit 1 的唯一失败为沙箱禁止 HTTP listen，82 项通过，未运行其后类型检查；经明确套接字权限运行后通过，未修改断言。
+- 完整链 61494/6ee015 exit 0：`pnpm vitest run server/collaboration/natural-intake.test.ts server/collaboration/natural-association.test.ts server/collaboration/operations/opencodex-model.test.ts && pnpm typecheck && pnpm test && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-natural-contract-typecheck && git diff --check`。包含主集、broker、桌面和打包启动/9 代理路径。观察终态存 natural-contract-full-last；这仅证明本地回归，不能覆盖下面的真实模型失败。
+- 真实直接解释 71179：8d1ca2 输出 clear_requirement valid=true，目标逐字保留、两项业务验收、无追问；c8b7f5 exit 0 输出 ambiguous_requirement valid=true，泛化优化目标原文、无验收、两个页面/可用性澄清。临时 harness 捕获错误，exit 0 本身不是通过证据，以上是逐项输出核对。此前同脚本 HTTP 502 未重现，原因不明。
+- 更接近生产的持久化探测失败：52884/555cbf、89311/9d33a6 均 exit 1，首条明确需求 job=pending 而非 applied。第二次在模型端口加分类，确认 natural_intake_answer_not_pending：answers 中错误加入 questionId=natural-input-pending。生产验证器正确拒绝，未写入已确认目标或伪造修改完成；后续模糊需求/重启断言未执行，不能记通过。首个失败无分类，不能推断同因。脚本 /tmp/openmausbot-astra-durable-probe.mjs 保留，终态存 natural-contract-durable-last。
+- 前一探索：Docker context colima-openmausbot-pilot，旧 pilot healthy；宿主两种别名 health 200，host.docker.internal:10100/v1/models 403。无实际容器/网络/配置改动，此证据不证明模型 API 可访问。真实归并样例曾正确选 WI-LOGIN，但六类真实钉钉试点仍未验收。
+- 保留六个未提交任务文件，因真实接线失败不自动 commit；恢复需修复系统状态与业务问题输出契约、通过真实探测和完整回归后再提交。不读取密钥、不触及生产或用户文件，不把本地测试成功当最终目标完成。
+
 ## 2026-09-06 产品 OpenCodex 流式适配完整验证
 
 - TDD：276aa0 exit 1，新文件 22 失败/6 通过，其中 1 项为沙箱 listen EPERM（环境阻碍），其他失败复现未支持显式本地流式模式/工厂无密钥配置。获准本机套接字测试后 1142/ac33ae 三文件 42 项通过，778d25 exit 0 包含 pnpm typecheck。初次执行审查超时未启动，唯一重试成功，未把环境错误当业务红灯。

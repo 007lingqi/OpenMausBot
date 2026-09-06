@@ -22,6 +22,8 @@ OMB_NATURAL_INTAKE_REASONING_EFFORT=medium
 
 ## 既有凭据模式
 
+2026-09-06 试点检查：容器通过 `host.docker.internal` 可达健康接口，但 `/v1/models` 返回 `403 origin_rejected`。这是 OpenCodex 无密钥数据面的本机来源检查，不是“健康即模型可用”。不要用手工 Host 覆写、关闭检查或扩大无认证监听解决。容器模型接入须单独设计和验证受限本机通道，并取得 Owner 对该调用能力的明确授权；当前没有配置或部署该通道。
+
 默认 `compose.yaml` 不启用自然解释或验收映射；新增 `compose.models.yaml` 是可选叠加模板，不会自行部署。只有取得唯一 Owner 对所用模型服务、费用和凭据使用的明确授权后，才可以在非生产试点使用。不要借用其他功能或 Codex 登录的凭据。
 
 headless 验收映射配置：`OMB_ACCEPTANCE_MAPPING_ENABLED=1`、`OMB_ACCEPTANCE_MAPPING_POLICY_REVISION`，以及 `PROPOSER` 和 `VERIFIER` 各自的 `OMB_ACCEPTANCE_MAPPING_<ROLE>_MODEL`、`_ENDPOINT`、`_CREDENTIAL_FILE`。端点默认仅 HTTPS，无凭据的 URL；凭据通过绝对路径指向已有、受信任所有者且 mode `0600` 的文件，不通过 API_KEY 环境变量传正文。

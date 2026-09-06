@@ -2,6 +2,23 @@
 
 ## 当前状态
 
+- 最新验证收束（2026-09-06，优先于下方）：接续原 session 57677，d17126 确认 exit 0；主集 275 文件通过/1 跳过、2958 项通过/18 跳过，457.59 秒；broker/桌面/打包无 node_modules 启动、9 代理路径、pnpm typecheck、独立服务端编译和 diff 全通过。原完整运行已终态，不再轮询或重启。上轮为 progress，本轮完成终态验证并查明 Docker 拒绝原因，原生 Goal active。
+- 自然需求原文契约与可回答问题 schema 修复已由完整回归及前轮真实模型/SQLite 入账、重放、重启、澄清回答证据覆盖。保存本地批次，不 push；以 Git 实际提交结果为准。此前真实调用偶发失败原因仍未知，不据成功重试宣称稳定性问题永久消失。
+- Docker 只读核实 d2a44a：已授权 colima-openmausbot-pilot 中主 pilot healthy，其他历史容器已退出，未动任何容器。93213d：模型目录 HTTP403/error.code=origin_rejected，正文 cross-origin data-plane request blocked。已安装 OpenCodex auth-cors.ts 的无认证策略检查 Host 为 loopback；host.docker.internal 不符合。health 可达不代表数据 API 有权限。
+- 下一恢复入口：需唯一 Owner 明确允许为指定非生产 Colima 试点增加受限本机模型通道，使该容器可调用当前 OpenCodex；不伪造 Host 绕过检查、不开放公网、不改密钥/身份或全局访问权限。获得批准后设计并验证通道隔离与生命周期，再接入指定 Astra/medium。未获批准不自行开通，也不把自动 Goal 续办视作授权。当前首次提出此边界审批，不满足 blocked 连续三轮条件。
+- 全目标仍未完成：Docker 数据通道、真实文档/群事件入口、固定镜像隔离及六类真实场景、独立 supervisor/主机恢复与 Owner 最终验收继续保留。没有部署本批；用户 AGENTS.md/outputs 不修改、不提交。
+
+- 最新接续（2026-09-06，优先于下方）：上一轮为 progress，本轮原生 Goal active，新增生成 schema 与运行时共享的可回答问题判定；当前业务问题才进入枚举，无符合项时 answers.maxItems=0。保留系统完整性上下文与独立拒绝门禁。自然目标原文契约一并保留，未放宽权限或改群关联规则。
+- 本地定向 65676/3d1419 exit 0：两文件 56 项及 pnpm typecheck 通过。真实模型/SQLite 7852/210e45 exit 0：明确需求入账、重放不变、另一合成群模糊需求在重启后恢复并追问两项。追加自然回答 77404/cf8ad5 exit 0：准确回答原 natural-page 与 natural-pain-point、无新问题、原疑问消除、重放不变。均无钉钉发送/执行器，不等于六类群试点通过。
+- 失败记录：97481/29d1d0 中明确需求已通过，但脚本误假定同群模糊消息必然立即创建 intake job，读到 undefined；改为独立合成群后通过，未绕开产品关联逻辑。21522/6121fd 的追加回答 job=pending，未捕获传输原因；同一事项第二次尝试通过，原因未知，不能称永久解决模型稳定性。
+- 正在运行的唯一操作：完整验证 session 57677，最近 7fd199 返回 session_id、无退出码，仍活跃；前序 comms 用时 176 秒但通过，不因长等待重启。命令为 pnpm test 后接 typecheck、独立服务端编译到 /tmp/openmausbot-natural-answer-contract-typecheck 和 diff 检查。下次首先轮询这个句柄取得终态，不能重新启动整套测试或套用旧完整结果。
+- 当前六个任务文件仍未提交；全量通过后仅提交这六个文件，不 push，不混入用户 AGENTS.md/outputs。真实探测脚本 /tmp/openmausbot-astra-durable-probe.mjs、/tmp/openmausbot-astra-followup-probe.mjs 与临时合成库保留。按每批 20 工具轮上限预留收束；本批未部署，Goal 继续 active。之后仍需 Docker 模型访问（先前 API403）、真实文档/群入口、隔离和六类真实场景与 Owner 最终验收。
+
+- 最新批次（2026-09-06，优先于下方）：本轮原生 Goal 为 active。上一检查点仅状态汇报，分类 no progress；本轮完成原文确认契约修复、测试及新的真实模型证据，分类 progress。明确需求真实解释已成功，模糊需求给出两个关键问题；没有放宽原文/权限校验。完整本地链 61494/6ee015 exit 0，所有测试/类型/独立编译/打包检查终态。
+- 仍未通过的真实接线测试：临时 /tmp/openmausbot-astra-durable-probe.mjs 使用生产服务、真实 Astra 和临时 SQLite（无钉钉发送或执行器）。52884/555cbf exit 1 仅见 pending，原因未知；加错误分类后 89311/9d33a6 exit 1 明确为 natural_intake_answer_not_pending，模型错误回答了系统 natural-input-pending 标记。目标原文和两条验收正确，不能据此把入账流程记通过；未绕过门禁。
+- 恢复入口：先为系统 natural-input-pending / natural-context-incomplete 不可回答的模型输出契约补测试，明确区分业务澄清与系统状态，保留现有强校验；复测真实持久化/重放/重启，再完整回归。当前六个任务文件未提交，因为真实接线测试仍失败；用户 AGENTS.md/outputs 不动。临时脚本保留，所有会话终态，无需重启或轮询旧句柄。
+- Docker 上一探索证据仍仅 health 200、模型目录接口 403；不能宣布模型已接入容器，也不拓宽无认证网络。实际群/文档入口、固定解析镜像隔离、六类试点及 Owner 人工验收仍待完成，未部署本批。按每批最多 20 工具轮收束，Goal 不标 complete 或 blocked。
+
 - 最新实现批次（2026-09-06，最高优先）：原生 Goal 本轮查询为 active；上一轮真实无密钥连通为 progress，本轮完成产品流式适配并通过完整验证。自然解释及独立 Proposer/Verifier 工厂现可显式选 opencodex_local，不要求凭据文件，限定字面本机回环；请求发送指定模型与 medium，返回核对精确模型/强度和完整事件证据，不使用部分文本。旧凭据模式保留，配置混用/拼写错误/非法端点不降级。
 - 实际证据：生产 ResponsesNaturalIntakeModel 对本机 OpenCodex 的 schema 请求在 86269/3d52ac exit 0 返回 {result:OK}，Astra/medium 由适配器完成门禁检查。新旧模式相关三文件 44 项通过；完整链 27697/c3c563 exit 0，主集 275 文件通过/1 跳过、2949 项通过/18 跳过，448.03 秒；类型检查、独立服务端编译、broker/桌面/打包启动及 9 代理路径全部通过。所有命令终态，观察存 opencodex-adapter-full-output/last 与 opencodex-production-adapter-live。
 - 本批增加有界 SSE 解析及取消/迟到响应清理、配置和独立上下文测试、四份状态文档/模型配置说明；验证通过后仅本地提交本任务九个文件，不 push，用户 AGENTS.md/outputs 保留。没有实际启用/重建钉钉试点、修改全局客户端/身份/凭据或替换模型。新增模式通过既有工厂接线，但尚未在运行容器启用。
