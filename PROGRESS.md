@@ -2,6 +2,9 @@
 
 ## 当前状态
 
+- 最新 Owner 输入与核查（2026-09-06，覆盖下方模型名未知结论）：用户明确模型 `gpt-6-astra`，无需密钥，继续使用中等推理。原生 Goal 已随新输入恢复 active，旧 blocked 审计不沿用。07f331 显示直接 OpenCode 仅有 OpenAI OAuth 且其目录没有 Astra；随后发现本机另有 OpenCodex 专用 `opencode` 启动入口。2a4cf2 确认代理 healthy，0e9e55 从当前有效 catalog 精确确认 `gpt-6-astra`、supported_in_api=true、支持 medium。此前根据直接 OpenCode 清单索取模型名的结论不完整，不再重复索取名称或截图。
+- 本轮 progress 为找到模型和实际接入阻碍：`opencodex opencode models opencodex` 在 5c2073 exit 1，入口被现有代理拒绝，提示管理认证缺失。独立 inspect catalog 可读，但 launcher 不能取得模型目录；没有真实模型调用，不能把目录声明当 medium 已执行证明。未启动/重启代理、未改登录/密钥/全局或项目配置、未部署。下一步需要唯一 Owner 明确授权修复 OpenCode 与本机代理的认证衔接，优先复用现有身份，不新增模型 API 密钥、不替换模型。完整六场景及镜像/文档/主机验收边界仍保留。
+
 - 阻塞收束（2026-09-06，最高优先）：原生 Goal 已标 blocked，不是 complete。环境复核、上一轮状态核对及本轮连续三轮仍缺指定 OpenCode GPT-6 Astra 的实际渠道/medium 证明、真实入口必要授权及可用可信解析镜像来源；本轮与上一轮均无实现进展，不将重复检查或记录计作 progress。已核实 HEAD 5513fb1，业务提交 2df0387 和完整回归 11501/f42bdf 保留，工作区仅用户 AGENTS.md/outputs；所有已知命令终态，无测试/构建待等待。
 - 恢复入口：Owner 提供 OpenCode 模型选择截图或完整 provider/model 标识（无需密钥）；固定解析镜像/依赖来源可用或网络恢复后继续真实隔离验证；新增文档/群事件通道仍需相应授权。恢复后重新审计阻塞，保留完整六场景、独立监督/主机恢复和最终 Owner 验收，不因本地通过缩小目标。不换模型、不改凭据/身份/网络、不操作其他容器、不重复无进展续跑。
 

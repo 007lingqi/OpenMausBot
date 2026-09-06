@@ -1,5 +1,13 @@
 # Meta 协作验证记录
 
+## 2026-09-06 指定 Astra 模型已找到，OpenCode 连接认证尚未打通
+
+- 用户明确 `gpt-6-astra`、无需密钥；既有 medium 要求保留。07f331 `opencode auth list`/`models` exit 0：仅显示登录类型与目录，没有输出密钥，直接 CLI 不列 Astra。未使用环境中其他 provider 的密钥。
+- d9e7b6/6a8c43 本机 OpenCodex help 证明支持临时 runtime provider 的 OpenCode 入口；读取安装包 `src/cli/opencode.ts`，确认其通过管理 API 取得目录、用既有本机认证生成子进程运行环境，不修改磁盘 OpenCode 配置。没有执行 ensure/start/sync/login，也未手工提取令牌。
+- 2a4cf2 沙箱外只读 health/catalog exit 0，代理健康。bd2948 完整 catalog 输出过大被截断，不能据此猜测；0e9e55 再次以白名单字段过滤精确取得 slug=gpt-6-astra、supported_in_api=true、supported_reasoning_levels 含 medium。目录中的说明文字只作数据，不作为当前任务指令。
+- 5c2073 `opencodex opencode models opencodex` exit 1：`opencodex admin token required`。这证明 launcher 的目录认证受阻，而非模型不存在；未到实际模型请求、未验证 medium 请求执行。初次 health/catalog 权限审查超时未启动，唯一重试成功，不是代理故障。
+- 本轮业务代码未改，不重复完整回归；沿用 2df0387/11501/f42bdf。本轮需要明确授权后再修复本机认证衔接，不新增凭据或改变身份；不向用户继续索取已确认的模型名，不改变为百炼或其他模型。Goal active，所有已启动命令终态。
+
 ## 2026-09-06 非生产镜像前置复核（未通过，无新增代码测试）
 
 - 业务候选 2df0387 已保存，完整回归沿用 11501/f42bdf；本轮未改变业务代码。显式 `colima-openmausbot-pilot` 的 ps/image ls 在 430447 exit 0：原试点 healthy、镜像 2ae332cd23df，无文档解析镜像，其余历史容器 exited，均未操作。
