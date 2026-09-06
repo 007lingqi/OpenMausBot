@@ -1,5 +1,11 @@
 # Non-production collaboration pilot runbook
 
+> Historical first-milestone procedure, not acceptance of the current PMO product goal.
+> For the current six real group scenarios and completion evidence, use
+> [PMO six-scenario runbook](pmo-six-scenario-runbook.md).
+> Mandatory Work Item syntax and manual acceptance below describe the legacy milestone;
+> they must not be imposed on ordinary low-risk work in the current product.
+
 This runbook validates the first milestone without granting merge or deployment authority. It has exactly one active Owner. Contributors may add requirements and evidence, but there is no second manager, administrator, approver, or co-signer.
 
 ## Safety boundaries

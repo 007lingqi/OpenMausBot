@@ -1,5 +1,11 @@
 # Meta 协作验证记录
 
+## 2026-09-06 当前产品验收范围审计（文档批次）
+
+- 代码基线469de46无业务改动。核对SPEC、旧试点手册及scripts/collaboration-pilot/report-schema.ts：旧v1报告没有当前六类单独门禁；标明旧报告不能证明PMO目标完成，不更改旧数据或补造证据。
+- e4e55e exit0：显式colima-openmausbot-pilot只读容器/镜像查询，旧服务healthy、没有解析器镜像缓存；aacd9c是默认沙箱socket权限失败，不是Docker服务故障。92084/d5d272 exit28：匿名官方Registry HEAD在域名解析阶段超时。没有业务副作用；本轮不再盲重试网络。
+- 43565/2163e7 exit0：Node只读检查两份手册本地链接及六类必测行、pnpm typecheck和git diff --check通过。仅证明文档结构与类型检查；无六场景实际执行。本轮没有重跑完整测试，沿用业务代码未变的88277/a3ced9完整终态证据。
+
 ## 2026-09-06 运行配置批次完整回归终态
 
 - 10722/72b0ff exit0：pnpm vitest run server/env-path.test.ts，13通过7平台跳过。后台探测允许5000ms而断言默认等待更短是静态线索，但未取得失败时探测时序，不能确认为根因。没有改动PATH代码或测试，没有放宽断言。
