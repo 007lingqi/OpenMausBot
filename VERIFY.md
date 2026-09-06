@@ -1,5 +1,13 @@
 # Meta 协作验证记录
 
+## 2026-09-06 OpenCodex Astra/medium 无密钥真实连通通过
+
+- 用户明确纠正 OpenCodex（非 OpenCode）；此前 OpenCode launcher 管理认证问题不是所需路径，不再请求修复该启动器。e426bc 显示 OpenCodex 公开接口地址 `http://127.0.0.1:10100/v1/responses`；36610/239e91 exit 0，对外模型目录含 gpt-6-astra 与 medium。接口查询走现有 CLI，未调用 key 子命令或输出密钥。
+- 请求没有 Authorization 或其他认证头，不读取/复制登录凭据；仅 Content-Type:application/json，model=gpt-6-astra，reasoning.effort=medium，tools=[]，tool_choice=none，store=false，input 为只要求回复 OK 的消息数组，stream=true。未发送仓库/钉钉/文档内容。
+- 初始协议探测：cd4ba2/b958d5 返回 400 Input must be a list；4629bb 修正数组后返回 400 Stream must be set to true。不是认证失败。对应格式修正后 56403/855bcf HTTP 200 + response.completed、Astra/medium；完成事件未携带正文，因此独立文本核查 85096/8c9cba 确认 response.output_text.delta=OK、response.output_text.done=OK、response.completed model=gpt-6-astra/status=completed/effort=medium。命令均 exit 0，原 HTTP 400 不记为通过。
+- 最小测试使用 45 秒总取消信号及 256KiB 输出上限；首个成功核查尚未做跨 chunk UTF-8 连续解码，第二次文本核查使用持久 TextDecoder 的 stream 模式。这是连通证据，不是正式 SSE 适配器或自动化回归；后续产品实现仍须 TDD、全量门禁和真实语义评测。
+- 结果存 opencodex-astra-medium-smoke / opencodex-astra-medium-text-smoke。没有业务代码变更，未运行无变化全量测试、未部署、未更换全局客户端/凭据/身份。现有客户端尚未适配流式/medium/显式本地无密钥模式，不能宣称钉钉已使用该模型；原完整产品目标仍未完成。
+
 ## 2026-09-06 指定 Astra 模型已找到，OpenCode 连接认证尚未打通
 
 - 用户明确 `gpt-6-astra`、无需密钥；既有 medium 要求保留。07f331 `opencode auth list`/`models` exit 0：仅显示登录类型与目录，没有输出密钥，直接 CLI 不列 Astra。未使用环境中其他 provider 的密钥。

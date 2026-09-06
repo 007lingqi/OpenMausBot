@@ -2,6 +2,11 @@
 
 ## 当前状态
 
+- 最新用户纠正（2026-09-06，最高优先）：使用的是 **OpenCodex，不是 OpenCode**。OpenCode 启动器认证修复属于误走方向，撤销该修复计划和授权请求，不修改启动器/全局包、不再以其报错阻塞本任务。模型固定 `gpt-6-astra`、推理 `medium`、无需用户提供密钥。原生 Goal 本轮查询仍返回 blocked（旧状态），没有可用于手工 resume 的状态工具，未虚称已修改原生状态；后续续办应按此新输入和真实进展重新审计，不延用旧认证阻塞。
+- 真实 OpenCodex 连通已验证：`opencodex access endpoints --json` 确认本机 `http://127.0.0.1:10100/v1/responses`；36610/239e91 对外模型清单含 Astra/medium。无 Authorization、无密钥读取、无业务数据、无工具的最小真实请求在 85096/8c9cba 返回 HTTP 200，流式 delta/done 文本均为 OK，response.completed 指明 model=gpt-6-astra、effort=medium。此前 56403/855bcf 已确认成功终态，但 completed.output 为空，不能仅靠该字段提取正文。
+- 当前真正的产品接入缺口：已有 ResponsesNaturalIntakeModel 强制 credential 文件、默认非流式 JSON，也没有发送 reasoning.effort；OpenCodex 实测要求 input 为列表和 stream=true。下一实现批次需先补测试：显式且仅受信任 loopback 的无密钥 OpenCodex 模式、有界增量 SSE 读取及真实 done/completed 语义、严格 medium 请求、取消/错误/截断/非文本工具事件拒绝，保留现有 HTTPS+凭据路径和独立验收上下文，不把目录或最小 OK 测试当产品闭环通过。
+- 本轮没有改业务代码/凭据/身份/网络/运行容器，所有命令终态；原本地完整回归仍对应 2df0387。模型通道阻碍已解除，但产品工厂与 Docker 接线、真实文档/群事件授权、固定解析镜像、六类试点及 Owner 验收仍未完成。宿主回环地址不能直接视作 Docker 容器中的宿主地址，容器接入另需验证，不拓宽无密钥远端地址。
+
 - 最新阻塞收束（2026-09-06，覆盖下方 active/旧模型缺项结论）：原生 Goal 已标 blocked，非 complete。用户提供模型名称后的核查轮、只读诊断轮及本轮，连续三轮存在同一 OpenCode 启动器管理认证阻碍，修复授权尚未获得；前两轮取得新证据，本轮仅复核无进展，当前无进一步安全验证可打通该通道。不是模型名称未知：`gpt-6-astra`/medium 已由 0e9e55 确认，无需再次索取名称或模型密钥。
 - 只读诊断恢复入口：已安装启动器 `fetchOpencodeProxyModels` 向 `/api/models` 传入 `opencodeApiKey` 的普通服务准入凭证；成功的 `inspect catalog` 走 `runtimeRequest`→`runningProxyUpdateHeaders`，后者使用现有管理认证。服务端 `/api/*` 明确要求管理身份，符合 5c2073 拒绝结果。源码证据 10fcf0/b89768/5ac063，未读取令牌值或改装全局包。最小后续动作是获 Owner 明确授权后修正管理目录查询与模型子进程的凭据分离，不把管理令牌传给模型、不新增密钥、不放宽权限，再重跑原启动器及实际 medium 验证。安装包在产品仓库范围外，不能靠自动续跑推定修改授权。
 - 保存状态：业务提交 2df0387、完整回归 11501/f42bdf 及模型核查提交 6229912 保留；无运行中的命令或部署。真实文档/群事件授权、固定解析镜像、六类真实试点、独立 supervisor/主机恢复及 Owner 验收仍未完成。恢复后重新审计阻塞，不延用本次三轮计数。
