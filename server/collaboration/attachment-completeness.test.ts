@@ -14,6 +14,7 @@ import { validateNaturalIntakeProposal, type NaturalIntakeRequest, type NaturalI
 import { attachmentExcerpts, readNaturalAttachmentContext } from "./attachment-completeness.ts";
 import { AttachmentStore } from "./attachment-store.ts";
 import { DockerDocumentExtractor } from "./operations/document-extractor.ts";
+import { isCurrentAttachmentFeedback } from "./attachment-feedback.ts";
 
 const scratch: string[] = [];
 afterEach(() => { for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true }); });
@@ -67,6 +68,104 @@ async function harness(text: string, options: { partial?: boolean; other?: boole
 const definition = { goal: "修复登录反馈", goalConfirmed: true, acceptanceConditions: [{ description: "显示错误原因", observation: "登录失败可看到原因" }], blockingAmbiguities: [] };
 
 describe("authoritative attachment completeness", () => {
+  async function replacementHarness(options: { text?: string; otherSender?: boolean; partial?: boolean; manyOriginals?: boolean } = {}) {
+    const directory = mkdtempSync(join(tmpdir(), "attachment-replacement-")); scratch.push(directory);
+    let plannerCalls = 0;
+    const serviceOptions = { dataDirectory: directory, planning: { planner: { propose() { plannerCalls++; return validProposal(); } }, policy,
+      defaultDefinition: { repository: policy.allowedRepositories[0], acceptanceConditions: [] } } };
+    const service = startCollaborationService(serviceOptions);
+    const sender = { senderCorpId: "corp", senderStaffId: "user", senderId: "user", displayName: "测试同事" };
+    const old = service.ingestDingTalkMessage({ sourceEventId: "old", transportMessageId: "old", conversationId: "group", addressedToBot: true,
+      text: "请修复附件里的登录问题", sender, receivedAt: 1000, resources: [{ capabilityRef: "a".repeat(64), kind: "file", name: "bugs.pdf" },
+        ...(options.manyOriginals ? [{ capabilityRef: "c".repeat(64), kind: "file" as const, name: "other.pdf" }] : [])] });
+    const db = new DatabaseSync(join(directory, "collaboration", "collaboration.sqlite"));
+    db.exec("UPDATE collaboration_attachments SET ingest_state='unsupported',error_code='attachment_document_format_unsupported'");
+    const message = { sourceEventId: "replacement", transportMessageId: "replacement", conversationId: "group", addressedToBot: true,
+      replyToSourceEventId: "old", text: options.text ?? "用这份文件替换原附件", sender: options.otherSender ? { ...sender, senderStaffId: "other", senderId: "other" } : sender,
+      receivedAt: 2000, resources: [{ capabilityRef: "b".repeat(64), kind: "file" as const, name: "readable.txt", mimeType: "text/plain" }] };
+    const next = service.ingestDingTalkMessage(message);
+    expect(next.workItemId).toBe(old.workItemId);
+    const bytes = Buffer.from("登录失败应该显示具体原因");
+    const vault = new DingTalkAttachmentCapabilityVault(join(directory, "vault"), "fixture-vault-secret-at-least-32-bytes");
+    await new AttachmentIngestionCoordinator({ dataDirectory: directory, databaseFile: join(directory, "collaboration", "collaboration.sqlite"), vault,
+      downloader: { download: async () => ({ ok: true, bytes, sha256: createHash("sha256").update(bytes).digest("hex") }) },
+      extract(input) { const value = extractAttachmentText(input); return options.partial ? { ...value, truncated: true, warnings: ["unread_images"] } : value; },
+      onEvidence: notice => { service.observeAttachmentEvidence(old.workItemId!, accepted(notice)); },
+    }).process([{ capabilityRef: "b".repeat(64), downloadCode: "fixture-new-code", robotCode: "fixture-bot" }], 3000);
+    return { service, serviceOptions, db, id: old.workItemId!, message, plannerCalls: () => plannerCalls };
+  }
+  it.each(["用这份文件替换原附件", "这份是可读版本，请替换原附件", "请用这个附件代替之前的文件"])("uses an explicitly linked readable replacement while retaining both sources: %s", async text => {
+    const h = await replacementHarness({ text });
+    try {
+      const context = readNaturalAttachmentContext(h.db, h.id);
+      expect(context.incomplete).toBe(false);
+      expect(context.attachments).toHaveLength(1);
+      expect(JSON.stringify(h.db.prepare("SELECT payload_json FROM collaboration_outbox").all())).toContain("原文件仍保留");
+      expect(context).toMatchObject({ replacements: [{ originalSourceEventId: "old", sourceEventId: "replacement", normalizedHash: expect.stringMatching(/^[a-f0-9]{64}$/) }] });
+      const oldId = (h.db.prepare("SELECT id FROM collaboration_attachments WHERE capability_ref=?").get("a".repeat(64)) as { id: string }).id;
+      const version = (h.db.prepare("SELECT version FROM collaboration_work_items WHERE id=?").get(h.id) as { version: number }).version;
+      expect(isCurrentAttachmentFeedback(h.db, { source_event_id: `attachment-feedback:${oldId}:0:unsupported`, aggregate_id: h.id, aggregate_version: version })).toBe(false);
+      h.service.reviseWorkItemDefinition(h.id, definition);
+      expect(readLatestWorkItemSnapshot(h.db, h.id)?.blockingAmbiguities).toEqual([]);
+      expect(h.plannerCalls()).toBe(1);
+      expect(h.db.prepare("SELECT ingest_state FROM collaboration_attachments ORDER BY created_at").all()).toEqual([{ ingest_state: "unsupported" }, { ingest_state: "ready" }]);
+      const before = context.fingerprint;
+      h.service.ingestDingTalkMessage(h.message);
+      expect(readNaturalAttachmentContext(h.db, h.id).fingerprint).toBe(before);
+      h.service.close();
+      const restarted = startCollaborationService(h.serviceOptions);
+      try { expect(readNaturalAttachmentContext(h.db, h.id).fingerprint).toBe(before); expect(readLatestWorkItemSnapshot(h.db, h.id)?.blockingAmbiguities).toEqual([]); }
+      finally { restarted.close(); }
+    } finally { h.service.close(); h.db.close(); }
+  });
+  it.each([{ text: "补充一个文件" }, { text: "不要用这份文件替换原附件" }, { text: "文档上写着：用这份文件替换原附件" },
+    { otherSender: true }, { partial: true }, { manyOriginals: true }])("does not infer replacement authority or completeness from %j", async options => {
+    const h = await replacementHarness(options);
+    try {
+      expect(readNaturalAttachmentContext(h.db, h.id).incomplete).toBe(true);
+      h.service.reviseWorkItemDefinition(h.id, definition);
+      expect(readLatestWorkItemSnapshot(h.db, h.id)?.blockingAmbiguities.length).toBeGreaterThan(0);
+      expect(h.plannerCalls()).toBe(0);
+    } finally { h.service.close(); h.db.close(); }
+  });
+  it("passes replacement provenance to the interpreter and persists it with the applied Spec receipt", async () => {
+    const h = await replacementHarness(); h.service.close();
+    let request!: NaturalIntakeRequest;
+    const restarted = startCollaborationService({ ...h.serviceOptions, planning: { ...h.serviceOptions.planning, naturalIntake: {
+      async interpret(value) { request = value; return { version: 1, sourceEventId: value.event.sourceEventId, baseRevision: value.snapshot.revision,
+        goal: null, acceptance: [], answers: [], questions: [] }; },
+    } } });
+    try {
+      restarted.ingestDingTalkMessage({ ...h.message, sourceEventId: "check", transportMessageId: "check", resources: [], replyToSourceEventId: "replacement", text: "按新的可读版本整理", receivedAt: 4000 });
+      await restarted.processNaturalIntake();
+      expect(request.attachmentsIncomplete).toBe(false);
+      expect(request.attachmentReplacements).toMatchObject([{ originalSourceEventId: "old", sourceEventId: "replacement" }]);
+      const job = h.db.prepare("SELECT status,proposal_json FROM collaboration_natural_intake_jobs WHERE source_event_id='check'").get() as { status: string; proposal_json: string };
+      expect(job.status).toBe("applied");
+      expect(JSON.parse(job.proposal_json).attachmentReplacements).toEqual(request.attachmentReplacements);
+      const before = readNaturalAttachmentContext(h.db, h.id).fingerprint;
+      h.db.prepare("UPDATE collaboration_attachments SET ingest_state='pending' WHERE capability_ref=?").run("a".repeat(64));
+      expect(readNaturalAttachmentContext(h.db, h.id).fingerprint).not.toBe(before);
+      expect(readNaturalAttachmentContext(h.db, h.id).incomplete).toBe(true);
+    } finally { restarted.close(); h.db.close(); }
+  });
+  it.each(["correction", "conflict"])("handles later replacement %s without silently choosing or keeping a resolved blocker", async mode => {
+    const h = await replacementHarness({ otherSender: mode === "correction" });
+    try {
+      h.service.ingestDingTalkMessage({ ...h.message, sourceEventId: "later-copy", transportMessageId: "later-copy",
+        sender: { senderCorpId: "corp", senderStaffId: "user", senderId: "user", displayName: "测试同事" }, receivedAt: 4000,
+        resources: [{ capabilityRef: "d".repeat(64), kind: "file", name: "final.txt", mimeType: "text/plain" }] });
+      const directory = h.serviceOptions.dataDirectory, bytes = Buffer.from("登录失败时显示可理解的原因");
+      await new AttachmentIngestionCoordinator({ dataDirectory: directory, databaseFile: join(directory, "collaboration", "collaboration.sqlite"),
+        vault: new DingTalkAttachmentCapabilityVault(join(directory, "vault"), "fixture-vault-secret-at-least-32-bytes"),
+        downloader: { download: async () => ({ ok: true, bytes, sha256: createHash("sha256").update(bytes).digest("hex") }) },
+        onEvidence: notice => { h.service.observeAttachmentEvidence(h.id, accepted(notice)); },
+      }).process([{ capabilityRef: "d".repeat(64), downloadCode: "fixture-next", robotCode: "fixture-bot" }], 5000);
+      expect(readNaturalAttachmentContext(h.db, h.id).incomplete).toBe(mode === "conflict");
+      h.service.reviseWorkItemDefinition(h.id, definition);
+      expect(readLatestWorkItemSnapshot(h.db, h.id)!.blockingAmbiguities.length === 0).toBe(mode === "correction");
+    } finally { h.service.close(); h.db.close(); }
+  });
   it("persists a supplementary Unicode character at the original extraction chunk boundary without corrupting source hashes", async () => {
     const h = await harness(`${"文".repeat(7999)}🧪必须验证尾部条件`);
     try {

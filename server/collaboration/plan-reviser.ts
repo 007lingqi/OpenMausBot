@@ -467,7 +467,9 @@ export class PlanningCoordinator {
       contentHash: evidence.contentHash,
       contextSummary: attachmentCompletenessGates(this.database, workItemId, facts).length
         ? `已保存附件“${sourceLabel}”的可读部分；仍有材料或需求内容未核对完整，尚未开始修改。`
-        : `已安全读取附件“${sourceLabel}”，内容已按来源保存，正在确认目标和验收标准。`,
+        : readNaturalAttachmentContext(this.database, workItemId).replacements.some(row => row.replacementAttachmentId === evidence.attachmentId)
+          ? `已读取附件“${sourceLabel}”，按你的说明用这份可读材料替代原来未读成功的附件；原文件仍保留。接下来确认目标和验收标准，尚未开始修改。`
+          : `已安全读取附件“${sourceLabel}”，内容已按来源保存，正在确认目标和验收标准。`,
     });
   }
 

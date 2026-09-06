@@ -1,5 +1,12 @@
 # Meta 协作验证记录
 
+## 2026-09-06 可读附件替代材料来源（完整链通过）
+
+- 33249 在 fad711 exit 1：3 行为失败 / 26 通过，三种明确替代表达仍被旧失败文件阻塞。初修 98494 在 2b8d57 exit 0：3 文件 / 95 项/typecheck/diff 通过；扩展来源模型收据、反馈与漂移后 58787 在 510665 exit 0：8 文件 / 203 项/typecheck/diff 通过。
+- 42042 在 674823 exit 1：2 行为失败 / 30 通过，复现较早无权替代提示永久阻塞、多个有效替代被静默接受。已补唯一有效关系过滤及只针对当前未读材料的澄清，并提供通俗替代材料回复。
+- 完整命令：相关 8 文件回归 && pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-attachment-replacement-typecheck && git diff --check；59762 在 8c4f9f exit 0。相关 8 文件 / 205 项（11.05 秒）；主集 272 文件通过 / 1 跳过，2847 项通过 / 18 跳过（2865 注册），311.84 秒。broker 7、updater 15、viewer 5、package-link 2、save-file 10、打包无 node_modules 启动/9 路代理、typecheck、独立编译及 diff 全通过。旧附件及双方来源未删除，否定/引用/其他成员/多附件/不完整正文保持门禁；所有句柄终态。
+- 使用真实 SQLite、生产 service/摄取/自然解释协调器与合成文本/受控模型，未调用真实群、在线文档权限或实际解析容器。不是六类 Docker 试点验收。
+
 ## 2026-09-06 附件需求整理中断预算（完整链通过）
 
 - 86896 在 b4aa93 exit 1：attachment-ingestion 2 失败 / 44 通过，复现过期认领被无记录覆盖、通知写失败未发生回滚。属于行为失败，非模块/环境问题。
