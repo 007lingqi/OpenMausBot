@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { OPENMAUSBOT_SOURCE_BASELINE } from "./config.ts";
 
-export const COLLABORATION_SCHEMA_VERSION = 25;
+export const COLLABORATION_SCHEMA_VERSION = 26;
 
 interface Migration {
   version: number;
@@ -1276,6 +1276,31 @@ const migrations: readonly Migration[] = [
         database.exec(`CREATE TRIGGER natural_intake_${table}_no_${operation.toLowerCase()} BEFORE ${operation} ON collaboration_natural_intake_${table}
           BEGIN SELECT RAISE(ABORT,'natural intake recovery is immutable'); END;`);
       }
+    },
+  },
+  {
+    version: 26, name: "document-resource-ownership", checksum: "v26:document-create-receipt-cleanup-journal",
+    apply(database) {
+      database.exec(`
+        CREATE TABLE collaboration_document_resources (
+          container_name TEXT PRIMARY KEY,
+          image TEXT NOT NULL,
+          docker_context TEXT NOT NULL,
+          source_hash TEXT NOT NULL,
+          container_id TEXT,
+          cleanup_acknowledged INTEGER NOT NULL DEFAULT 0 CHECK(cleanup_acknowledged IN (0,1)),
+          created_at INTEGER NOT NULL
+        ) STRICT;
+        CREATE TRIGGER document_resources_identity_immutable BEFORE UPDATE ON collaboration_document_resources
+          WHEN NEW.container_name!=OLD.container_name OR NEW.image!=OLD.image OR NEW.docker_context!=OLD.docker_context
+            OR NEW.source_hash!=OLD.source_hash OR NEW.created_at!=OLD.created_at
+            OR (OLD.container_id IS NOT NULL AND NEW.container_id IS NOT OLD.container_id)
+            OR NEW.cleanup_acknowledged<OLD.cleanup_acknowledged
+          BEGIN SELECT RAISE(ABORT,'document resource identity is immutable'); END;
+        CREATE TRIGGER document_resources_no_delete BEFORE DELETE ON collaboration_document_resources
+          BEGIN SELECT RAISE(ABORT,'document resource journal cannot be deleted'); END;
+        CREATE INDEX document_resources_unresolved ON collaboration_document_resources(docker_context,cleanup_acknowledged,created_at);
+      `);
     },
   },
 ];

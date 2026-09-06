@@ -40,6 +40,8 @@ node --experimental-strip-types server/collaboration/operations/document-extract
 
 ## 验证边界
 
+schema 26 的 headless 装配会先在主账本保存文档资源身份，再调用 Docker；ID 入账先于 start，容器带 `com.openmausbot.document.resource` 标签。清理成功保存的是命令回执，不是独立无遗留证明。记录失败不会继续下一副作用；context 内未获清理回执的记录可只读查询（最多 100 条）。尚无自动回收或实例死亡证明；不得根据记录或名称前缀直接删除，也不为历史容器回填归属。真实隔离 smoke 的低层受控入口不因此被视为持久恢复验收。
+
 2026-09-06 headless 装配已完成且完整本地回归通过（2793 项，另 18 跳过；类型检查、独立编译和打包启动通过）。最新显式 context 只读检查确认试点仍 healthy、旧镜像 2ae332cd23df、无解析器缓存镜像；沙箱外官方 registry 匿名 HEAD 仍 DNS 超时（10010ms）。本次未构建、未部署、未启用真实解析。下方是装配前的历史记录，不能作为当前代码未接线的结论。
 
 2026-09-06 最新前置复核（业务候选 4b20d9c）：显式 `colima-openmausbot-pilot` 查询确认现有试点 healthy，本地没有本解析器镜像。Docker CLI 缺少 buildx，但已有 `docker manifest inspect`，因此查询固定基础镜像不要求额外安装插件。沙箱外匿名访问官方 `registry-1.docker.io/v2/` 仍在 DNS 解析约 10 秒后超时；本次没有启动拉取、构建或 smoke，没有修改 DNS/代理或现有容器。网络恢复后先通过官方清单取得可信 digest，再执行上述两个构建目标和正式 smoke。主服务尚未装配解析器；容器测试通过也不能单独证明群内真实附件可用。

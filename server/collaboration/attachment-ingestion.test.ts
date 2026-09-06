@@ -116,7 +116,12 @@ describe("AttachmentIngestionCoordinator", () => {
     const controller = new AbortController();
     const download = vi.spyOn(FetchDingTalkAttachmentDownloader.prototype, "download").mockResolvedValue({ ok: true, bytes: source, sha256: hash(source), mediaType: "application/pdf" });
     const docker = vi.spyOn(NodeDockerCommandPort.prototype, "run").mockImplementation(async (args, options) => {
-      if (args[0] === "create") return { exitCode: 0, stdout: Buffer.from(container), stderr: Buffer.alloc(0) };
+      if (args[0] === "create") {
+        const journalDb = new DatabaseSync(setup.databaseFile);
+        try { expect(journalDb.prepare("SELECT container_name, docker_context FROM collaboration_document_resources").get()).toEqual({ container_name: args[args.indexOf("--name") + 1], docker_context: "fixture-nonproduction" }); }
+        finally { journalDb.close(); }
+        return { exitCode: 0, stdout: Buffer.from(container), stderr: Buffer.alloc(0) };
+      }
       if (args[0] === "rm") return { exitCode: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
       if (mode === "failed") throw new Error("private parser stderr must not escape");
       if (mode === "cancelled") {
@@ -279,10 +284,10 @@ describe("AttachmentIngestionCoordinator", () => {
     const db = new DatabaseSync(setup.databaseFile);
     const failures = db.prepare("SELECT * FROM collaboration_attachment_failures").all();
     const outbox = db.prepare("SELECT * FROM collaboration_outbox").all();
-    db.exec("DROP TABLE collaboration_natural_intake_recoveries; DROP TABLE collaboration_natural_intake_recovery_requests; DROP TABLE collaboration_attachment_recovery_requests; DROP TABLE collaboration_attachment_projection_recoveries; DROP TABLE collaboration_attachment_projection_failures; DELETE FROM collaboration_schema_migrations WHERE version>=23; PRAGMA user_version=22");
+    db.exec("DROP TABLE collaboration_document_resources; DROP TABLE collaboration_natural_intake_recoveries; DROP TABLE collaboration_natural_intake_recovery_requests; DROP TABLE collaboration_attachment_recovery_requests; DROP TABLE collaboration_attachment_projection_recoveries; DROP TABLE collaboration_attachment_projection_failures; DELETE FROM collaboration_schema_migrations WHERE version>=23; PRAGMA user_version=22");
     db.close();
     const upgraded = openCollaborationLedger(join(setup.dataDirectory, "collaboration"));
-    expect(upgraded.migrationState).toEqual({ schemaVersion: 25, appliedMigrations: 25 });
+    expect(upgraded.migrationState).toEqual({ schemaVersion: 26, appliedMigrations: 26 });
     upgraded.close();
     const after = new DatabaseSync(setup.databaseFile);
     expect(after.prepare("SELECT * FROM collaboration_attachment_failures").all()).toEqual(failures);
@@ -293,10 +298,10 @@ describe("AttachmentIngestionCoordinator", () => {
   it("upgrades v23 preserving stopped projection receipts without inventing recovery authorization", async () => {
     const f = await recoveryFixture();
     const failures = f.db.prepare("SELECT * FROM collaboration_attachment_projection_failures").all();
-    f.db.exec("DROP TABLE collaboration_natural_intake_recoveries; DROP TABLE collaboration_natural_intake_recovery_requests; DROP TABLE collaboration_attachment_recovery_requests; DROP TABLE collaboration_attachment_projection_recoveries; DELETE FROM collaboration_schema_migrations WHERE version>=24; PRAGMA user_version=23");
+    f.db.exec("DROP TABLE collaboration_document_resources; DROP TABLE collaboration_natural_intake_recoveries; DROP TABLE collaboration_natural_intake_recovery_requests; DROP TABLE collaboration_attachment_recovery_requests; DROP TABLE collaboration_attachment_projection_recoveries; DELETE FROM collaboration_schema_migrations WHERE version>=24; PRAGMA user_version=23");
     f.db.close();
     const upgraded = openCollaborationLedger(join(f.dataDirectory, "collaboration"));
-    expect(upgraded.migrationState).toEqual({ schemaVersion: 25, appliedMigrations: 25 });
+    expect(upgraded.migrationState).toEqual({ schemaVersion: 26, appliedMigrations: 26 });
     upgraded.close();
     const db = new DatabaseSync(f.databaseFile);
     try {

@@ -567,7 +567,7 @@ function productionRuntimeOptions(
             );
             return new AttachmentIngestionCoordinator({
               signal, assertActive,
-              ...(documentExtractor ? { extract: documentExtractor } : {}),
+              ...(documentExtractor ? { extract: configuredDocumentExtractor(environment, databaseFile) } : {}),
               databaseFile,
               dataDirectory,
               vault,

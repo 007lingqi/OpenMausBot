@@ -17,6 +17,14 @@
 
 ## 本批执行记录
 
+### 文档资源持久归属（2026-09-06，完整回归通过）
+
+- 上轮 a681eb9 已提交且全量通过，分类 progress。本轮确认没有持久容器身份，新增 schema 26 主账本记录并接到 headless 实际工厂。初始只有用户 AGENTS.md/outputs，保持不动，不部署、不改实际凭据或容器。
+- TDD 72516 exit 1（0da3f2）：4 项行为失败 / 39 通过，新增 journal 模块缺失导致 1 文件无法收集。初修 13698 exit 0（41e50c）：4 文件 / 67 项/typecheck/diff。扩展标签测试 27460 exit 1（c5d9c3）：3 标签行为失败及 2 启动/版本问题；12000 exit 1（df8336）仅剩参数属性不兼容 strip-only 与旧 user_version 断言，已修正。
+- 35221 exit 0（528216）：11 文件 / 173 项、typecheck/diff。覆盖生产工厂创建前入账、ID 先落库再 start、记录重建、清理/回执丢失、各写入点故障、不可篡改及 v25 升级不造历史归属。没有用模块缺失或夹具问题冒充行为证据。
+- 完整链 11909 在 d861b2 exit 0：271 文件通过 / 1 跳过，2808 项通过 / 18 跳过（2826 注册），440.34 秒；broker 7、updater 15、viewer 5、package-link 2、save-file 10、打包脱离 node_modules 启动及 9 路代理、typecheck、独立服务端编译及 diff 全通过。所有句柄终态，17 个任务文件保存本地提交；用户 AGENTS.md/outputs 不动，不 push、不部署。
+- 恢复入口：document-resource-journal 已在 headless 使用，schema 26；readUnresolved 只读最多 100 条且仅当前 context。下一批应绑定失效运行实例、核对实际容器 name/label/image/ID 并处理创建迟到后，才接入自动回收。现有记录本身不证明实例已死或无遗留，清理 acknowledgement 不是独立 inspect。真实隔离/文档/模型/六类群聊和 Owner 验收保持未完成。
+
 ### 文档解析停止传播（2026-09-06，完整回归已验证）
 
 - 上轮 6afc5d6 已提交/完整回归通过，分类 progress；初始仅用户 AGENTS.md/outputs，保持不动。本轮用受信任生命周期上下文连接协调器、配置工厂、解析器与 Docker CLI；不改 Owner 权限、身份凭据或实际试点。

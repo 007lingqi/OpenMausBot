@@ -1,5 +1,11 @@
 # Meta 协作验证记录
 
+## 2026-09-06 文档资源持久归属（完整链通过）
+
+- 72516 exit 1（0da3f2）：4 行为失败 / 39 通过及缺新模块的收集失败。13698 exit 0（41e50c）：4 文件 / 67 项/typecheck/diff。27460 exit 1（c5d9c3）：标签先行回归与 2 个启动/版本问题；12000 exit 1（df8336）只剩后两项。
+- 修复后 35221 exit 0（528216）：document-resource-journal、document-extractor、document-extractor-smoke、attachment-ingestion、db、backup、service、lifecycle-recovery、natural-intake-recovery、runtime-repository-serialization、headless 共 11 文件 / 173 项及 typecheck/diff 通过。真实 SQLite 与 headless 生产装配，加受控 Docker/下载端口，不是实际容器解析。
+- 完整 `pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-document-journal-typecheck && git diff --check`，11909 在 d861b2 exit 0：271 文件通过 / 1 跳过，2808 项通过 / 18 跳过（2826 注册），440.34 秒；broker 7、updater 15、viewer 5、package-link 2、save-file 10、打包脱离 node_modules 启动及 9 路代理、typecheck、独立服务端编译及 diff 全通过。所有句柄终态，无真实 Docker/模型/群消息操作，未以持久记录替代崩溃恢复或容器无遗留证明。
+
 ## 2026-09-06 文档解析停止传播（完整链通过）
 
 - TDD 8468 exit 1（dcee4c），8 失败 / 51 通过，其中 2 个 native ESM spy 夹具失败；更正为透传真实 spawn 后 34754 exit 1（8aec05），2 行为失败 / 2 通过，证实已有 abort 不生效。

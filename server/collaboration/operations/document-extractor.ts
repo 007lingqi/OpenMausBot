@@ -1,5 +1,6 @@
 import { extname } from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { DocumentResourceJournal } from "./document-resource-journal.ts";
 import { z } from "zod";
 import { extractAttachmentText, MAX_ATTACHMENT_BYTES, type AttachmentTextExtractionInput, type AttachmentTextExtraction, type AttachmentExtractionContext } from "../attachment-text-extractor.ts";
 import { NodeDockerCommandPort, type DockerCommandPort } from "./docker-containment.ts";
@@ -14,9 +15,11 @@ const outputSchema = z.object({ version: z.literal(1), format: z.enum(["pdf", "d
 export class DockerDocumentExtractor {
   private readonly docker: DockerCommandPort;
   private readonly image: string;
-  constructor(input: { docker: DockerCommandPort; image: string }) {
+  private readonly journal: DocumentResourceJournal | undefined;
+  constructor(input: { docker: DockerCommandPort; image: string; journal?: DocumentResourceJournal }) {
     if (!/^(?:sha256:[a-f0-9]{64}|[a-zA-Z0-9./:_-]+@sha256:[a-f0-9]{64})$/.test(input.image)) throw new Error("attachment_document_image_not_fixed");
     this.docker = input.docker; this.image = input.image;
+    this.journal = input.journal;
   }
   async extract(input: AttachmentTextExtractionInput, context: AttachmentExtractionContext = {}): Promise<AttachmentTextExtraction> {
     const assertActive = () => {
@@ -33,14 +36,16 @@ export class DockerDocumentExtractor {
     if (media !== formats[extension] && media !== "application/octet-stream") throw new Error("attachment_extension_media_type_conflict");
     let id: string | undefined;
     const ownedName = `omb-document-${randomUUID()}`;
+    this.journal?.reserve(ownedName, this.image, createHash("sha256").update(input.bytes).digest("hex"));
     try {
-      const created = await this.docker.run(["create", "--name", ownedName, "--interactive", "--network", "none", "--read-only", "--cap-drop", "ALL",
+      const created = await this.docker.run(["create", "--name", ownedName, "--label", `com.openmausbot.document.resource=${ownedName}`, "--interactive", "--network", "none", "--read-only", "--cap-drop", "ALL",
         "--security-opt", "no-new-privileges:true", "--log-driver", "none", "--user", "65534:65534", "--memory", "384m",
         "--memory-swap", "384m", "--cpus", "1", "--pids-limit", "32", "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=32m",
         "--entrypoint", "python", this.image, "-I", "/app/extractor.py", extension.slice(1)], { timeoutMs: 30_000, maxOutputBytes: 4096 });
       const candidate = created.stdout.toString("utf8").trim();
       if (created.exitCode !== 0 || !/^[a-f0-9]{64}$/.test(candidate)) throw new Error("create_failed");
       id = candidate;
+      this.journal?.created(ownedName, id);
       // Let create settle before cleanup so a normal stop cannot lose its receipt.
       assertActive();
       const result = await this.docker.run(["start", "--attach", "--interactive", id], { input: Buffer.from(input.bytes), timeoutMs: 30_000, maxOutputBytes: 2 * 1024 * 1024, signal: context.signal });
@@ -61,13 +66,14 @@ export class DockerDocumentExtractor {
         let removed = false;
         try { removed = (await this.docker.run(["rm", "--force", id ?? ownedName], { timeoutMs: 10_000, maxOutputBytes: 4096 })).exitCode === 0; } catch { /* fail closed below */ }
         if (!removed) throw new Error("attachment_document_cleanup_failed");
+        this.journal?.cleanupAcknowledged(ownedName);
         assertActive();
       }
     }
   }
 }
 
-export function configuredDocumentExtractor(environment: NodeJS.ProcessEnv): ((input: AttachmentTextExtractionInput, context?: AttachmentExtractionContext) => Promise<AttachmentTextExtraction>) | undefined {
+export function configuredDocumentExtractor(environment: NodeJS.ProcessEnv, databaseFile?: string): ((input: AttachmentTextExtractionInput, context?: AttachmentExtractionContext) => Promise<AttachmentTextExtraction>) | undefined {
   const enabled = environment.OMB_DOCUMENT_EXTRACTOR_ENABLED?.trim();
   if (!enabled || enabled === "0") return undefined;
   if (enabled !== "1") throw new Error("attachment_document_enable_invalid");
@@ -75,7 +81,7 @@ export function configuredDocumentExtractor(environment: NodeJS.ProcessEnv): ((i
   if (!image) throw new Error("attachment_document_image_required");
   const context = environment.OMB_DOCKER_CONTEXT?.trim();
   if (!context) throw new Error("attachment_document_context_required");
-  const extractor = new DockerDocumentExtractor({ image, docker: new NodeDockerCommandPort({
+  const extractor = new DockerDocumentExtractor({ image, ...(databaseFile ? { journal: new DocumentResourceJournal(databaseFile, context) } : {}), docker: new NodeDockerCommandPort({
     executable: environment.OMB_DOCKER_EXECUTABLE, context,
   }) });
   return (input, context) => extractor.extract(input, context);
