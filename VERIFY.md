@@ -1,5 +1,12 @@
 # Meta 协作验证记录
 
+## 2026-09-06 真实钉钉接入契约审计（非试点通过）
+
+- 代码基线 943a0ed，任务工作区干净，仅用户 AGENTS.md/outputs 未跟踪；本轮只有文档修改。审计覆盖 normalizer 的 originalMsgId、association 的入站事件匹配、发送器丢弃 processQueryKey 和主动 sampleMarkdown 的接口边界。
+- 官方公开文档访问：沙箱内 d82665 exit 6；授权外 b75c75、8fef76、d146b5、87208f、b7d718、e687c3、2f5ae9 exit 0。发送文档首次输出截断，响应章节独立重读。DWS 只读本地 devdoc schema/help，75788 在 b470bb exit 0，无认证或业务操作。
+- 发现足以改变执行顺序的新证据：群文件不可按现有应用机器人入口承诺，主动发送 @ 不受官方支持，引用消息 ID 未核实；送达查询存在但不提供引用 ID。完整来源和后续门禁见 packaging/collaboration/dingtalk-capability-audit.md。
+- 本批不执行真实发送、凭据读取、身份接入、Docker 部署或模型调用。不将官方文档等同实际租户/版本测试；不重跑无代码变化的完整回归，不新增虚构通过项。
+
 ## 2026-09-06 附件选择定向澄清（完整链通过）
 
 - 先行 3d3280 exit 1：1 行为失败 / 51 跳过，原卡片没有具体文件列表和应答路径。实现后 55686/ec77e3 exit 0：4 文件 / 99 项、typecheck/diff。扩展后 21199/42b0d7 exit 0：9 文件 / 243 项（023358，12.34 秒）、typecheck/diff 通过。
