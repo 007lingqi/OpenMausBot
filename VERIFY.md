@@ -1,5 +1,17 @@
 # Meta 协作验证记录
 
+## 2026-09-06 OpenCode GPT-6 Astra选择核查（尚未接入）
+
+- 用户撤销百炼/.env要求，明确OpenCode、GPT-6 Astra、medium。没有百炼代码/配置变更或真实模型请求；前一轮相关文档阅读和.env配置名称检查不能当作接入成果，密钥未显示。
+- OpenCode本机版本1.18.15；models/run --help/serve --help在65549/8d1e46 exit0完成，run明确支持--variant。opencode models openai --refresh在66458/389a0c exit0完成，刷新成功但无GPT-6 Astra。仅读取opencode.json的model/provider模型名称元数据，未发现自定义provider，未显示或改写凭据。
+- 这是当前CLI模型目录缺项证据，不是断言GPT-6 Astra不存在，也不是验证了medium可用于该模型。待Owner确认实际渠道/完整模型标识后再装配并测试；未回退到gpt-5.6、未改变默认模型、未部署或执行真实群聊。业务代码未变，沿用6e9d243完整回归，不重复无变化测试。
+
+## 2026-09-06 真实试点依赖阻塞收束（无新增测试）
+
+- 当前Git核实6e9d243已保存20个任务文件，仅用户AGENTS.md/outputs未跟踪。最近完整链仍为80357/bd32bb exit0，未将重复读取算作新增验证或整体完成。
+- 上轮Docker只读fc667d确认专用colima-openmausbot-pilot健康、旧镜像2ae332cd23df且无解析镜像，其余历史容器exited。cell1299匿名镜像站检查权限审查超时，未创建进程；不是网络失败或活跃等待。本轮没有重复拉取、改配置、部署、发送消息或读取其他凭据。
+- 引用任务01a042e8-1b13-7793-a766-eaee31626730最近两轮只证明旧接收/回复基础流程的历史记录，不提供当前模型/文档授权，不能替代新目标验收。连续三轮没有所需新增Owner输入，原生Goal已blocked；本轮分类no progress。恢复需已授权模型配置引用及真实接入条件，不能以更多受控测试替代六类真实场景或Owner签字。
+
 ## 2026-09-06 自动核查与实时租约批次完整通过
 
 - 完整命令pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-query-reconciliation-typecheck && git diff --check；80357/bd32bb exit0，主集274文件通过/1跳过，2907项通过/18跳过（2925注册），347.65秒。
