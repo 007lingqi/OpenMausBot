@@ -1,5 +1,13 @@
 # Meta 协作验证记录
 
+## 2026-09-07 用户授权纯对话范围与自然性review（未改运行代码）
+
+- 用户明确移出钉钉Bug文档，并授权修改目标；SPEC/PROGRESS/D-129与docs/pilot/pmo-conversation-goal.md已采用新的纯对话范围。旧材料账号缺口不再阻塞当前范围，旧文档/附件验收保留历史，不标通过或删除。原生Goal接口不支持改写未完成目标，CUA拒绝控制Codex自身，因此应用内旧卡片未改，未调用complete/create_goal绕过。
+- db3e23实际执行当前renderer的四个合成输入：普通接收/完成均展示编号并重复状态；后备关联要求标题模板；planning且无failures却渲染内部Work Item/planning和执行环境失败建议。是本地可复现输出，不冒充真实发送。
+- 72ee2e：`pnpm exec vitest run server/collaboration/natural-association.test.ts server/collaboration/natural-intake.test.ts server/collaboration/association.test.ts server/integrations/dingtalk/sender.test.ts`，4文件85项通过，session37053 exit0。此测试含替身模型，仅支持对应关联/权限/来源/渲染行为，不能证明真实Astra或多人群交互自然。
+- 36559f：初次Docker只读检查自动审核超时，按返回提示仅重试一次后健康检查成功。413a30随后在获准只读范围抽查已有12条入站及最近10条sent Outbox，只输出脱敏文本和匿名角色/事项标签；样本仅1位参与人，出现泛化完成说明、反复目标追问、固定格式要求。没有复制原始账本/消息/身份到仓库，未发送消息或调用模型。
+- 67e1f0：当前session-message.ts与运行镜像代码基线247f99a无diff，历史payload按相同renderer复现；不等同于抓取远端消息截图或在当前模型上重跑历史需求。多人、短回答、话题切换、查询/解释/致谢等完整纯对话场景仍待端到端与真实试点验证。
+
 ## 2026-09-07 真实试点阻塞复核（Goal受阻，不是完成）
 
 - c17a97/0d9387确认fe941c3与efea709已保存，业务工作树及暂存区无差异，仅用户AGENTS.md/outputs未跟踪；全部验证会话已在前轮确认exit0，本轮未重跑测试。
