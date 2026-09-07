@@ -4,8 +4,9 @@ import { readAttachmentEvidenceNotification, type AttachmentEvidenceNotification
 import type { BlockingAmbiguity } from "./snapshot.ts";
 import { redactSensitiveText } from "./sensitive-text.ts";
 import { readAttachmentReplacements } from "./attachment-replacements.ts";
+import { ONLINE_DOCUMENT_GATE_ID, onlineDocumentCompletenessGates, readOnlineDocumentReferences } from "./online-document-completeness.ts";
 
-export const ATTACHMENT_GATE_IDS = new Set(["attachment-content-pending", "attachment-content-incomplete", "attachment-context-incomplete", "attachment-replacement-unclear"]);
+export const ATTACHMENT_GATE_IDS = new Set(["attachment-content-pending", "attachment-content-incomplete", "attachment-context-incomplete", "attachment-replacement-unclear", ONLINE_DOCUMENT_GATE_ID]);
 
 export function attachmentReceipt(evidence: AttachmentEvidenceNotification) {
   return { source: evidence.source, format: evidence.format, chunks: evidence.chunks.map(({ text: _text, ...chunk }) => chunk) };
@@ -13,12 +14,13 @@ export function attachmentReceipt(evidence: AttachmentEvidenceNotification) {
 
 /** Bounded, source-checked model input; omitted documents remain explicitly incomplete. */
 export function readNaturalAttachmentContext(database: DatabaseSync, workItemId: string) {
+  const onlineDocuments = readOnlineDocumentReferences(database, workItemId);
   const replacement = readAttachmentReplacements(database, workItemId);
   const rows = database.prepare("SELECT a.id,a.ingest_state,a.content_hash FROM collaboration_attachments a JOIN collaboration_external_events e ON e.id=a.external_event_id " +
     "WHERE e.work_item_id=? ORDER BY e.received_at,e.id,a.ordinal LIMIT 101").all(workItemId) as unknown as Array<{ id: string; ingest_state: string; content_hash: string | null }>;
   const attachments: AttachmentEvidenceNotification[] = [];
   const receipts: unknown[] = [];
-  let incomplete = rows.length > 100 || replacement.needsClarification, bytes = 0;
+  let incomplete = rows.length > 100 || replacement.needsClarification || onlineDocuments.totalSources > 0, bytes = 0;
   for (const row of rows.slice(0, 100)) {
     if (replacement.replaced.has(row.id)) continue;
     if (row.ingest_state !== "ready") { incomplete = true; continue; }
@@ -33,8 +35,9 @@ export function readNaturalAttachmentContext(database: DatabaseSync, workItemId:
       if (value.chunks.some(c => c.truncated || c.warnings.some(w => !/^csv_formula_like_cells_present:\d+$/.test(w)))) incomplete = true;
     } catch { incomplete = true; }
   }
-  return { attachments, incomplete, replacements: replacement.receipts,
-    fingerprint: createHash("sha256").update(JSON.stringify({ rows, receipts, replacements: replacement.receipts, replacementUnclear: replacement.needsClarification })).digest("hex") };
+  return { attachments, incomplete, replacements: replacement.receipts, onlineDocuments,
+    fingerprint: createHash("sha256").update(JSON.stringify({ rows, receipts, replacements: replacement.receipts, replacementUnclear: replacement.needsClarification,
+      ...(onlineDocuments.totalSources ? { onlineDocuments } : {}) })).digest("hex") };
 }
 
 /** Preserve every character within a chunk, with independently bounded, source-labelled Spec facts. */
@@ -82,7 +85,7 @@ export function attachmentCompletenessGates(database: DatabaseSync, workItemId: 
       }
     } catch { incomplete = true; }
   }
-  const gates: BlockingAmbiguity[] = [];
+  const gates: BlockingAmbiguity[] = onlineDocumentCompletenessGates(database, workItemId);
   if (replacement.needsClarification) gates.push({ id: "attachment-replacement-unclear", dependsOn: [],
     ...(replacement.selectionQuestion ?? { question: "附件替换关系还不明确，请确认原材料和要采用的新文件。",
       recommendedAnswer: "请原材料提供者回复原附件消息，确认要替换的文件；涉及多人材料或已经使用的内容，需要先核对影响。" }) });

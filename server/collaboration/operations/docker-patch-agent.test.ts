@@ -78,11 +78,20 @@ describe("Docker patch Agent", () => {
       process.on('SIGTERM',()=>setTimeout(()=>{writeFileSync(${JSON.stringify(ended)},'ended');process.exit(0);},100));
       writeFileSync(${JSON.stringify(marker)},'ready');setInterval(()=>{},1000);`,{mode:0o700});
     const provider=new CodexReadOnlyPatchProvider({executable,exchangeRoot:join(directory,'exchange'),forceKillGraceMs:1000});
-    const outcome=provider.propose(request()).then(()=> 'accepted',e=>e.message);
-    await vi.waitFor(()=>expect(existsSync(marker)).toBe(true),{timeout:2000});
-    await Promise.all([provider.interrupt('run-1'),provider.interrupt('run-1')]);
-    expect(existsSync(ended)).toBe(true);
-    expect(await outcome).toBe('codex_patch_provider_failed:interrupted');
+    let earlyOutcome: string | undefined;
+    const outcome=provider.propose(request()).then(()=> earlyOutcome='accepted',e=>earlyOutcome=e.message);
+    try {
+      // On a loaded host the fixture itself can take several seconds to start.
+      // This readiness budget does not relax the stop/close assertions below.
+      await vi.waitFor(()=>{expect(earlyOutcome, 'provider must remain running until interrupted').toBeUndefined();expect(existsSync(marker)).toBe(true);},{timeout:10000});
+      await Promise.all([provider.interrupt('run-1'),provider.interrupt('run-1')]);
+      expect(existsSync(ended)).toBe(true);
+      expect(await outcome).toBe('codex_patch_provider_failed:interrupted');
+    } finally {
+      // A failed readiness assertion must not leave a detached fixture alive.
+      await provider.interrupt('run-1');
+      await outcome;
+    }
   });
 
   it("preserves private state and rejects cancellation when signalling is denied", async () => {
@@ -91,16 +100,22 @@ describe("Docker patch Agent", () => {
     const provider=new CodexReadOnlyPatchProvider({executable,exchangeRoot:join(directory,'exchange'),forceKillGraceMs:20});
     const controller=new AbortController();
     const outcome=provider.propose({...request(),signal:controller.signal}).then(()=>null,error=>error);
-    await vi.waitFor(()=>expect(existsSync(marker)).toBe(true));
-    const denied=vi.spyOn(process,'kill').mockImplementation(()=>{throw Object.assign(new Error('private details must not leak'),{code:'EPERM'});});
+    let denied: ReturnType<typeof vi.spyOn> | undefined;
     try{
+      await vi.waitFor(()=>expect(existsSync(marker)).toBe(true),{timeout:10000});
+      denied=vi.spyOn(process,'kill').mockImplementation(()=>{throw Object.assign(new Error('private details must not leak'),{code:'EPERM'});});
       controller.abort();
       const error=await outcome;
       expect(error?.name).toBe('CommandCleanupError');
       expect(String(error)).not.toContain('private details');
       expect(existsSync(join(directory,'exchange','omb-run-1-provider'))).toBe(true);
       await expect(provider.interrupt('run-1')).rejects.toHaveProperty('name','CommandCleanupError');
-    }finally{denied.mockRestore();await new Promise(resolve=>setTimeout(resolve,650));}
+    }finally{
+      denied?.mockRestore();
+      await new Promise(resolve=>setTimeout(resolve,650));
+      await provider.interrupt('run-1');
+      await outcome;
+    }
   });
 
   it("propagates a provider stop failure after attempting both cleanup paths", async()=>{

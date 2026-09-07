@@ -320,6 +320,13 @@ export class PlanningCoordinator {
 
   observeAcceptedEvent(workItemId: string, text: string, now = Date.now(), sourceEventId?: string): DefinitionRevisionOutcome | null {
     assertLedgerArmed(this.database);
+    // Both intake paths must use the accepted source, never changed redelivery text.
+    if (sourceEventId) {
+      const source = this.database.prepare("SELECT normalized_json FROM collaboration_external_events WHERE source='dingtalk' AND source_event_id=? AND work_item_id=?")
+        .get(sourceEventId, workItemId) as { normalized_json: string } | undefined;
+      if (!source) throw new Error("natural_intake_event_missing");
+      text = String(JSON.parse(source.normalized_json).text);
+    }
     const selectedReplacement = sourceEventId ? readNaturalAttachmentContext(this.database, workItemId)
       .replacements.find(row => row.selectionSources.some(source => source.sourceEventId === sourceEventId)) : undefined;
     const contextSummary = selectedReplacement

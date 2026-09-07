@@ -1,6 +1,7 @@
 import { isAbsolute } from "node:path";
 
 import type { WorkItemSnapshot, BlockingAmbiguity } from "./snapshot.ts";
+import { ONLINE_DOCUMENT_GATE_ID } from "./online-document-completeness.ts";
 
 export type ReadinessBlocker = "goal" | "repository" | "acceptance" | "blocking_ambiguity";
 
@@ -88,5 +89,7 @@ export function evaluateDefinitionReadiness(
   });
 
   const contextual = candidates.filter(q => q.id.startsWith("natural-") && q.id !== "natural-input-pending");
-  return { ready: blockers.length === 0, blockers, frontier: [...contextual, ...candidates.filter(q => !contextual.includes(q))].slice(0, 3) };
+  const unreadDocuments = candidates.filter(q => q.id === ONLINE_DOCUMENT_GATE_ID);
+  return { ready: blockers.length === 0, blockers, frontier: [...unreadDocuments, ...contextual,
+    ...candidates.filter(q => !contextual.includes(q) && !unreadDocuments.includes(q))].slice(0, 3) };
 }
