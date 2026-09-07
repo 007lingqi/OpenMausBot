@@ -1,5 +1,12 @@
 # Meta 协作验证记录
 
+## 2026-09-07 协调器启动代次及原生Git恢复
+
+- 123829模块缺失、4b7a2b新表缺失、3da0b7启动接线/恢复分支先行红灯；随后实现。52e484为新增参数属性不兼容Node strip-only与两项漏更新schema断言；0fa4e9/44cd0c为三个测试Mock类型扩宽，均已按证据修复。ace9c2实际租约包含expiresAt/version导致strict schema拒绝，d60add先补定向红灯，修正为只提取ownerId/fence，保持签名payload严格。
+- f08177修正后的8文件131项与pnpm typecheck通过。scripts/smoke-docker-coordinator.mjs在colima-openmausbot-pilot、固定缓存70087328c759…通过：真实PID namespace对照/前后同epoch检查、schema31事前proof登记、detached原生Git写入后SIGKILL、独立观察确认停止、无finalization的零任务command会话收束及幂等；同ID再次start能区分新旧epoch，Git HEAD/count在旧停止后稳定。合成controller有Docker socket，候选/群/模型均未接入；所有专属容器和卷已清理。
+- 此烟测仅证明协调器及原生Git的恢复分支，不覆盖unknown-create缺任务proof或完整Provider/双测试/Meta/钉钉业务闭环，不覆盖跨VM boot和Mac重启。
+- 4ab83c/92518完整顺序链终态exit0：typecheck、8文件131项、真实Docker烟测、完整pnpm test、typecheck、diff均通过。主集298文件通过/1跳过，3375通过/18跳过（3393登记）；broker7、桌面、打包/9代理路径/headless/channel启动退出全部通过。代码/测试在该链启动后未变，只有文档更新。所有句柄终态、无运行模型；6618ec旧试点仍healthy，未迁移其schema30数据或切换controller。
+
 ## 2026-09-07 v2持久启动身份与被动对账
 
 - c71723先行缺模块红灯；6a4185三文件67项/typecheck通过。d3c3b2五文件128项、typecheck、真实Docker故障烟测及diff通过；补齐有界读取、fsync顺序/失败、跨Agent不重试与无finalization门禁后，6d449f最终五文件130项/typecheck通过。

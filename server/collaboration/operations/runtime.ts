@@ -35,6 +35,7 @@ import { authorizedPreparationRetrySql, preparationDispatchAllowed, recordPrepar
 import { CommandCleanupError } from "../execution-limits.ts";
 import { hasUnsettledRepositoryActivity } from "../repository-occupancy.ts";
 import { recoverLifecycleSession, type LifecycleRecoveryOutcome } from "../lifecycle-recovery.ts";
+import { registerCoordinator, type CoordinatorAuthority } from "../coordinator-lifecycle.ts";
 import type { PlanningPolicy } from "../graph.ts";
 import type { InboundMessageOutcome } from "../inbound.ts";
 import { assertCurrentInstanceLease, InstanceLeaseCoordinator, StaleFenceError, type InstanceLease } from "../leases.ts";
@@ -168,6 +169,7 @@ export interface CollaborationHeadlessRuntimeOptions {
   planningDefaultDefinition?: { repository: string; acceptanceConditions: AcceptanceCondition[] };
   agent?: AgentRunPort;
   containment?: ContainmentPort;
+  coordinator?: CoordinatorAuthority;
   commandRunner?: SandboxedCommandRunner;
   execution?: RuntimeExecutionConfiguration;
   candidateInspector?: CandidateInspectionPort;
@@ -737,6 +739,7 @@ export class CollaborationHeadlessRuntime {
       this.leaseCoordinator = new InstanceLeaseCoordinator(this.database, this.ownerId);
       this.lease = this.leaseCoordinator.acquire(this.clock.now(), this.leaseTtlMs);
       if (!this.lease) throw new Error("instance_lease_unavailable");
+      if (this.options.coordinator) await registerCoordinator(this.database, this.lease, this.options.coordinator, () => this.clock.now());
       if (readRestoreGuard(this.database).state === "live") {
         publishVerificationRuntimePolicy(this.database, { instance: this.lease, now: this.clock.now(),
           repositories: this.options.execution?.repositories ?? {}, mappingPolicy: this.options.acceptanceMapping?.policyId });
@@ -1720,7 +1723,7 @@ export class CollaborationHeadlessRuntime {
         let outcome: LifecycleRecoveryOutcome;
         try {
           outcome = await recoverLifecycleSession(db, {
-            kind: row.kind, sessionId: row.id, instance: lease, containment,
+            kind: row.kind, sessionId: row.id, instance: lease, containment, coordinator: this.options.coordinator,
             now: () => this.clock.now(), signal: AbortSignal.any([lifetime.signal, timeout.signal]),
           });
         } finally { clearTimeout(timer); }

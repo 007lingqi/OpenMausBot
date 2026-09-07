@@ -25,6 +25,7 @@ import {
 } from "./collaboration/operations/docker-containment.ts";
 import { DockerSandboxedCommandRunner } from "./collaboration/operations/docker-command-runner.ts";
 import { DockerContainedPatchAgent } from "./collaboration/operations/contained-patch-agent.ts";
+import { DockerCoordinatorAuthority } from "./collaboration/operations/docker-coordinator.ts";
 import {
   CodexReadOnlyPatchProvider,
   DockerPatchAgent,
@@ -514,6 +515,9 @@ function dockerExecutionOptions(environment: NodeJS.ProcessEnv): Partial<Collabo
     planningDefaultDefinition: { repository, acceptanceConditions: acceptanceConditions(environment) },
     agent,
     containment,
+    ...(providerIsolation === "task_container" ? { coordinator: new DockerCoordinatorAuthority({ docker,
+      container: environment.OMB_DOCKER_COORDINATOR_CONTAINER?.trim() ?? "",
+      image: environment.OMB_DOCKER_COORDINATOR_IMAGE?.trim() ?? "", hostGeneration, verifierKey: readEncryptionKey(keyPath) }) } : {}),
     commandRunner: new DockerSandboxedCommandRunner({ docker, containment, image, exchangeRoot: commandRoot }),
     executionIsolation: "docker_linux",
     autoExecuteReady: true,

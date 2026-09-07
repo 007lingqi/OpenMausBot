@@ -1,5 +1,14 @@
 # Meta 协作实施进度
 
+## 最新交接：协调器启动代次及原生Git恢复通过（2026-09-07，完整回归通过，未部署）
+
+- 上批9a57f36有实际实现/验证进展，本批继续独立协调器证据。新增DockerCoordinatorAuthority、schema31事前不可变登记、runtime启动门禁和无finalization新证据分支；task_container必须提供固定controller名/镜像。具体约束见D-116与contained-provider-design。旧服务/账本仍schema30，未迁移部署。
+- 123829/4b7a2b/3da0b7先行红灯后实现。52e484暴露Node strip-only不支持参数属性及两项旧schema断言，修正后131项行为通过；0fa4e9/44cd0c测试Mock字面量类型失败已修正。ace9c2真实烟测发现实际InstanceLease多余字段被strict schema拒绝，d60add定向复现后只提取ownerId/fence，不放宽schema。
+- f08177：修正后的typecheck/8文件131项及真实Docker烟测通过。独立合成controller捕获真实自身PID namespace并事前登记；保留一个零任务command的执行session，启动脱离进程组的原生Git连续提交，SIGKILL后由新容器基于旧epochproof收束；Git HEAD/count稳定、无假finalization、settlement幂等。同完整容器ID再次start后旧proof=stopped、新proof=active。合成仓库/账本/卷/容器已清理，modelCalls0/groupMessages0，不冒充完整Executor/Meta/群场景。
+- 92518已于4ab83c终态exit0：typecheck→131定向→真实Docker→完整pnpm test→typecheck→diff全部通过。主集298文件通过/1跳过、3375项通过/18跳过（3393登记），broker7、桌面测试及打包/9代理路径/headless/channel启动退出全部通过。代码/测试在链启动后冻结；所有测试/模型/构建句柄终态，明确归属修改保存本地commit、不push。
+- 接续还需：unknown-create且无任务proof的新v2收束协议（有协调器stop也不倒签任务proof）、跨VM boot/缺失旧容器证据、完整真实引擎在途恢复、固定schema31镜像与兼容回退/备份后才切换唯一试点。真实六场景/在线文档正文、Mac主机重启和Owner本人最终验收仍缺，历史无proof任务不解锁/不增加尝试，正式Astra一次性组件不重跑。AGENTS.md/outputs保持用户原状，Goal active。
+- 6618ec确认唯一运行服务仍3c05339/779586bc572e…且healthy；本批没有真实群/模型调用、生产或默认分支合并、Owner/凭据变更。现有ad123605dc75…固定controller既不含本批代码，也不是schema31回退镜像，部署前不能继续使用原已消费的构建/切换脚本。恢复接续从本节、D-116及源码的coordinator-lifecycle/docker-coordinator/lifecycle-recovery开始，不轮询旧终态句柄。
+
 ## 最新交接：v2持久启动身份与只读对账通过（2026-09-07，未部署）
 
 - 新contained启动在create前持久写入用途隔离签名v2 launch记录，文件/任务目录/父目录fsync；完整create ID也fsync后才start。名称算法不变，旧v1不倒签。新增只读inspectPendingLaunch，可由新Agent按原记录核对唯一完整ID、精确名称、固定镜像、原binding、launch标签及代次，保留查不到/多个/不一致为unknown。它不修改账本、proof、attempt、占用或目录，不自动start/kill/rm；不是自动恢复器。

@@ -1,5 +1,12 @@
 # Meta 协作决策记录
 
+## D-116 — 协调器启动代次证据必须在任务前登记
+
+- 用固定controller镜像、完整Docker ID、启动时间（纳秒精度）、PID namespace、host boot以及实例owner/fence签发独立用途的协调器proof。签发时只在固定只读镜像中执行readlink诊断，对照本进程namespace并前后复核同一启动。拒绝host PID、privileged、可写rootfs、越权cap或诊断路径被挂载覆盖；候选不能指定命令或参数。查询仅inspect，不执行命令/kill/rm。
+- 区分“容器仍存在”和“原启动实例仍活着”。同ID在更晚时间重启时，旧PID namespace及其原生Git后代已结束；当前新启动可以活跃，但不能代表旧实例继续执行。相同启动只接受明确exited/Pid0/FinishedAt>StartedAt；重启中、暂停、dead、缺字段、时间倒退、ID/镜像/签名/owner/fence不符与跨VM boot全部unknown。不会因租约过期单独判停止。
+- schema31仅新增不可更新/删除的coordinator表；插入触发器要求该owner/fence尚未创建任何执行或验证session。runtime在取得租约后、对外ready/恢复/执行前登记；health-only不诊断、不签发。历史schema30升级不补造记录，旧无proof事项仍锁定。新task_container模式必须显式提供controller名称与固定摘要，不能配置失败后回退旧模式。
+- 无finalization时仅对有事前coordinator proof的session增加独立停止证据分支；仍逐项验证所有任务command proof和empty，事务复查当前实例与命令数量后记录settlement。缺失任务proof不被协调器证据替代，不生成假的finalization。跨VM boot、删掉旧容器后的缺失证据、unknown-create/no-proof收束及完整业务引擎在途恢复仍需继续完成。
+
 ## D-115 — 持久启动身份对账与生命周期释放分离
 
 - v2启动记录使用现有签名密钥、独立用途域和规范binding哈希；记录、任务目录、父目录均fsync后才create，完整ID收据fsync后才start。沿用旧名称算法，但对账不依赖调用者对象键顺序。没有新Secret/身份，旧v1记录不签名升级。

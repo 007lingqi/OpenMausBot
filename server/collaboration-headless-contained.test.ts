@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { runCollaborationHeadless } from "./collaboration-headless.ts";
 import { DockerContainedPatchAgent } from "./collaboration/operations/contained-patch-agent.ts";
 import { DockerPatchAgent } from "./collaboration/operations/docker-patch-agent.ts";
+import { DockerCoordinatorAuthority } from "./collaboration/operations/docker-coordinator.ts";
 import { CollaborationHeadlessRuntime, type CollaborationHeadlessRuntimeOptions } from "./collaboration/operations/runtime.ts";
 
 const scratch: string[] = [];
@@ -21,6 +22,7 @@ function fixture() {
     OMB_HOST_GENERATION_FILE: generation, OMB_EXECUTION_TARGET_COMMANDS_JSON: JSON.stringify({ cases: { argv: ["node", "--version"], timeoutMs: 1000, maxOutputBytes: 32000 } }),
     OMB_EXECUTION_WRITE_SCOPES_JSON: '["src/**"]', OMB_EXECUTION_ACCEPTANCE_JSON: '[{"description":"拼写正确","observation":"显示hello"}]',
     OMB_DOCKER_PROVIDER_ISOLATION: "task_container", OMB_DOCKER_PROVIDER_IMAGE: "sha256:" + "c".repeat(64),
+    OMB_DOCKER_COORDINATOR_CONTAINER: "pilot", OMB_DOCKER_COORDINATOR_IMAGE: "sha256:" + "d".repeat(64),
     OMB_PROVIDER_MODEL_SOCKET_DIRECTORY: channel, OMB_OPENCODEX_RELAY_UID: "501", OMB_OPENCODEX_RELAY_GID: "1000",
     OMB_CODEX_MODEL: "gpt-6-astra", OMB_CODEX_REASONING_EFFORT: "medium", OMB_CODEX_OPENCODEX_ENDPOINT: "http://127.0.0.1:18100/v1/responses",
     OMB_PROVIDER_UID: "10001", OMB_PROVIDER_GID: "10001",
@@ -38,9 +40,13 @@ describe("headless contained provider assembly", () => {
     const f = fixture(); await f.run();
     expect(f.seen).toHaveLength(1); expect(f.seen[0].agent).toBeInstanceOf(DockerContainedPatchAgent);
     expect(f.seen[0].commandRunner).toBeDefined(); expect(f.seen[0].executionIsolation).toBe("docker_linux");
+    expect(f.seen[0].coordinator).toBeInstanceOf(DockerCoordinatorAuthority);
     expect(f.seen[0].execution?.repositories[f.root].targetCommands.cases.argv).toEqual(["node", "--version"]);
   });
   it.each([
+    { OMB_DOCKER_COORDINATOR_CONTAINER: undefined },
+    { OMB_DOCKER_COORDINATOR_IMAGE: undefined },
+    { OMB_DOCKER_COORDINATOR_IMAGE: "latest" },
     { OMB_DOCKER_PROVIDER_ISOLATION: "typo" },
     { OMB_DOCKER_PROVIDER_IMAGE: undefined },
     { OMB_DOCKER_PROVIDER_IMAGE: "mutable:latest" },

@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { OPENMAUSBOT_SOURCE_BASELINE } from "./config.ts";
 
-export const COLLABORATION_SCHEMA_VERSION = 30;
+export const COLLABORATION_SCHEMA_VERSION = 31;
 
 interface Migration {
   version: number;
@@ -1398,6 +1398,27 @@ const migrations: readonly Migration[] = [
         CREATE VIEW collaboration_mapping_all_results AS
           SELECT request_key,attempt,receipt_json,created_at FROM collaboration_acceptance_mapping_results UNION ALL
           SELECT request_key,attempt,receipt_json,created_at FROM collaboration_mapping_recovery_results;
+      `);
+    },
+  },
+  {
+    version: 31, name: "coordinator-startup-epoch-proof", checksum: "v31:immutable-pre-session-coordinator-proof",
+    apply(database) {
+      database.exec(`
+        CREATE TABLE collaboration_coordinator_proofs (
+          instance_owner TEXT NOT NULL,
+          instance_fence INTEGER PRIMARY KEY CHECK(instance_fence>0),
+          proof_json TEXT NOT NULL CHECK(json_valid(proof_json) AND length(proof_json)<=32768),
+          created_at INTEGER NOT NULL
+        ) STRICT;
+        CREATE TRIGGER coordinator_proofs_precede_work BEFORE INSERT ON collaboration_coordinator_proofs
+          WHEN EXISTS(SELECT 1 FROM collaboration_execution_sessions WHERE instance_owner=NEW.instance_owner AND instance_fence=NEW.instance_fence)
+            OR EXISTS(SELECT 1 FROM collaboration_verification_sessions WHERE instance_owner=NEW.instance_owner AND instance_fence=NEW.instance_fence)
+          BEGIN SELECT RAISE(ABORT,'coordinator proof must precede all sessions'); END;
+        CREATE TRIGGER coordinator_proofs_no_update BEFORE UPDATE ON collaboration_coordinator_proofs
+          BEGIN SELECT RAISE(ABORT,'coordinator proof is immutable'); END;
+        CREATE TRIGGER coordinator_proofs_no_delete BEFORE DELETE ON collaboration_coordinator_proofs
+          BEGIN SELECT RAISE(ABORT,'coordinator proof is immutable'); END;
       `);
     },
   },

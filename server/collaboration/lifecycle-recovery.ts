@@ -2,12 +2,14 @@ import type { DatabaseSync } from "node:sqlite";
 import { verifyContainmentProof, type ContainmentBinding, type ContainmentPort, type ContainmentProof } from "./containment.ts";
 import { assertCurrentInstanceLease, type InstanceLease } from "./leases.ts";
 import { assertLedgerArmed } from "./restore-guard.ts";
+import type { CoordinatorAuthority } from "./coordinator-lifecycle.ts";
 
 export interface LifecycleRecoveryInput {
   kind: "execution" | "verification";
   sessionId: string;
   instance: Pick<InstanceLease, "ownerId" | "fence">;
   containment: ContainmentPort;
+  coordinator?: CoordinatorAuthority;
   now: () => number;
   signal?: AbortSignal;
 }
@@ -55,9 +57,20 @@ export async function recoverLifecycleSession(db: DatabaseSync, input: Lifecycle
     if (row.instance_owner === input.instance.ownerId && row.instance_fence === input.instance.fence) return blocked("original_instance_current");
     const commands = db.prepare(`SELECT c.ordinal,c.binding_json,p.proof_json FROM ${table}_commands c LEFT JOIN ${table}_proofs p ON p.session_id=c.session_id AND p.ordinal=c.ordinal WHERE c.session_id=? ORDER BY c.ordinal`)
       .all(input.sessionId) as unknown as Array<{ ordinal: number; binding_json: string; proof_json: string | null }>;
+    let coordinatorEvidence: { state: "stopped"; fingerprint: string } | undefined;
     if (kind === "execution" || commands.length > 0) {
       const intent = db.prepare(`SELECT command_count FROM ${table}_finalization_intents WHERE session_id=?`).get(input.sessionId) as { command_count: number } | undefined;
-      if (!intent || intent.command_count !== commands.length) return blocked("coordinator_work_not_confirmed_finished");
+      if (intent && intent.command_count !== commands.length) return blocked("coordinator_work_not_confirmed_finished");
+      if (!intent) {
+        const registered = db.prepare("SELECT proof_json FROM collaboration_coordinator_proofs WHERE instance_owner=? AND instance_fence=?")
+          .get(row.instance_owner, row.instance_fence) as { proof_json: string } | undefined;
+        if (!registered || !input.coordinator) return blocked("coordinator_work_not_confirmed_finished");
+        const observed = await observe(() => input.coordinator!.inspect(JSON.parse(registered.proof_json),
+          { ownerId: row.instance_owner, fence: row.instance_fence }), input.signal);
+        assertCurrent();
+        if (observed.state !== "stopped" || !/^[a-f0-9]{64}$/u.test(observed.fingerprint)) return blocked("coordinator_exit_unconfirmed");
+        coordinatorEvidence = { state: "stopped", fingerprint: observed.fingerprint };
+      }
     }
     const evidence: Array<{ ordinal: number; fingerprint: string; state: "empty" }> = [];
     for (const command of commands) {
@@ -82,7 +95,7 @@ export async function recoverLifecycleSession(db: DatabaseSync, input: Lifecycle
       const count = db.prepare(`SELECT count(*) AS n FROM ${table}_commands WHERE session_id=?`).get(input.sessionId) as { n: number };
       if (count.n !== commands.length) { db.exec("ROLLBACK"); return blocked("process_set_changed"); }
       db.prepare(`INSERT INTO ${table}_settlements(session_id,evidence_json,created_at) VALUES(?,?,?)`).run(input.sessionId,
-        JSON.stringify({ version: 1, recoveredBy: input.instance, evidence }), input.now());
+        JSON.stringify({ version: 1, recoveredBy: input.instance, evidence, ...(coordinatorEvidence ? { coordinator: coordinatorEvidence } : {}) }), input.now());
       db.exec("COMMIT");
       return { state: "recovered", reason: "all_processes_confirmed_empty", workItemId };
     } catch (error) { db.exec("ROLLBACK"); throw error; }

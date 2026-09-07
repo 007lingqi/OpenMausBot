@@ -5,6 +5,8 @@ services:
     environment:
       OMB_DOCKER_PROVIDER_ISOLATION: task_container
       OMB_DOCKER_PROVIDER_IMAGE: ${OMB_DOCKER_PROVIDER_IMAGE:?fixed_task_image_digest_required}
+      OMB_DOCKER_COORDINATOR_CONTAINER: openmausbot-collaboration-pilot
+      OMB_DOCKER_COORDINATOR_IMAGE: ${OMB_DOCKER_COORDINATOR_IMAGE:?fixed_controller_image_digest_required}
       OMB_PROVIDER_MODEL_SOCKET_DIRECTORY: ${OMB_OPENCODEX_RELAY_HOST_DIRECTORY:?required}
     # The trusted controller must observe the SAME canonical path as the Docker
     # daemon. Keep the existing /run/omb-channel relay mount as well. This adds no

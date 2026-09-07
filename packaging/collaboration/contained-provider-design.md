@@ -29,10 +29,12 @@ Docker daemon/cgroup v2 提供独立于候选进程的运行状态。可信 head
 ## 必须继续解决的恢复缺口
 
 - create回执丢失后的持久身份查询已实现，但未知状态不自动解锁。仍须把新启动日志与命令账本做只读关联，并在协调器独立停止证据齐全后设计明确的恢复/收束协议；不得从观察状态倒签执行proof。
-- 原协调器还会运行容器外的 Git/候选操作。没有 finalization intent 不能仅靠任务容器退出解锁；需进一步证明旧协调器确实终止、不会继续原生写入，或将其写入也纳入持久隔离身份。现有租约过期不是该证据。
+- 原协调器的Git/候选操作由新coordinator启动代次proof覆盖；仅对有事前登记的新session，可在旧启动实例独立stopped、所有command proof/empty齐全后收束。旧记录、跨VM boot、missing container及unknown-create缺任务proof仍保守阻塞；租约过期不是停止证据。
 - 旧无proof事项保留原失败/次数/占用，不追补假凭据、不换账本重置尝试次数。新实现只为新启动记录真实证据。
 
 ## 启用门禁
+
+新coordinator装配要求`OMB_DOCKER_COORDINATOR_CONTAINER`为当前controller名称、`OMB_DOCKER_COORDINATOR_IMAGE`为其固定实际sha256；compose overlay已列出必填项。签发前后由daemon核对同一StartedAt与真实PID namespace，签名绑定实例owner/fence；独立查询区分原启动终止与同容器的新启动。runtime启动取得lease后先登记schema31不可变proof，再允许恢复/执行/群连接；probeOnly不执行Docker诊断。必须先准备schema31兼容回退镜像和当前数据备份，不能部署后直接退到旧schema30镜像，更不能覆盖旧快照丢失新事件。现有在线服务及账本仍schema30，尚未迁移。
 
 headless现已支持显式`OMB_DOCKER_PROVIDER_ISOLATION=task_container`。它要求`OMB_DOCKER_PROVIDER_IMAGE`固定sha256、`OMB_PROVIDER_MODEL_SOCKET_DIRECTORY`为controller与daemon共同可见的原生绝对目录、既有relay UID/GID，以及Astra/medium和Provider UID10001；不接受自定义CLI/launcher或其他endpoint，不因配置失败回退。独立任务镜像不改既有`OMB_DOCKER_COMMAND_IMAGE`。
 

@@ -13,11 +13,12 @@ import { hasUnsettledVerification, recordVerificationCommand, recordVerification
 import { applyCollaborationMigrations } from "./migrations.ts";
 import { containmentBindingHash, runtimeIdentityFingerprint, type ContainmentPort, type ContainmentProof } from "./containment.ts";
 import { DockerCliContainmentSupervisor } from "./operations/docker-containment.ts";
+import { registerCoordinator, type CoordinatorAuthority } from "./coordinator-lifecycle.ts";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
-function fixture() {
+function fixture(withCoordinator = false) {
   const root = mkdtempSync(join(tmpdir(), "lifecycle-recovery-")); roots.push(root);
   const service = startCollaborationService({ dataDirectory: root, planning: {
     planner: { propose: validProposal }, policy: { ...policy, allowedRepositories: [root] },
@@ -31,6 +32,8 @@ function fixture() {
   db.exec("PRAGMA foreign_keys = ON");
   const leases = new InstanceLeaseCoordinator(db, "old");
   const lease = leases.acquire(Date.now(), 60000)!;
+  if (withCoordinator) db.prepare("INSERT INTO collaboration_coordinator_proofs(instance_owner,instance_fence,proof_json,created_at) VALUES(?,?,?,?)")
+    .run(lease.ownerId, lease.fence, JSON.stringify({ epoch: "original" }), Date.now());
   const session = new ExecutionLifecycle(db, "recovery-execution", lease);
   session.reserve({ workItemId: item.workItemId!, planRevision: 1, repository: root, baseSha: "a".repeat(40), attempt: 1 });
   let state: "active" | "empty" = "active";
@@ -73,6 +76,44 @@ async function verificationFixture() {
 }
 
 describe("passive lifecycle recovery", () => {
+  it("recovers without finalization only after independently proving the old coordinator epoch and every command stopped", async () => {
+    const f = fixture(true); let state: "active" | "stopped" | "unknown" = "active";
+    const coordinator: CoordinatorAuthority = { capture: async () => { throw Error("must_not_backfill"); }, inspect: async (proof, expected) => {
+      expect(proof).toEqual({ epoch: "original" }); expect(expected).toEqual({ ownerId: f.lease.ownerId, fence: f.lease.fence });
+      return state === "unknown" ? { state, reason: "unconfirmed" } : { state, fingerprint: "f".repeat(64) };
+    } };
+    try {
+      f.command(); f.recordProof(); f.empty();
+      const input = { kind: "execution" as const, sessionId: f.sessionId, instance: f.takeover(), now: Date.now, containment: f.containment, coordinator };
+      for (state of ["active", "unknown"] as const) {
+        expect(await recoverLifecycleSession(f.db, input)).toMatchObject({ state: "blocked", reason: "coordinator_exit_unconfirmed" });
+        expect(hasUnsettledExecution(f.db, f.root)).toBe(true);
+      }
+      state = "stopped";
+      expect(await recoverLifecycleSession(f.db, input)).toMatchObject({ state: "recovered" });
+      expect(await recoverLifecycleSession(f.db, input)).toMatchObject({ state: "already_settled" });
+      expect(f.db.prepare("SELECT * FROM collaboration_execution_finalization_intents").all()).toEqual([]);
+      const settlement = f.db.prepare("SELECT evidence_json FROM collaboration_execution_settlements WHERE session_id=?").get(f.sessionId) as { evidence_json: string };
+      expect(JSON.parse(settlement.evidence_json).coordinator).toEqual({ fingerprint: "f".repeat(64), state: "stopped" });
+    } finally { f.db.close(); }
+  });
+  it("never registers a new coordinator proof after sessions have already started", async () => {
+    const f = fixture(); const authority: CoordinatorAuthority = { capture: async () => ({}), inspect: async () => ({ state: "active", fingerprint: "f".repeat(64) }) };
+    try { await expect(registerCoordinator(f.db, f.lease, authority, Date.now)).rejects.toThrow("precede"); }
+    finally { f.db.close(); }
+  });
+  it("does not turn a coordinator stop into a missing task proof or recover after cancellation", async () => {
+    const f = fixture(true); const stop = new AbortController();
+    const coordinator: CoordinatorAuthority = { capture: async () => ({}), inspect: async () => ({ state: "stopped", fingerprint: "f".repeat(64) }) };
+    try {
+      f.command(); f.empty();
+      const input = { kind: "execution" as const, sessionId: f.sessionId, instance: f.takeover(), now: Date.now, containment: f.containment, coordinator, signal: stop.signal };
+      expect(await recoverLifecycleSession(f.db, input)).toMatchObject({ state: "blocked", reason: "process_proof_missing" });
+      coordinator.inspect = async () => { stop.abort(); return { state: "stopped", fingerprint: "f".repeat(64) }; };
+      expect(await recoverLifecycleSession(f.db, input)).toMatchObject({ state: "blocked", reason: "recovery_cancelled" });
+      expect(hasUnsettledExecution(f.db, f.root)).toBe(true);
+    } finally { f.db.close(); }
+  });
   it.each([0, 1])("does not release %i execution commands without proof that coordinator work ended", async count => {
     const f = fixture();
     try {
@@ -191,8 +232,8 @@ describe("passive lifecycle recovery", () => {
         for (const table of ["commands", "proofs"]) f.db.exec(`DROP TRIGGER ${kind}_${table}_finalizing`);
         f.db.exec(`DROP TABLE collaboration_${kind}_finalization_intents`);
       }
-      f.db.exec("DROP VIEW collaboration_mapping_all_results; DROP VIEW collaboration_mapping_all_attempts; DROP TABLE collaboration_mapping_recovery_results; DROP TABLE collaboration_mapping_recovery_attempts; DROP TABLE collaboration_verification_runtime_policies; DROP TABLE collaboration_delivery_queries; DROP TABLE collaboration_document_resources; DROP TABLE collaboration_natural_intake_recoveries; DROP TABLE collaboration_natural_intake_recovery_requests; DROP TABLE collaboration_attachment_recovery_requests; DROP TABLE collaboration_attachment_projection_recoveries; DROP TABLE collaboration_attachment_projection_failures; DROP TABLE collaboration_attachment_failures; DELETE FROM collaboration_schema_migrations WHERE version>=21; PRAGMA user_version=20");
-      expect(applyCollaborationMigrations(f.db)).toEqual({ schemaVersion: 30, appliedMigrations: 30 });
+      f.db.exec("DROP TABLE collaboration_coordinator_proofs; DROP VIEW collaboration_mapping_all_results; DROP VIEW collaboration_mapping_all_attempts; DROP TABLE collaboration_mapping_recovery_results; DROP TABLE collaboration_mapping_recovery_attempts; DROP TABLE collaboration_verification_runtime_policies; DROP TABLE collaboration_delivery_queries; DROP TABLE collaboration_document_resources; DROP TABLE collaboration_natural_intake_recoveries; DROP TABLE collaboration_natural_intake_recovery_requests; DROP TABLE collaboration_attachment_recovery_requests; DROP TABLE collaboration_attachment_projection_recoveries; DROP TABLE collaboration_attachment_projection_failures; DROP TABLE collaboration_attachment_failures; DELETE FROM collaboration_schema_migrations WHERE version>=21; PRAGMA user_version=20");
+      expect(applyCollaborationMigrations(f.db)).toEqual({ schemaVersion: 31, appliedMigrations: 31 });
       expect(["sessions", "commands", "proofs"].map(table => f.db.prepare(`SELECT * FROM collaboration_execution_${table}`).all())).toEqual(before);
       expect(f.db.prepare("SELECT count(*) AS n FROM collaboration_execution_finalization_intents").get()).toEqual({ n: 0 });
       f.empty();
