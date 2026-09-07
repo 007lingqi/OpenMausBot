@@ -1,5 +1,11 @@
 # Meta 协作验证记录
 
+## 2026-09-07 578f36c固定controller镜像隔离检查
+
+- 427229/38240 exit0：固定base a4cab8c8660c…离线构建新image ad123605dc75…，标签contained-578f36c，revision 578f36ca02af211b7720f851f9e8ccc85ff21581。worker/channel与原真实Astra组件受测文件逐字节相同；没有额外模型调用。
+- 镜像中实际导入打包headless并启用task_container配置完成health，schema30/healthy/mode execute；仅使用/tmp合成Git仓库/签名key/数据库/空通道目录，network none、rootfs只读、cap-drop ALL，无Docker socket和业务数据挂载，Stream disabled。这是配置和打包启动验证，不是假装已经运行群任务或验证在途恢复。
+- 已保存artifactHashes/build-health-receipt.json，主服务未切换；8d36fb唯一运行pilot仍healthy，测试容器已清理。当前测试、模型及构建均终态。后续不能重跑已消费的一次性正式模型或固定构建脚本来刷新证据。
+
 ## 2026-09-07 headless显式装配门禁
 
 - 52dba2先行12项中10红：现有入口忽略新模式参数并始终选择旧Agent。实现后cf2c9a的headless两文件27项/typecheck通过，覆盖选择新Agent、未知模式、缺失/可变镜像、模型/强度/endpoint不匹配、Provider/relay身份不符、通道缺失与禁用自定义执行器；健康检查不触发任务。

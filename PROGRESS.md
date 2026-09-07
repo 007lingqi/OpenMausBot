@@ -1,5 +1,13 @@
 # Meta 协作实施进度
 
+## 最新交接：新controller镜像已验证，运行试点尚未切换（2026-09-07）
+
+- 本轮完成两批本地提交：9d74833为真实Astra同容器组件及测试修正，578f36c为headless显式装配；均未push。ec7300/82696和c2c2b9/31901两条完整回归链均exit0，所有旧测试句柄终态。当前唯一在线仍openmausbot-collaboration-pilot的3c05339，8d36fb确认healthy。
+- 427229离线固定缓存构建/隔离health通过：openmausbot-collaboration-pilot:contained-578f36c，sha256:ad123605dc7589dc059bca0394c0147db9699e075dc08564d8af7916d797b8bb。worker/channel逐字节等于a2958b真实Astra受测产物；新headless源码对应578f36c完整回归。健康探测mode execute/schema30/healthy，禁网络、无业务挂载/Docker socket、synthetic key/临时数据库、无群无模型调用，探测容器确认归属后清理。
+- 镜像收据保留在/var/folders/64/jv3wggb52g7dp20c2d849sy40000gn/T/omb-contained-release-578f36c-m3zEzE/build-health-receipt.json；固定构建脚本/private/tmp/omb-build-contained-controller-578f36c.mjs已消费，不原样重跑。构建镜像不等于部署或真实引擎闭环。正式模型组件的一次性证据仍在VM固定卷omb-contained-real-worker-v1/attempt-1，不能重建或刷次数。
+- 优先接续：补齐unknown create的持久启动身份对账，以及旧协调器容器/原生Git操作的独立停止证明；再用固定新镜像验证完整引擎的在途恢复及Spec/候选/双测试/Meta链。通过相关门禁并保存原账本备份和回退方案后，才切换唯一非生产服务；不从租约过期推断旧协调器死亡，不解锁历史无proof事项。
+- 真实群六场景、在线文档/表格正文材料、Mac主机重启和Owner本人最终验收仍待完成。b6ea68最后真实账本events12/outbox49/Owner1/integrity ok；没有伪造群事件、修改身份/凭据或切换旧服务。当前没有运行测试/模型/构建；用户AGENTS.md/outputs未改。整体Goal保持active。
+
 ## 当前批次：headless接入新执行容器（2026-09-07，完整回归通过，未部署）
 
 - 9d74833已保存上一批正式Astra组件、完整回归及测试时序修正，不push；AGENTS.md/outputs保留。新增headless配置装配与compose.contained-provider.yaml，但运行服务仍3c05339，未切换。
