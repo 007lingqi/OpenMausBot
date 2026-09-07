@@ -1,0 +1,19 @@
+# Add only AFTER compose.yaml + compose.opencodex.yaml on the dedicated pilot.
+# Configuration artifact, not deployment approval. Task recovery gates still apply.
+services:
+  collaboration:
+    environment:
+      OMB_DOCKER_PROVIDER_ISOLATION: task_container
+      OMB_DOCKER_PROVIDER_IMAGE: ${OMB_DOCKER_PROVIDER_IMAGE:?fixed_task_image_digest_required}
+      OMB_PROVIDER_MODEL_SOCKET_DIRECTORY: ${OMB_OPENCODEX_RELAY_HOST_DIRECTORY:?required}
+    # The trusted controller must observe the SAME canonical path as the Docker
+    # daemon. Keep the existing /run/omb-channel relay mount as well. This adds no
+    # new credential/socket, does not replace the other mounts and never creates
+    # a missing host directory. Do not point this at /run/omb-channel on the host.
+    volumes:
+      - type: bind
+        source: ${OMB_OPENCODEX_RELAY_HOST_DIRECTORY:?required}
+        target: ${OMB_OPENCODEX_RELAY_HOST_DIRECTORY:?required}
+        read_only: true
+        bind:
+          create_host_path: false

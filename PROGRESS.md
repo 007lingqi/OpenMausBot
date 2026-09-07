@@ -1,5 +1,13 @@
 # Meta 协作实施进度
 
+## 当前批次：headless接入新执行容器（2026-09-07，完整回归通过，未部署）
+
+- 9d74833已保存上一批正式Astra组件、完整回归及测试时序修正，不push；AGENTS.md/outputs保留。新增headless配置装配与compose.contained-provider.yaml，但运行服务仍3c05339，未切换。
+- 显式OMB_DOCKER_PROVIDER_ISOLATION=task_container选择DockerContainedPatchAgent；要求单独固定任务镜像、Astra/medium、固定本机endpoint/CLI/launcher及Provider UID10001，relay必须不同身份且通道目录可见。配置错误不回退旧进程方案；原未选择的shared_process分支保留用于既有服务受控切换，不作为最终目标完成。
+- 52dba2先行测试10项红灯后实现；cf2c9a定向两文件27项/typecheck通过。c2c2b9/31901现已终态exit0：相关测试→typecheck→完整pnpm test→typecheck→diff全部通过；主集294文件通过/1跳过、3286通过/18跳过（3304登记），broker7与桌面32项及打包/headless/channel启动退出均通过。业务代码/测试自74b32c启动后冻结，现无运行中测试/模型句柄。
+- e30cd8真实Docker Compose config只读合并校验通过：原全部环境及挂载逐项不变，命令镜像不变，仅增加三项模式参数和现有socket目录的同路径只读挂载，禁止自动创建宿主目录。此同路径挂载用于让可信controller与daemon看到相同canonical路径，保留原/run/omb-channel别名；没有部署动作或新凭据。b6ea68真实群仍events12/outbox49/Owner1/integrity ok。
+- 保存本批本地commit、不push；下一步固定新controller镜像和隔离health，之后还需原账本备份/回退及恢复门禁才考虑唯一非生产服务切换。未知create持久对账、旧协调器原生Git停止、真实引擎在途恢复及六真实群/文档/主机重启/Owner验收仍待完成，不扩大为生产部署。
+
 ## 最新检查点：正式Astra任务容器及完整回归通过（2026-09-07）
 
 - 上一轮有真实代码/合成Docker进展，本轮补齐正式worker验证。6a7557原env-path单测1次通过、773ms；静态代码明确后台探测允许5秒但测试默认只等1秒。d44191添加1.2秒合规慢启动后原断言稳定红灯；只将初次异步探测等待改为6秒，刷新后的旧PATH仍必须同步立即存在，产品实现未改。原事故未记录shell完成时间，不额外断言操作系统延迟根因。

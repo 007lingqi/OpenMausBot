@@ -24,6 +24,7 @@ import {
   NodeDockerCommandPort,
 } from "./collaboration/operations/docker-containment.ts";
 import { DockerSandboxedCommandRunner } from "./collaboration/operations/docker-command-runner.ts";
+import { DockerContainedPatchAgent } from "./collaboration/operations/contained-patch-agent.ts";
 import {
   CodexReadOnlyPatchProvider,
   DockerPatchAgent,
@@ -426,6 +427,8 @@ function acceptanceConditions(environment: NodeJS.ProcessEnv): AcceptanceConditi
 function dockerExecutionOptions(environment: NodeJS.ProcessEnv): Partial<CollaborationHeadlessRuntimeOptions> {
   if (environment.OMB_EXECUTION_ENABLED !== "1") return {};
   if (environment.OMB_EXECUTION_BACKEND !== "docker") throw new Error("OMB_EXECUTION_BACKEND_must_be_docker");
+  const providerIsolation = environment.OMB_DOCKER_PROVIDER_ISOLATION?.trim() ?? "shared_process";
+  if (!["shared_process", "task_container"].includes(providerIsolation)) throw new Error("OMB_DOCKER_PROVIDER_ISOLATION_invalid");
   const repository = requiredAbsolutePath(environment, "OMB_EXECUTION_REPOSITORY");
   const worktreeRoot = requiredAbsolutePath(environment, "OMB_EXECUTION_WORKTREE_ROOT");
   const exchangeRoot = requiredAbsolutePath(environment, "OMB_EXECUTION_EXCHANGE_ROOT");
@@ -473,7 +476,9 @@ function dockerExecutionOptions(environment: NodeJS.ProcessEnv): Partial<Collabo
   const commandRoot = join(exchangeRoot, "commands");
   mkdirSync(exchangeRoot, { recursive: true, mode: 0o711 });
   chmodSync(exchangeRoot, 0o711);
-  const agent = new DockerPatchAgent({
+  const agent = providerIsolation === "task_container"
+    ? containedDockerAgent(environment, { docker, containment, exchangeRoot })
+    : new DockerPatchAgent({
     provider: new CodexReadOnlyPatchProvider({
       exchangeRoot: providerRoot,
       ...(environment.OMB_CODEX_OPENCODEX_ENDPOINT !== undefined
@@ -523,6 +528,28 @@ function dockerExecutionOptions(environment: NodeJS.ProcessEnv): Partial<Collabo
       },
     },
   };
+}
+
+/** Explicit trusted startup selection. An invalid contained contract must
+ * never silently fall back to the shared-process provider. The task image and
+ * command/test image are deliberately independent, both operator-controlled. */
+function containedDockerAgent(environment: NodeJS.ProcessEnv, input: {
+  docker: NodeDockerCommandPort; containment: DockerCliContainmentSupervisor; exchangeRoot: string;
+}): DockerContainedPatchAgent {
+  const image = environment.OMB_DOCKER_PROVIDER_IMAGE?.trim();
+  const relayUid = optionalPositiveInteger(environment, "OMB_OPENCODEX_RELAY_UID");
+  const relayGid = optionalPositiveInteger(environment, "OMB_OPENCODEX_RELAY_GID");
+  if (!image || !/^sha256:[a-f0-9]{64}$/u.test(image) || relayUid === undefined || relayGid === undefined ||
+    environment.OMB_CODEX_MODEL?.trim() !== "gpt-6-astra" || environment.OMB_CODEX_REASONING_EFFORT?.trim() !== "medium" ||
+    (environment.OMB_CODEX_OPENCODEX_ENDPOINT !== undefined && environment.OMB_CODEX_OPENCODEX_ENDPOINT.trim() !== "http://127.0.0.1:18100/v1/responses") ||
+    (environment.OMB_PROVIDER_UID !== undefined && Number(environment.OMB_PROVIDER_UID) !== 10001) ||
+    (environment.OMB_PROVIDER_GID !== undefined && Number(environment.OMB_PROVIDER_GID) !== 10001) ||
+    (environment.OMB_CODEX_EXECUTABLE !== undefined && environment.OMB_CODEX_EXECUTABLE.trim() !== "codex") ||
+    (environment.OMB_PROVIDER_SET_PRIV_EXECUTABLE !== undefined && environment.OMB_PROVIDER_SET_PRIV_EXECUTABLE.trim() !== "/usr/bin/setpriv"))
+    throw new Error("contained_provider_configuration_invalid");
+  return new DockerContainedPatchAgent({ docker: input.docker, containment: input.containment, image,
+    exchangeRoot: join(input.exchangeRoot, "contained-provider"),
+    modelSocketDirectory: requiredAbsolutePath(environment, "OMB_PROVIDER_MODEL_SOCKET_DIRECTORY"), relayUid, relayGid });
 }
 
 function productionRuntimeOptions(

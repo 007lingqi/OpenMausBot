@@ -27,6 +27,10 @@ Docker daemon/cgroup v2 提供独立于候选进程的运行状态。可信 head
 
 ## 启用门禁
 
+headless现已支持显式`OMB_DOCKER_PROVIDER_ISOLATION=task_container`。它要求`OMB_DOCKER_PROVIDER_IMAGE`固定sha256、`OMB_PROVIDER_MODEL_SOCKET_DIRECTORY`为controller与daemon共同可见的原生绝对目录、既有relay UID/GID，以及Astra/medium和Provider UID10001；不接受自定义CLI/launcher或其他endpoint，不因配置失败回退。独立任务镜像不改既有`OMB_DOCKER_COMMAND_IMAGE`。
+
+`docker/compose.contained-provider.yaml`仅作为base+OpenCodex之后的显式overlay；实际Compose合并已确认保留原环境/挂载，仅为同一授权socket目录补充同路径只读别名。尚未在运行服务启用，不能将配置文件当作部署或恢复验收。
+
 必须先完成：固定任务镜像/entrypoint及headless装配；Provider只能读视图、无法读写真实候选/他人任务/凭据；模型前凭据入账；正常和失败建议；源漂移和脱敏文件写入拒绝；setsid/双重fork后代停止；控制进程强杀后独立核验与恢复；同仓库串行/不同仓库并发；真实Astra/medium建议→代码→双阶段测试→Meta→钉钉业务回复。维持真实材料来源、唯一Owner和失败预算。
 
 只读视图当前明确限制：最多512文件、总计8MiB、单文件512KiB；现有JS/TS/JSX/TSX和JSON语法脱敏器另有约32KiB上限。空JS文件允许；不支持的二进制或解析失败不以“已读取”通过。脱敏是已知表示的防护，不是任意Secret的完美识别器。

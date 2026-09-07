@@ -1,5 +1,11 @@
 # Meta 协作验证记录
 
+## 2026-09-07 headless显式装配门禁
+
+- 52dba2先行12项中10红：现有入口忽略新模式参数并始终选择旧Agent。实现后cf2c9a的headless两文件27项/typecheck通过，覆盖选择新Agent、未知模式、缺失/可变镜像、模型/强度/endpoint不匹配、Provider/relay身份不符、通道缺失与禁用自定义执行器；健康检查不触发任务。
+- e30cd8实际Compose 5.1.3合并仅做config解析，原所有挂载/环境逐值保留、命令镜像不变，新增socket同路径只读别名且create_host_path=false。未执行up/restart；b6ea68主服务events12/outbox49/Owner1/quick_check ok。
+- c2c2b9/31901完整顺序回归已终态exit0：27定向/typecheck/完整pnpm test/typecheck/diff通过，主集294文件通过/1跳过、3286通过/18跳过（3304登记）；broker7、桌面32、打包/headless/channel启动退出通过。现有组件真实模型证据仍适用，因为本批未修改Provider/worker源码。所有句柄终态，后续仅文档和镜像准备，不重复运行模型。
+
 ## 2026-09-07 正式worker真实模型与当前全仓终态
 
 - env-path调查：6a7557原单项773ms通过；d44191使用1.2秒慢启动忠实复现初次等待1秒误报。仅修正该启动等待窗口，保留刷新后同步可见断言。802fdc定向13通过/7平台跳过；219bfb全量中的相同慢启动用例1579ms通过。不宣称有限复测证明所有平台时序缺陷已消除，也不修改产品PATH逻辑。
