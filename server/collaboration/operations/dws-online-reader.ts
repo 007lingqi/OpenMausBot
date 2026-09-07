@@ -21,6 +21,11 @@ export interface OnlineBodyReceipt {
   product: "doc" | "sheet"; scope: "full_document" | "all_worksheets"; complete: true;
   records: OnlineBodyRecord[]; worksheets: Array<{ sheetId: string; title: string }>; responseHashes: string[];
 }
+export interface OnlineDocumentReader {
+  authorizationFingerprint(input: OnlineReadSource): string;
+  read(input: OnlineReadSource, signal: AbortSignal): Promise<OnlineBodyReceipt>;
+}
+export { grantSchema as onlineReadGrantSchema, sourceSchema as onlineReadSourceSchema };
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 function invalid(): never { throw new Error("online_document_read_unverified"); }
 function active(signal: AbortSignal): void { if (signal.aborted) throw new Error("online_document_read_cancelled"); }

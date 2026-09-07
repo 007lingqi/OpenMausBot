@@ -16,18 +16,20 @@ const defaultRun:Run=args=>new Promise(resolve=>{
   });
 });
 
-export function createPilotSshOperations(options:{sshConfig:string;port:number;run?:Run}):PrivateSshOperations {
+export function createPilotSshOperations(options:{sshConfig:string;port:number;run?:Run;channel?:'model'|'documents'}):PrivateSshOperations {
+  const channel=options.channel??'model';
   const validate=()=>{
     try{
       const info=lstatSync(options.sshConfig);
       if(!process.getuid||!isAbsolute(options.sshConfig)||normalize(options.sshConfig)!==options.sshConfig||
         !options.sshConfig.endsWith('/colima-openmausbot-pilot/ssh.config')||!info.isFile()||
-        info.uid!==process.getuid()||(info.mode&0o022)!==0||!Number.isSafeInteger(options.port)||options.port<1||options.port>65535)throw new Error();
+        info.uid!==process.getuid()||(info.mode&0o022)!==0||!Number.isSafeInteger(options.port)||options.port<1||options.port>65535||
+        !['model','documents'].includes(channel))throw new Error();
     }catch{throw new Error('ssh_channel_configuration_invalid');}
   };
   validate();
   const run=options.run??defaultRun;
-  const directory=`/tmp/omb-model-channel-${options.port}`,socket=`${directory}/model.sock`;
+  const directory=`/tmp/omb-${channel}-channel-${options.port}`,socket=`${directory}/${channel}.sock`;
   const forward=`${socket}:127.0.0.1:${options.port}`;
   const base=['-F',options.sshConfig,'-T','-o','BatchMode=yes','-o','ControlMaster=no','-o','ProxyCommand=false'];
   const command=async(args:readonly string[])=>{validate();return run([...base,...args]);};

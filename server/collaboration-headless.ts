@@ -68,6 +68,9 @@ import type { AcceptanceCondition } from "./collaboration/snapshot.ts";
 import { configuredNaturalIntake } from "./collaboration/operations/natural-intake-model.ts";
 import { configuredAcceptanceMapping } from "./collaboration/operations/acceptance-mapping-model.ts";
 import { configuredDocumentExtractor } from "./collaboration/operations/document-extractor.ts";
+import { configuredOnlineDocuments } from "./collaboration/operations/configured-online-documents.ts";
+import { readDingTalkAllowedConversationIds } from "./integrations/dingtalk/config.ts";
+export { readDingTalkAllowedConversationIds } from "./integrations/dingtalk/config.ts";
 import { DocumentResourceJournal } from "./collaboration/operations/document-resource-journal.ts";
 import { DocumentResourceRecovery } from "./collaboration/operations/document-resource-recovery.ts";
 import { proactiveConversationRoutes, proactiveDestination, hasOwnerTextCommandReceipt } from "./collaboration/delivery-routing.ts";
@@ -202,44 +205,6 @@ function latestWorkItemSourceEventId(databaseFile: string, workItemId: string, a
   } finally {
     database.close();
   }
-}
-
-function parseConversationAllowlist(raw: string, field: string): Set<string> {
-  let values: unknown[];
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    values = Array.isArray(parsed) ? parsed : [parsed];
-  } catch {
-    values = raw.split(",");
-  }
-  if (values.length < 1 || values.length > 32) throw new Error(`${field}_invalid`);
-  const normalized = values.map((value) => {
-    if (typeof value !== "string") throw new Error(`${field}_invalid`);
-    const id = value.trim();
-    if (!id || id.length > 256 || /[\u0000-\u001f\u007f]/u.test(id)) throw new Error(`${field}_invalid`);
-    return id;
-  });
-  const result = new Set(normalized);
-  if (result.size !== normalized.length) throw new Error(`${field}_contains_duplicates`);
-  return result;
-}
-
-export function readDingTalkAllowedConversationIds(environment: NodeJS.ProcessEnv): ReadonlySet<string> {
-  const preferred = environment.OMB_DINGTALK_ALLOWED_CONVERSATION_IDS?.trim();
-  const legacy = environment.DINGTALK_ROBOT_ALLOWED_CONVERSATION_IDS?.trim();
-  if (!preferred && !legacy) throw new Error("dingtalk_allowed_conversation_ids_required");
-  const preferredIds = preferred
-    ? parseConversationAllowlist(preferred, "OMB_DINGTALK_ALLOWED_CONVERSATION_IDS")
-    : undefined;
-  const legacyIds = legacy
-    ? parseConversationAllowlist(legacy, "DINGTALK_ROBOT_ALLOWED_CONVERSATION_IDS")
-    : undefined;
-  if (preferredIds && legacyIds) {
-    const same =
-      preferredIds.size === legacyIds.size && [...preferredIds].every((value) => legacyIds.has(value));
-    if (!same) throw new Error("dingtalk_allowed_conversation_ids_conflict");
-  }
-  return preferredIds ?? legacyIds!;
 }
 
 export function createDingTalkDelivery(
@@ -576,6 +541,7 @@ function productionRuntimeOptions(
   const naturalIntake = configuredNaturalIntake(environment);
   const acceptanceMapping = configuredAcceptanceMapping(environment);
   const documentExtractor = configuredDocumentExtractor(environment);
+  const onlineDocuments = configuredOnlineDocuments(environment, allowedConversationIds ?? new Set());
   if (naturalIntake && !executionOptions.planner) throw new Error("natural_intake_requires_planning_configuration");
   if (acceptanceMapping && !executionOptions.planner) throw new Error("acceptance_mapping_requires_planning_configuration");
   return {
@@ -586,6 +552,7 @@ function productionRuntimeOptions(
     ...executionOptions,
     ...(naturalIntake ? { naturalIntake } : {}),
     ...(acceptanceMapping ? { acceptanceMapping } : {}),
+    ...(onlineDocuments ? { onlineDocuments } : {}),
     ...(dingTalkEnabled
       ? { outboxDelivery: createDingTalkDelivery(sessions, environment, options.dataDirectory) }
       : {}),

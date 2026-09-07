@@ -59,6 +59,29 @@ function signalIo(): { io: HeadlessIo; signal(name: NodeJS.Signals): void } {
 }
 
 describe("secure collaboration headless CLI", () => {
+  it("wires explicitly authorized online documents without reading them during a health probe", async () => {
+    const directory = temporaryDirectory(), config = join(directory, "online.json");
+    writeFileSync(config, JSON.stringify({ version: 1, grants: [{ id: "fixture", profile: "corp:user", conversationId: "group",
+      node: "fixture-node", product: "doc" }], transport: { kind: "private_socket", socketPath: "/not-mounted/document.sock" } }), { mode: 0o600 });
+    let captured: CollaborationHeadlessRuntimeOptions | undefined;
+    await runCollaborationHeadless(["--health", "--data-dir", directory], {
+      OMB_DINGTALK_ENABLED: "1", OMB_DINGTALK_ALLOWED_CONVERSATION_IDS: "group", OMB_ONLINE_DOCUMENTS_CONFIG_FILE: config,
+    }, { io: io().io, createRuntime(options) { captured = options; return new CollaborationHeadlessRuntime({ ...options, dingTalk: undefined }); } });
+    expect(captured?.onlineDocuments).toBeDefined();
+    expect(captured!.onlineDocuments!.authorizationFingerprint({ conversationId: "group", node: "fixture-node", sourceEventId: "event", normalizedHash: "a".repeat(64) }))
+      .toMatch(/^[a-f0-9]{64}$/u);
+  });
+  it("rejects an online document grant outside the Stream whitelist before creating the runtime", async () => {
+    const directory = temporaryDirectory(), config = join(directory, "online.json");
+    writeFileSync(config, JSON.stringify({ version: 1, grants: [{ id: "fixture", profile: "corp:user", conversationId: "outside",
+      node: "fixture-node", product: "doc" }], transport: { kind: "private_socket", socketPath: "/not-mounted/document.sock" } }), { mode: 0o600 });
+    let created = false;
+    await expect(runCollaborationHeadless(["--health", "--data-dir", directory], {
+      OMB_DINGTALK_ENABLED: "1", OMB_DINGTALK_ALLOWED_CONVERSATION_IDS: "group", OMB_ONLINE_DOCUMENTS_CONFIG_FILE: config,
+    }, { io: io().io, createRuntime(options) { created = true; return new CollaborationHeadlessRuntime({ ...options, dingTalk: undefined }); } }))
+      .rejects.toThrow("online_document_configuration_invalid");
+    expect(created).toBe(false);
+  });
   it("rejects incomplete document parser configuration before creating the runtime", async () => {
     const directory = temporaryDirectory();
     let created = false;

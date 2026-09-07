@@ -28,6 +28,13 @@ it('fixes both ends of the forward and bounds remote cleanup to the private sock
  const prepare=run.mock.calls[0][0].at(-1)!;expect(prepare).toContain('id -u');expect(prepare).toContain('700');
  const cleanup=run.mock.calls[2][0].at(-1)!;expect(cleanup).toContain('test -S');expect(cleanup).toContain('rm -f');expect(cleanup).not.toContain('rm -rf');
 });
+it('keeps the document channel separate from the model socket and its cleanup',async()=>{
+ const {sshConfig,run}=fixture();
+ const operations=createPilotSshOperations({sshConfig,port:12345,run,channel:'documents'});
+ await operations.connect();await operations.cleanup();
+ expect(run.mock.calls[0][0]).toContain('/tmp/omb-documents-channel-12345/documents.sock:127.0.0.1:12345');
+ expect(run.mock.calls[1][0].at(-1)).not.toContain('omb-model-channel');
+});
 it('does not treat arbitrary cancel errors as successful cleanup',async()=>{
  const {run,operations}=fixture();run.mockResolvedValue({code:255,stdout:'',stderr:'private diagnostics'});
  await expect(operations.disconnect()).rejects.toThrow('ssh_channel_cancel_failed');

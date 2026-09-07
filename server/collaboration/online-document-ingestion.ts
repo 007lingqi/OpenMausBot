@@ -3,14 +3,14 @@ import { DatabaseSync } from "node:sqlite";
 import { assertCurrentInstanceLease, type InstanceLease } from "./leases.ts";
 import { assertLedgerArmed } from "./restore-guard.ts";
 import { CommandCleanupError } from "./execution-limits.ts";
-import type { DwsOnlineDocumentReader } from "./operations/dws-online-reader.ts";
+import type { OnlineDocumentReader } from "./operations/dws-online-reader.ts";
 import { durableOnlineSources, onlineHash, onlineReadSource, type DurableOnlineSource } from "./online-document-evidence.ts";
 import { enqueueInboundCard } from "./outbox.ts";
 import { renderClarificationCard } from "./message-renderer.ts";
 import { readLatestWorkItemSnapshot } from "./snapshot.ts";
 
 export interface OnlineDocumentIngestionOptions {
-  reader: DwsOnlineDocumentReader;
+  reader: OnlineDocumentReader;
   currentLease(): Pick<InstanceLease, "ownerId" | "fence"> | null;
 }
 interface Job { id: string; work_item_id: string; normalized_hash: string; grant_fingerprint: string; status: string; attempts: number }

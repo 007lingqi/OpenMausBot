@@ -1,5 +1,14 @@
 # Meta 协作验证记录
 
+## 2026-09-07 文档运行入口与独立宿主通道（完整验证进行中）
+
+- 当前完整链8349d3/session96894已确认exit0：352项扩大定向、完整pnpm test、前后类型检查、打包/启动及diff通过。19项受影响复测与68d853的独立打包文档通道/typecheck/diff也通过；新headless/配置/channel/bridge测试在共享函数提取后由完整集重新执行。全部测试会话终态；两次打包失败已修复，无在途发布或真实业务调用。本批经任务文件归属核对后本地commit、不push/不部署。下一步核实真实授权材料与宿主/Docker装配，完整Goal仍active。
+
+- 534683：headless两项先行红灯，分别是onlineDocuments未装配和白名单外grant未拒绝。ed0692：文档SSH路径先行红灯。0b0e3e确认headless两项修复与typecheck通过；518b9c确认配置/真实本地Unix转发/gateway/headless共43项及typecheck/diff；9a66b3确认新增bridge与原模型SSH共59项及typecheck/diff通过。
+- 已覆盖固定grant/来源回执/脱敏、跨群与节点拒绝、任意profile/argv拒绝、浏览器/凭据头拒绝、大小限制、非私有socket/父目录/符号链接拒绝、已收束与未知失败区分、错误来源回执拒绝、shutdown等待在途读取；bridge固定端口争用与三次预算跨重启。全部为明确本地夹具，没有真实授权或文档读取。
+- 59a546确认8349d3/session96894的352项扩大定向及typecheck通过，完整主集仍在运行。f747eb单独打包smoke失败，准确暴露文档入口间接导入headless可执行模块导致的bundle启动副作用；移出共享白名单函数且保持其原校验/错误与headless兼容导出后，d311c4/session80767重新验证受影响headless/bridge/config、typecheck、打包smoke和diff。该提取发生在完整链期间，必须结合最新受影响复测，不能将链描述为自开始源码不变。未取所有终态前不提交/不部署。
+- 5bbe43：80767终态exit1，19项（headless/bridge）及typecheck通过，smoke仍失败。12cd88只读诊断确认继承PATH的两个目录段不规范；仅将smoke配置改为固定Node目录+/usr/bin:/bin，不放宽运行配置。新smoke/types/diff回执待确认；主链96894仍在运行。
+
 ## 2026-09-07 唯一Owner恢复材料解释（本地完整验证通过，未部署）
 
 - e4f6fc先行10项中2失败，真实复现Owner恢复返回allowed=false；其余8项安全拒绝/回滚用例通过。实现后ea2db0确认10项及typecheck通过。新增无授权不能清零、旧授权不可复用、授权记录不可修改/删除断言后，8c30bf确认5文件104项、pnpm typecheck及diff通过。

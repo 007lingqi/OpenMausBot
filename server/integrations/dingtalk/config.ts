@@ -3,6 +3,37 @@ export interface DingTalkCredentials {
   clientSecret: string;
 }
 
+function parseConversationAllowlist(raw: string, field: string): Set<string> {
+  let values: unknown[];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    values = Array.isArray(parsed) ? parsed : [parsed];
+  } catch { values = raw.split(","); }
+  if (values.length < 1 || values.length > 32) throw new Error(`${field}_invalid`);
+  const normalized = values.map(value => {
+    if (typeof value !== "string") throw new Error(`${field}_invalid`);
+    const id = value.trim();
+    if (!id || id.length > 256 || /[\u0000-\u001f\u007f]/u.test(id)) throw new Error(`${field}_invalid`);
+    return id;
+  });
+  const result = new Set(normalized);
+  if (result.size !== normalized.length) throw new Error(`${field}_contains_duplicates`);
+  return result;
+}
+
+/** Shared configuration only: importing this module never starts a service. */
+export function readDingTalkAllowedConversationIds(environment: NodeJS.ProcessEnv): ReadonlySet<string> {
+  const preferred = environment.OMB_DINGTALK_ALLOWED_CONVERSATION_IDS?.trim();
+  const legacy = environment.DINGTALK_ROBOT_ALLOWED_CONVERSATION_IDS?.trim();
+  if (!preferred && !legacy) throw new Error("dingtalk_allowed_conversation_ids_required");
+  const preferredIds = preferred ? parseConversationAllowlist(preferred, "OMB_DINGTALK_ALLOWED_CONVERSATION_IDS") : undefined;
+  const legacyIds = legacy ? parseConversationAllowlist(legacy, "DINGTALK_ROBOT_ALLOWED_CONVERSATION_IDS") : undefined;
+  if (preferredIds && legacyIds && !(preferredIds.size === legacyIds.size && [...preferredIds].every(value => legacyIds.has(value)))) {
+    throw new Error("dingtalk_allowed_conversation_ids_conflict");
+  }
+  return preferredIds ?? legacyIds!;
+}
+
 export interface DingTalkCredentialProvider {
   load(): DingTalkCredentials | null;
 }

@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { smokeModelChannel } from "./smoke-model-channel.mjs";
+import { smokeOnlineDocumentChannel } from "./smoke-online-document-channel.mjs";
 
 const execFileAsync = promisify(execFile);
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -47,6 +48,8 @@ try {
   // Use the canonical path so the entry point's direct-execution guard holds.
   const entry = realpathSync(join(staging, "server", "collaboration-headless.js"));
   await smokeModelChannel(realpathSync(join(staging,"server","collaboration","operations","opencodex-model-channel.js")),
+    minimalEnvironment(healthData),staging);
+  await smokeOnlineDocumentChannel(realpathSync(join(staging,"server","collaboration","operations","online-document-bridge.js")),
     minimalEnvironment(healthData),staging);
 
   const health = await execFileAsync(process.execPath, [entry, "--health", "--data-dir", healthData], {

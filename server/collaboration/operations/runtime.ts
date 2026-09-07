@@ -166,7 +166,7 @@ export interface CollaborationHeadlessRuntimeOptions {
   probeOnly?: boolean;
   planner?: PlannerPort;
   naturalIntake?: NaturalIntakeInterpreter;
-  onlineDocuments?: import("./dws-online-reader.ts").DwsOnlineDocumentReader;
+  onlineDocuments?: import("./dws-online-reader.ts").OnlineDocumentReader;
   acceptanceMapping?: AcceptanceMappingModels;
   planningPolicy?: PlanningPolicy;
   planningDefaultDefinition?: { repository: string; acceptanceConditions: AcceptanceCondition[] };
