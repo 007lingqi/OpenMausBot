@@ -1,5 +1,12 @@
 # Meta 协作验证记录
 
+## 2026-09-07 独立模型通道进程和容器回环relay
+
+- 3ee706 exit1：TDD两个新模块尚不存在，未运行行为测试。首次宿主测试cell332权限审核超时、未启动；唯一重试82678/c32b81为38通过1失败，来自新增it.each数组展开夹具，修复参数传递后验证。14473/22eefd typecheck exit0。
+- 737915 exit1：新增打包烟测预期暴露opencodex-model-channel.js未进入bundle。补入口后7376/aea721 exit0：39项回归、typecheck、headless打包smoke、relay真实探测包编译和diff通过；两模式在无node_modules暂存目录启动/转发合成SSE/SIGTERM退出均通过，原headless健康JSON/存活/退出也通过。
+- 27453/1e9ed1 exit0：指定Colima缓存镜像的临时容器，network=none/read-only/UID501/no-new-privileges/cap-drop ALL，仅挂本次私有socket。使用生产startLocalOpenCodexRelay与原ResponsesNaturalIntakeModel，容器普通HTTP fetch只访问其回环地址，经私有SSH Unix通道和宿主网关真实请求Astra/medium；解析器核验完成元数据，合成JSON相符，其他模型400。临时资源清理断言通过。恢复测试是合成socket停止/重建后新请求成功，不代表真实SSH重连/宿主重启恢复。
+- 完整63105/28d0d8 exit0：`pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-model-channel-typecheck && git diff --check`全链终态通过，含主集、broker、桌面、普通包/9代理路径、独立通道两模式和headless无node_modules启动/SIGTERM。源码和测试在运行期间固定，跨轮继续原进程，没有重新启动；完整输出截断，不补造统计。本批12文件本地提交，不push。无真实群消息/账本迁移/Owner更改/旧容器替换，所有相关会话已终态。
+
 ## 2026-09-07 本机网关和私有容器通道
 
 - 84586/dc93f4 exit0：前轮网关12项/typecheck/diff取得终态。扩展测试首次c31aca因默认沙箱loopback EPERM失败，非网关行为失败；授权宿主63631/c1d5c9 exit0：21项及typecheck/diff通过。覆盖四并发、断开释放、挂起fetch超时及迟到body取消、挂起流/close、输出8MiB限制、chunked输入限制、非SSE拒绝和客户端工具白名单。

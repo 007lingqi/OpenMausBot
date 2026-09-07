@@ -1,5 +1,20 @@
 # 非生产模型配置（显式启用）
 
+## 独立通道进程（已打包，尚未部署）
+
+此节更新下方“尚无入口/relay”的历史状态。`pnpm build:server`现在输出自包含`dist-server/collaboration/operations/opencodex-model-channel.js`。可由受控进程管理器显式启动两种角色：
+
+```sh
+node dist-server/collaboration/operations/opencodex-model-channel.js --mode host --port 10101 --endpoint http://127.0.0.1:10100/v1/responses
+node dist-server/collaboration/operations/opencodex-model-channel.js --mode relay --port 10101 --socket /run/omb-channel/model.sock
+```
+
+两条命令分别运行在宿主和容器，不是同一网络空间；此处仅示例，不是现有服务已配置。端口显式指定，0仅适合探测动态端口。host仅回环访问OpenCodex；relay仅回环监听，通过私有Unix socket到宿主网关，无任何远端TCP回退。配置不从群消息、附件或环境凭据推断，未知/重复参数、非本机上游和非规范socket路径拒绝；启动错误仅输出固定诊断，不回显配置或上游正文。
+
+relay启动和每次连接均要求socket所有者是其当前UID、权限0600，父目录同UID/0700且为无符号链接别名的真实目录；路径不超过100字节。由受信任进程管理目录、挂载和SSH转发，同UID恶意进程不在该检查的防护范围内。不要让候选代码或附件进程使用relay身份或挂载该目录。上游断开/权限变化当前请求失败，socket重建后新请求恢复，不重放旧模型请求。SIGTERM/SIGINT会关闭监听并取消活跃请求；stdout的ready仅代表本地监听建立，不能当模型或钉钉健康证明。
+
+默认headless打包烟测已验证无node_modules的两模式启动、合成HTTP/Unix转发及正常停止；临时无网络容器的生产relay已真实调用Astra/medium并清理。Dockerfile/Compose尚未携带或启动此进程，常驻SSH守护与重连尚未接线，原群服务未切换。本例不迁移账本/Owner或授予新的凭据能力；后续必须先完成唯一服务装配及恢复验证。
+
 ## 2026-09-07：保留原服务，私有模型通道已验证但尚未常驻装配
 
 此节替代下方“优先宿主控制面”的实施方向：原账本和工作区在Colima虚拟机内，继续保留唯一原Owner/服务/路径，通过既有SSH master的私有Unix socket调用宿主回环网关，不迁移账本或新建第二个Stream。

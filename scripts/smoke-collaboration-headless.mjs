@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { smokeModelChannel } from "./smoke-model-channel.mjs";
 
 const execFileAsync = promisify(execFile);
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -45,6 +46,8 @@ try {
   // Node resolves import.meta.url through macOS' /var -> /private/var alias.
   // Use the canonical path so the entry point's direct-execution guard holds.
   const entry = realpathSync(join(staging, "server", "collaboration-headless.js"));
+  await smokeModelChannel(realpathSync(join(staging,"server","collaboration","operations","opencodex-model-channel.js")),
+    minimalEnvironment(healthData),staging);
 
   const health = await execFileAsync(process.execPath, [entry, "--health", "--data-dir", healthData], {
     cwd: staging,

@@ -1,5 +1,13 @@
 # Meta 协作实施进度
 
+## 最新接续：独立通道进程/生产容器relay完整验证通过（2026-09-07）
+
+- 上轮progress（01f29aa），本轮progress。新增opencodex-local-relay与opencodex-model-channel及测试，独立bundle入口和默认headless打包烟测。保持同UID私有socket、仅回环、无TCP回退、不自动重放；SIGTERM取消并收束。未改Docker镜像/Compose或原群服务。
+- TDD3ee706为两个新增模块尚不存在；82678/c32b81的唯一失败为新增参数化测试把数组展开成实参，修复夹具后按完整参数数组测试，未放宽配置拒绝。737915预期复现发布包缺少新入口。7376/aea721 exit0：39项定向、typecheck、无node_modules两模式转发/SIGTERM、原headless健康与退出、diff通过。332审核超时未启动，唯一重试已完成，不再重试旧调用。
+- 27453/1e9ed1 exit0：`OMB_PROBE_CLIENT_FILE=/tmp/openmausbot-relay-model-client.mjs node --experimental-strip-types /tmp/openmausbot-unix-channel-probe.mjs`，指定固定缓存镜像、无网络非root只读临时容器经新生产回环relay/私有Unix通道/宿主网关，真实自然模型返回合成JSON并核验Astra/medium完成元数据，错误模型拒绝；临时容器、SSH forward/socket目录、网关及relay清理通过。不是开发CLI容器执行或常驻/群内业务验收。
+- 63105/28d0d8 exit0：完整pnpm test/typecheck/独立编译至/tmp/openmausbot-model-channel-typecheck/diff全链通过，包含独立通道和原headless无依赖打包启动/退出。上轮保持同一句柄等待，本轮取得终态；受测业务/测试代码保持固定，没有重启或重复验证。所有上一批会话已终态，不再轮询。本批7个代码/测试/脚本及5份说明保存本地提交，实际以Git为准；用户AGENTS.md/outputs不动，不push。
+- 7bd7f1只读核对原试点healthy、既有SSH master运行；没有启停旧服务、读取或修改凭据身份、发送群消息。下一步：取得完整终态并提交本批；补常驻SSH生命周期/重连与Docker打包接线，验证后切换唯一非生产服务。随后真实文档镜像/正文、六类群场景、独立supervisor/主机恢复和Owner本人签字仍保留，Goal active。
+
 ## 最新接续：私有容器模型通道已实际验证，尚未切换旧服务（2026-09-07）
 
 - 基线9bb2966。新增opencodex-local-gateway及21项边界/生命周期测试；开发Provider显式关闭CLI默认web_search。真实诊断747f73证实400来自工具限制，非网络不可达；保持网关限制，未加联网工具权限。41217/cfab9e为新增断言预期红灯。
