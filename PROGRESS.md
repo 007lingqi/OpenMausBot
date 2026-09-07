@@ -1,5 +1,12 @@
 # Meta 协作实施进度
 
+## 当前目标状态：受阻，等待真实试点材料与读取身份（2026-09-07）
+
+- 原生Goal已标blocked，完整目标未缩小、未完成。连续三轮末均缺同一项输入：Owner指定的非生产钉钉Bug文档/表格链接及允许使用的已登录账号。前两轮分别完成fe941c3读取恢复、efea709镜像打包修复及实际验证，归类为progress；本轮仅复核现状，没有新的实现或真实验收进展，也没有仍在运行的验证句柄。阻塞计数依据目标轮次，不依据工具调用数。
+- 935739只读核验：原固定1f53b346…试点healthy/restarts0，schema31，onlineDocumentsConfigured=false/documentRelayEnabled=false；Astra/medium保持；events12/outbox49/pendingOutbox0，Owner1/runningRuns0/naturalIntakeInFlight0，quick_check=ok。没有新入站可继续验收；未访问私人材料、选择DWS账号、调用模型或更改服务。
+- 本地修复已完整保存，最近完整回归3585项通过/18跳过，类型/打包/启动与真实隔离容器的合成检查通过，证据见下节；工作树仅用户AGENTS.md/outputs，本轮只有收束记录变更。模拟文档/健康检查不能替代获准的真实文档及群操作，不再为了续跑重复同一验证。
+- 恢复入口：Owner提供允许测试的材料链接和可用已登录账号名称，无需发送密钥。然后核验真实DWS成功包装和正文入当前Spec，装配宿主读取通道并准备保留当前数据的schema35恢复方案，再切换唯一非生产试点，完成六类群场景、完整交付/在途与主机恢复，最后由Owner本人验收。新身份、生产/不可逆影响继续须明确授权；不得代选账号、合成平台事件冒充实测、倒签旧proof或刷新耗尽预算。
+
 ## 当前批次：文档relay镜像打包遗漏（2026-09-07，完整验证通过/未部署）
 
 - 上轮fe941c3已本地提交，工作树只保留用户AGENTS.md/outputs；属于实际修复与验证进展。继续检查非生产部署发现正式Dockerfile没有复制entrypoint要求的online-document-relay.js，旧Docker烟测从宿主挂入relay副本，不能发现这一遗漏。d75809先行红灯确认缺失。

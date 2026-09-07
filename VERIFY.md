@@ -1,5 +1,11 @@
 # Meta 协作验证记录
 
+## 2026-09-07 真实试点阻塞复核（Goal受阻，不是完成）
+
+- c17a97/0d9387确认fe941c3与efea709已保存，业务工作树及暂存区无差异，仅用户AGENTS.md/outputs未跟踪；全部验证会话已在前轮确认exit0，本轮未重跑测试。
+- 935739对唯一指定Docker试点做只读检查：healthy/restarts0、固定镜像1f53b346…、schema31、在线读取与文档relay均未配置、gpt-6-astra/medium；events12/outbox49/pendingOutbox0、唯一Owner1、runningRuns0/naturalIntakeInFlight0、quick_check=ok。没有新增真实群消息或可观察的在途验收任务，不把常驻服务健康视作正在执行验收。
+- 非生产材料链接和获准读取账号连续三轮仍未提供，原生Goal已按重复阻塞规则标blocked，未标complete。完整真实六场景/正文/交付/恢复/Owner验收仍未完成；后续由明确材料和账号恢复，不伪造成功，不重置历史失败预算。本轮只保存收束证据，不部署或修改身份凭据。
+
 ## 2026-09-07 镜像内文档relay打包验证（完整验证通过/未部署）
 
 - d75809：Docker部署先行测试1失败/2通过，复现正式Dockerfile漏复制文档relay。修复后44274d：4文件61项、pnpm typecheck、pnpm build:server及git diff --check通过。
