@@ -245,6 +245,33 @@ function ledger(root: string): DatabaseSync {
 }
 
 describe("trusted candidate executor", () => {
+  it("rejects an old ready plan with unread online material before reserving or running work", async () => {
+    const run = vi.fn((request: AgentRunRequest) => completed(request));
+    const h = setup({ agent: new FakeAgent(run) }); const db = ledger(h.root);
+    const executor = new CandidateExecutor(join(h.root, "data", "collaboration", "collaboration.sqlite"), h.execution);
+    try {
+      // Model a pre-reader ledger: source contains a document but its published snapshot has no gate.
+      db.prepare("UPDATE collaboration_external_events SET normalized_json=? WHERE work_item_id=?")
+        .run(JSON.stringify({ text: "按 https://alidocs.dingtalk.com/i/nodes/legacy 修复" }), h.workItemId);
+      await expect(executor.executeCurrentPlan(h.workItemId)).rejects.toThrow("plan_materials_incomplete");
+      expect(run).not.toHaveBeenCalled();
+      expect(db.prepare("SELECT count(*) AS n FROM collaboration_execution_sessions").get()).toEqual({ n: 0 });
+      expect(db.prepare("SELECT count(*) AS n FROM collaboration_runs").get()).toEqual({ n: 0 });
+    } finally { executor.close(); h.service.close(); db.close(); }
+  });
+  it("does not commit a late result when material becomes incomplete during execution", async () => {
+    let db!: DatabaseSync; let id = "";
+    const h = setup({ agent: new FakeAgent(request => {
+      writeFileSync(join(request.cwd, "src", "value.txt"), "after\n");
+      db.prepare("UPDATE collaboration_external_events SET normalized_json=? WHERE work_item_id=?")
+        .run(JSON.stringify({ text: "按 https://alidocs.dingtalk.com/i/nodes/late 修复" }), id);
+      return completed(request);
+    }) }); db = ledger(h.root); id = h.workItemId;
+    try { const result = await h.service.executeCurrentPlan(id);
+      expect(result.report.reasons).toContain("plan_materials_incomplete");
+      expect(db.prepare("SELECT count(*) AS n FROM collaboration_candidates WHERE result_sha IS NOT NULL").get()).toEqual({ n: 0 });
+    } finally { h.service.close(); db.close(); }
+  });
   it("persists repository ownership before preparation and blocks a second executor using the same lease", async () => {
     const h = setup({ agent: new FakeAgent(request => ({ ...completed(request), status: "failed" })) });
     const db = ledger(h.root);

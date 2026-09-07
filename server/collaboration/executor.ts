@@ -27,6 +27,7 @@ import {
   type TestEvidence,
 } from "./quality-gate.ts";
 import { WorktreeManager, type ManagedWorktree } from "./worktree-manager.ts";
+import { readPlanMaterialReadiness } from "./plan-material-readiness.ts";
 import { assertLedgerArmed } from "./restore-guard.ts";
 import { ExecutionLifecycle } from "./execution-lifecycle.ts";
 import { CommandCleanupError } from "./execution-limits.ts";
@@ -540,6 +541,7 @@ export class CandidateExecutor {
       )
       .get(workItemId) as NodeRow | undefined;
     if (!row?.repository) throw new Error("Work Item has no current executable modify node");
+    if (!readPlanMaterialReadiness(this.database, workItemId, row.current_plan_revision).ready) throw new Error("plan_materials_incomplete");
     return row;
   }
 
@@ -548,7 +550,7 @@ export class CandidateExecutor {
     workItemId: string,
     planRevision: number,
     nodeId: string,
-  ): "owner_interrupt" | "plan_superseded" | null {
+  ): "owner_interrupt" | "plan_superseded" | "plan_materials_incomplete" | null {
     const row = this.database
       .prepare(
         "SELECT r.status AS run_status, r.interrupt_requested_at, w.control_state AS work_item_control_state, " +
@@ -577,10 +579,12 @@ export class CandidateExecutor {
       return "owner_interrupt";
     }
     if (row.current_plan_revision !== planRevision || row.node_active !== 1) return "plan_superseded";
+    if (!readPlanMaterialReadiness(this.database, workItemId, planRevision).ready) return "plan_materials_incomplete";
     return null;
   }
 
   private isCurrentExecutableNode(workItemId: string, planRevision: number, nodeId: string): boolean {
+    if (!readPlanMaterialReadiness(this.database, workItemId, planRevision).ready) return false;
     return Boolean(
       this.database
         .prepare(

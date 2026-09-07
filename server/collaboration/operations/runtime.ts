@@ -40,6 +40,7 @@ import type { UnactivatedLaunchRecoveryPort } from "../unactivated-launch-recove
 import type { PlanningPolicy } from "../graph.ts";
 import type { InboundMessageOutcome } from "../inbound.ts";
 import { assertCurrentInstanceLease, InstanceLeaseCoordinator, StaleFenceError, type InstanceLease } from "../leases.ts";
+import { recheckPlanMaterials } from "../plan-material-readiness.ts";
 import { OutboxDispatcher, type DispatchOutcome, type OutboxDispatcherOptions } from "../outbox-dispatcher.ts";
 import { readDeliveryHealth, type DeliveryHealth } from "./delivery-health.ts";
 import { requestDeliveryReview, isDeliveryReviewEvent } from "../delivery-review.ts";
@@ -790,6 +791,9 @@ export class CollaborationHeadlessRuntime {
       }
       if (!this.reason && this.executionEnabled()) this.queuePendingCandidatesAtStartup();
       if (!this.reason) {
+        for (const row of this.database.prepare("SELECT id FROM collaboration_work_items WHERE definition_status='ready_for_execution' AND status NOT IN ('accepted','cancelled')").all() as unknown as Array<{ id: string }>) {
+          this.recheckPlanMaterials(row.id);
+        }
         enqueuePendingOwnerDecisionCards(this.database, this.options.dingTalk?.cardTemplateId, this.clock.now());
         this.syncAllMetaBundles();
       }
@@ -1342,6 +1346,10 @@ export class CollaborationHeadlessRuntime {
 
   private scheduleReadyExecution(workItemId: string, verificationOnly = false): void {
     if (!this.executionEnabled() || this.options.probeOnly || !this.health().ready || this.scheduledWorkItems.has(workItemId) || !this.database) return;
+    if (!this.recheckPlanMaterials(workItemId)) {
+      this.queuedWorkItems.delete(workItemId); this.queuedVerifications.delete(workItemId);
+      this.syncMetaBundleBestEffort(workItemId, true); return;
+    }
     const pendingVerification = this.pendingCandidateVerification(workItemId);
     if (pendingVerification) {
       if (pendingVerification.verifierContractAttempts >= CANDIDATE_VERIFICATION_MAX_ATTEMPTS) {
@@ -1453,6 +1461,13 @@ export class CollaborationHeadlessRuntime {
         this.activeRepositoryExecutions.delete(repository);
         this.scheduleNextQueuedWorkItem(repository);
       });
+  }
+
+  private recheckPlanMaterials(workItemId: string): boolean {
+    return recheckPlanMaterials(this.database!, workItemId, this.clock.now(), () => {
+      if (!this.lease) throw new Error("instance_lease_unavailable");
+      assertCurrentInstanceLease(this.database!, this.lease, this.clock.now());
+    });
   }
 
   private scheduleNextQueuedWorkItem(repository: string): void {

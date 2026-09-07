@@ -15,6 +15,7 @@ import { clarificationRecipient } from "./clarification-recipients.ts";
 import { attachmentCompletenessGates, attachmentExcerpts, readNaturalAttachmentContext } from "./attachment-completeness.ts";
 import { readAttachmentEvidenceNotification } from "./attachment-ingestion.ts";
 import { durableOnlineSources, readOnlineBody, onlineBodyExcerpts } from "./online-document-evidence.ts";
+import { recheckPlanMaterials } from "./plan-material-readiness.ts";
 import {
   appendWorkItemSnapshot,
   readLatestWorkItemSnapshot,
@@ -400,6 +401,11 @@ export class PlanningCoordinator {
       now,
       { contextSummary },
     );
+  }
+
+  recheckPlanMaterials(workItemId: string, now = Date.now()): boolean {
+    if (this.closed) throw new Error("Planning coordinator is closed");
+    return recheckPlanMaterials(this.database, workItemId, now);
   }
 
   observeAcceptedOnlineDocument(workItemId: string, jobId: string, now = Date.now()): DefinitionRevisionOutcome | null {

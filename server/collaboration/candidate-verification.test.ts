@@ -254,6 +254,28 @@ function verify(item: Fixture, runner: SandboxedCommandRunner, now = 4_000, maxA
   });
 }
 
+function legacyUnreadMaterial(item: Fixture): void {
+  item.database.prepare("UPDATE collaboration_external_events SET normalized_json=? WHERE work_item_id=?")
+    .run(JSON.stringify({ text: "按 https://alidocs.dingtalk.com/i/nodes/legacy 修复" }), item.workItemId);
+}
+
+describe("live material checks for legacy candidates", () => {
+  it("does not run independent verification for unread source material", async () => {
+    const item = fixture(); const runner = new FakeRunner(); legacyUnreadMaterial(item);
+    await expect(verify(item, runner)).rejects.toThrow("candidate_verification_target_unavailable");
+    expect(runner.requests).toHaveLength(0);
+    expect(item.database.prepare("SELECT count(*) AS n FROM collaboration_verification_sessions").get()).toEqual({ n: 0 });
+  });
+  it("revokes cached Meta success and blocks automatic completion when material is no longer complete", async () => {
+    const item = fixture(); expect((await verify(item, new FakeRunner())).passed).toBe(true);
+    legacyUnreadMaterial(item);
+    expect(candidateHasPassedMetaReview(item.database, item.runId, item.candidateSha)).toBe(false);
+    expect(completeVerifiedLowRiskCandidate(item.database, { workItemId: item.workItemId, runId: item.runId,
+      sourceEventId: "legacy-auto-complete", now: 5000 }).completed).toBe(false);
+    expect(item.database.prepare("SELECT accepted_candidate_sha FROM collaboration_work_items WHERE id=?").get(item.workItemId)).toEqual({ accepted_candidate_sha: null });
+  });
+});
+
 function mappingHarness(item: Fixture) {
     const proposer: NaturalIntakeModelPort = { async complete(input) {
       const value = JSON.parse(input.user);

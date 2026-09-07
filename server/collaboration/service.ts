@@ -1,4 +1,6 @@
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { recheckPlanMaterials } from "./plan-material-readiness.ts";
 
 import type { DingTalkInboundMessage } from "../integrations/dingtalk/types.ts";
 import {
@@ -45,6 +47,7 @@ export interface CollaborationService {
   ingestDingTalkMessage(message: DingTalkInboundMessage): InboundMessageOutcome;
   processNaturalIntake(now?: number): Promise<string | null>;
   processOnlineDocuments(now?: number): Promise<string | null>;
+  recheckPlanMaterials(workItemId: string, now?: number): boolean;
   observeAttachmentEvidence(
     workItemId: string,
     evidence: AcceptedAttachmentEvidence,
@@ -181,6 +184,14 @@ export function startCollaborationService(options: CollaborationServiceOptions):
       assertServiceArmed();
       return await onlineDocuments?.processOne(now) ?? null;
     },
+    recheckPlanMaterials(workItemId, now) {
+      if (closed) throw new Error("Collaboration service is closed");
+      assertServiceArmed();
+      if (planning) return planning.recheckPlanMaterials(workItemId, now);
+      const db = new DatabaseSync(ledger.filePath);
+      try { db.exec("PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000"); return recheckPlanMaterials(db, workItemId, now ?? Date.now()); }
+      finally { db.close(); }
+    },
     observeAttachmentEvidence(workItemId, evidence, now) {
       if (closed) throw new Error("Collaboration service is closed");
       assertServiceArmed();
@@ -197,6 +208,7 @@ export function startCollaborationService(options: CollaborationServiceOptions):
       if (closed) throw new Error("Collaboration service is closed");
       assertServiceArmed();
       if (!execution) throw new Error("Collaboration execution is not configured");
+      if (planning && !planning.recheckPlanMaterials(workItemId, now)) throw new Error("plan_materials_incomplete");
       return await execution.executeCurrentPlan(workItemId, attempt, now);
     },
     ownerBinding() {

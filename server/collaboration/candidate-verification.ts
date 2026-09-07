@@ -10,6 +10,7 @@ import { appendExecutionAudit } from "./audit.ts";
 import type { ContainmentPort } from "./containment.ts";
 import { CommandCleanupError, isolatedExecutionEnvironment } from "./execution-limits.ts";
 import { assertCurrentInstanceLease, type InstanceLease } from "./leases.ts";
+import { readPlanMaterialReadiness } from "./plan-material-readiness.ts";
 import {
   runTargetTests,
   type SandboxedCommandRunner,
@@ -214,7 +215,7 @@ function publicEvidence(evidence: readonly TestEvidence[], commands: Readonly<Re
 }
 
 function readRow(database: DatabaseSync, candidateRunId: string): VerificationRow | null {
-  return database.prepare(
+  const row = database.prepare(
     "SELECT r.id AS candidate_run_id, r.work_item_id, r.plan_revision, p.snapshot_revision, p.proposal_hash, " +
       "m.assigned_agent_id AS modify_agent_id, v.assigned_agent_id AS verifier_agent_id, " +
       "v.commands_json, v.read_scope_json, v.deny_scope_json, r.repository_path, c.result_sha, c.changed_paths_json, " +
@@ -231,7 +232,8 @@ function readRow(database: DatabaseSync, candidateRunId: string): VerificationRo
       "WHERE r.id = ? AND r.status = 'succeeded' AND c.state = 'target_tests_passed' " +
       "AND c.result_sha IS NOT NULL AND w.definition_status = 'ready_for_execution' " +
       "AND w.control_state = 'active'",
-  ).get(candidateRunId) as VerificationRow | undefined ?? null;
+  ).get(candidateRunId) as VerificationRow | undefined;
+  return row && readPlanMaterialReadiness(database, row.work_item_id, row.plan_revision).ready ? row : null;
 }
 
 function latestReview(database: DatabaseSync, runId: string, stage: "verifier" | "meta"): StoredReview | null {
@@ -421,6 +423,7 @@ export class CandidateVerificationCoordinator {
 
   private async verifyWithLifecycle(input: Parameters<CandidateVerificationCoordinator["verify"]>[0]): Promise<CandidateVerificationOutcome> {
     const now = this.options.clock ?? Date.now;
+    if (!readRow(this.database, input.candidateRunId)) throw new Error("candidate_verification_target_unavailable");
     const sessionId = reserveVerification(this.database, input.candidateRunId, input.instance, now());
     let ordinal = 0;
     let cleanupUnknown = false;

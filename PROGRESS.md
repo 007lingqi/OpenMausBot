@@ -1,5 +1,23 @@
 # Meta 协作实施进度
 
+## 当前权威状态：旧计划材料门禁完整验证通过（2026-09-07，未部署）
+
+- 8da09b确认bc43a5/session40147整链exit0：358项定向、前置typecheck、完整pnpm test、末尾typecheck和git diff --check通过。37ed07输出包含打包及9代理路径检查，8da09b确认headless/合成模型通道启动退出检查；完整主集计数在返回中截断，不推算。源码/测试在链运行期间固定，全部旧句柄已终态，不再轮询。
+- 本批16个文件归当前任务，按仓库规则保存本地commit、不push；用户AGENTS.md和outputs保持原样。实现覆盖旧计划执行前/提交/自测、独立复测与缓存Meta、低风险完成/Owner资格、未发送通知和迟到查询回执；恢复不依赖Planner、不重置预算、不调用模型。
+- 455621只读核验唯一colima-openmausbot-pilot/openmausbot-collaboration-pilot：running/healthy、restartCount=0、schema31、controller镜像1f53b346…、回复队列clear。健康探针不能证明六真实群场景通过；本轮没有部署、改变业务数据、读取私人文档、发群消息或调用真实模型。
+- 下一实施缺口已核实：productionRuntimeOptions尚未装配onlineDocuments；observeAcceptedOnlineDocument只投影facts，已经applied的自然解释不会重新处理，且原自然解释记录有不可变触发器，不能覆盖旧记录或伪造新群事件。需要独立来源版本与持久预算的补读再解释，以及受限宿主DWS装配。真实授权文档/表格成功契约、资料替换/Owner恢复、六场景/完整引擎、宿主恢复和Owner本人验收仍未完成；Goal active。
+
+## 当前批次：旧计划材料门禁贯穿执行、复测和通知（2026-09-07，未提交/未部署）
+
+- 本批检查点（20工具轮）：bc43a5/session40147最新观察仍在运行，必须继续同一会话。HEAD仍0aa090a；本批源码/测试/状态文档未提交，AGENTS.md/outputs原样保留。接续先取得该链终态；若通过检查diff及本任务文件归属后本地commit、不push，再继续真实装配和产品缺口。Goal active，本轮为实际实现进展，不是重复阻塞；不能以本地定向141通过替代最终完整链或真实验收。
+
+- 当前唯一验证会话session40147：完整定向（含钉钉/Owner/Ledger/Outbox）→typecheck→完整pnpm test→typecheck→diff，必须先读取终态，不重复启动。此前session29495已由966a7d确认exit2：141项通过，类型检查发现新测试headline枚举错误，已按真实契约修正；此前无完整回归。新链启动后源码和测试冻结，仅状态文档更新；通过前不自动commit/发布。
+
+- 上一轮0aa090a与完整回归终态已核验，属于实质进展，本轮从其基础继续。新增plan-material-readiness：每次依据当前计划对应的最新Spec与持久附件/在线正文重算完整性，不信旧ready状态或缓存review。直接执行在创建session前拦截，运行中提交前/提交后/自测后也复查；Verifier在占用和命令前拒绝未读材料，缓存Meta与唯一Owner/低风险完成同经此检查；未发送completed/candidate_ready及查询回执的迟到落库均重查材料。
+- 启动和排队执行前会原子将旧不完整计划投影为通俗澄清，保留原计划/候选和预算，不调用模型；重复检查无新快照或通知。独立于Planner装配，只有执行器/复测器的恢复运行时也可用；检查时持有当前实例lease，暂停/接受/取消事项不新增澄清快照。已接service/runtime，不是独立无调用者组件。
+- fda34f先行复现旧未读材料仍能执行/复测/保持Meta通过；最初迟到执行测试误用了request.worktreePath，修正为真实cwd后f45eff复现仍可提交及旧完成通知仍发送。ae7dc0/session94891为119通过/21失败，根因是没有Planner的恢复配置被误拦；改为独立原子材料检查后822969/session29495定向8文件/141项通过（151611），后续类型检查以最新工具终态为准。
+- 本轮所有代码/测试变更属于当前任务，用户AGENTS.md/outputs仍不动。等待最新完整验证链终态前不commit、不部署；不要重复启动旧会话。实际DWS装配/授权材料/真实成功包装、资料替换及旧事件补读再解释、Docker六场景、完整引擎和宿主恢复/Owner本人验收仍未完成，Goal保持active。
+
 ## 最新终态：在线正文任务/Spec/运行时接线完整回归通过（2026-09-07，未部署）
 
 - 1680ab确认0334e9/session59325整条链exit0：47项聚焦→typecheck→完整pnpm test→typecheck→diff。主集302文件通过/1跳过、3481项通过/18跳过；broker7项、桌面32项、服务端打包、9代理路径、headless/合成模型通道启动检查均通过。所有本批测试会话已终态，无运行中测试或部署；源码/测试在该链期间保持固定，仅状态文档更新。

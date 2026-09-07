@@ -7,6 +7,7 @@ import { isCurrentRecoveryNotification } from "./recovery-notification.ts";
 import { isCurrentAttachmentFeedback } from "./attachment-feedback.ts";
 import { isCurrentNaturalIntakeFailureNotice } from "./natural-intake-recovery.ts";
 import { isCurrentDeliveryReviewNotice } from "./delivery-review.ts";
+import { isCurrentMaterialDelivery } from "./plan-material-readiness.ts";
 import { reconcileOutboxOne } from "./outbox-reconciler.ts";
 
 interface DispatchRow {
@@ -161,7 +162,7 @@ export class OutboxDispatcher {
           "AND newer.aggregate_version > current.aggregate_version AND newer.superseded_at IS NULL)",
       )
       .get(row.id, instance.ownerId, instance.fence, now);
-    if (current && isCurrentRecoveryNotification(this.database, row) && isCurrentAttachmentFeedback(this.database, row) && isCurrentNaturalIntakeFailureNotice(this.database, row) && isCurrentDeliveryReviewNotice(this.database, row)) return true;
+    if (current && isCurrentRecoveryNotification(this.database, row) && isCurrentAttachmentFeedback(this.database, row) && isCurrentNaturalIntakeFailureNotice(this.database, row) && isCurrentDeliveryReviewNotice(this.database, row) && isCurrentMaterialDelivery(this.database, row)) return true;
     const updated = this.database
       .prepare(
         "UPDATE collaboration_outbox SET delivery_state = 'superseded', superseded_at = ?, " +

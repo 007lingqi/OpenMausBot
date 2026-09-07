@@ -271,6 +271,19 @@ async function stopHarness(harness: RuntimeHarness): Promise<void> {
 }
 
 describe("runtime repository single-writer scheduling", () => {
+  it("rechecks old unread material at restart even without a planner, without reserving or starting execution", async () => {
+    const h = createHarness([createRepository(temporaryDirectory(), "legacy-material")]);
+    const db = new DatabaseSync(h.databaseFile);
+    db.prepare("UPDATE collaboration_external_events SET normalized_json=? WHERE work_item_id=?")
+      .run(JSON.stringify({ text: "根据 https://alidocs.dingtalk.com/i/nodes/legacy 修复" }), h.items[0].workItemId);
+    h.runtime = new CollaborationHeadlessRuntime({ ...h.options, planner: undefined, planningPolicy: undefined });
+    try { await h.runtime.start(); await h.runtime.drainOnce();
+      expect(h.agent.startedWorkItems).toEqual([]);
+      expect(db.prepare("SELECT count(*) AS n FROM collaboration_execution_dispatches").get()).toEqual({ n: 0 });
+      expect(db.prepare("SELECT definition_status FROM collaboration_work_items WHERE id=?").get(h.items[0].workItemId)).toEqual({ definition_status: "waiting_clarification" });
+      expect(JSON.stringify(db.prepare("SELECT payload_json FROM collaboration_outbox").all())).toContain("还没有读取正文");
+    } finally { await stopHarness(h); db.close(); }
+  });
   it("recovers old occupancy and starts waiting work, never relaunching an orphan execution as new", async () => {
     const repo = createRepository(temporaryDirectory(), "recovery-queue");
     const h = createHarness([repo, repo]);

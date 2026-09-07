@@ -8,6 +8,7 @@ import { isCurrentRecoveryNotification } from "./recovery-notification.ts";
 import { isCurrentAttachmentFeedback } from "./attachment-feedback.ts";
 import { isCurrentNaturalIntakeFailureNotice } from "./natural-intake-recovery.ts";
 import { isCurrentDeliveryReviewNotice } from "./delivery-review.ts";
+import { isCurrentMaterialDelivery } from "./plan-material-readiness.ts";
 
 type Query = NonNullable<OutboxDeliveryPort["reconcile"]>;
 interface Row {
@@ -19,7 +20,7 @@ const fingerprint = (row: Row): string => createHash("sha256").update(JSON.strin
 function current(db: DatabaseSync, row: Row): boolean {
   return row.delivery_state === "dead_letter" && row.sent_at === null && row.superseded_at === null &&
     isCurrentRecoveryNotification(db, row) && isCurrentAttachmentFeedback(db, row) &&
-    isCurrentNaturalIntakeFailureNotice(db, row) && isCurrentDeliveryReviewNotice(db, row);
+    isCurrentNaturalIntakeFailureNotice(db, row) && isCurrentDeliveryReviewNotice(db, row) && isCurrentMaterialDelivery(db, row);
 }
 
 /** Uses only the transport's query method. Send attempts and uncertain replies remain untouched. */
