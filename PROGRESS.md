@@ -1,5 +1,17 @@
 # Meta 协作实施进度
 
+## 当前检查点：新版本已切换唯一 Docker 试点，等待真实群验收（2026-09-07）
+
+- 本任务25文件已本地提交def5f17，无push，用户AGENTS.md/outputs未动。9754/d9a563完整回归和授权第4次固定候选映射均终态通过，不再运行旧恢复脚本或重置预算；原生Goal active，未完成。
+- 7927ce离线构建新镜像sha256:70087328c7590f1775d64fcde3706e4b52b865cc019688d11042c00024d92bdb（opencodex-def5f17），原local及旧镜像保留。唯一context为colima-openmausbot-pilot。
+- b9517c在旧账本隔离副本完成schema11→30、完整性/外键和五张历史表原字段逐值保留；初次比较把新增delivery_sequence列也计入哈希而误报差异，7f3daf已证明原字段不变，随后按原列重验通过。新VM仓库repository-release-readiness-def5f17在codex/pilot-def5f17分支，固定base0837a3fc6f02be0c6b067f63749f19d8d7104154；三文件补丁在旧基线上先check再应用，六项业务/源码测试在隔离Docker通过。旧仓库不改。
+- 5d7cae切换成功：只停止/重建openmausbot-collaboration-pilot，先保存一致性offline-data及原环境/unit；systemd drop-in改用固定三份Compose配置，显式唯一service，不使用down或remove-orphans。四角色Astra/medium、reporter及TSX只读上下文已配置，保留业务凭据/Owner，仅移除旧模型auth挂载，不删除文件。其他旧容器保持Exited。
+- 01b958/b9b458：真实systemd进程重启恢复后schema30、owners1、liveLease1、mode ready、integrity ok，原12事件/49 Outbox未增加，镜像固定且容器healthy/restarts0，service enabled/active。cfacef在异步启动瞬间检查lease读到0；未再次重启，等待同次启动完成后复查通过。不是VM/宿主重启或独立supervisor验收。
+- 真实Stream接收/注册尚待新群事件证明：启动日志曾reconnecting，进程有已建立443连接；独立--health只检查配置并返回configured，不能据此称实时Stream connected。没有发送或伪造群消息、没有新模型调用。
+- 文档解析尚未启用：423dfd官方镜像清单EOF，be4165宿主官方registry DNS超时；无新镜像拉取/解析部署。不扩大为无隔离解析。在线钉钉文档/表格正文仍待接线及真实只读资源，不能把附件接口或本地Schema当实际已读。
+- 接续：请Owner在研发_1向研发助手发送一个明确的新自然语言低风险任务，例如“新增检查项默认优先级改为P2，其他规则保持不变，并检查没有影响原有功能。”收到后核验实际关联、Spec、开发/独立复测、当前验收与真实业务回复；再补多人、文档/表格、关键澄清、高风险Owner决定等六场景。独立supervisor、VM/宿主重启及Owner本人最终确认仍保留，不能标complete。
+- 恢复入口（VM）：/var/lib/openmausbot-collaboration-pilot/releases/def5f17，包含固定Compose/release.env、offline-data、original.service/env、ROLLBACK.txt及restart-verified.json。已升级账本不得用旧schema11镜像打开；观察模式回退使用同一schema30镜像并保留当前数据，旧快照仅离线复查，不能丢弃切换后事件。/private/tmp/openmausbot-prepare-release-def5f17.mjs及switch脚本已消费，不盲目重跑。当前无运行中测试/模型/构建句柄。
+
 ## 当前检查点：授权后的真实双阶段映射及完整回归通过（2026-09-07）
 
 - 53533/68d4de exit0：41项db/mapping专项、主项目typecheck/diff通过后，执行唯一授权的第4次真实Astra/medium映射。proposer传输379425字节/JSON3980字节，独立verifier传输173688字节/JSON1644字节，三项finding均covered；readApprovedAcceptanceMapping重算通过，所有绑定断言都在developer/verifier两套原Docker报告中passed，原3次记录逐行不变。原DNS/流式截断阻碍已在本次限定场景解除，不再重复索要相同授权。

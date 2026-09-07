@@ -1,5 +1,14 @@
 # Meta 协作验证记录
 
+## 2026-09-07 固定新镜像、旧账本升级与唯一试点切换
+
+- 7927ce exit0：已验证dist-server离线构建opencodex-def5f17，image sha256:70087328c7590f1775d64fcde3706e4b52b865cc019688d11042c00024d92bdb；原镜像/tag未覆盖。
+- abd602只在隔离账本副本升级，schema30/完整性通过后哈希断言因新增Outbox列失败；7f3daf确认五张表原字段逐值一致，b9517c按原字段重验通过，未修改迁移代码或忽略原字段差异。新VM独立仓库六项真实无网络/只读/非root Docker测试通过，固定base0837a3fc6f02be0c6b067f63749f19d8d7104154；Compose验证只含collaboration，固定服务/命令镜像、模型、UID、仓库和原群白名单一致，旧auth不再挂载。
+- 5d7cae exit0：切换前Owner1/无运行节点任务/无待发Outbox，停止唯一服务后完整offline-data备份，再启动新固定镜像。c7a2d3验证schema30、integrity ok、外键0、liveLease1，Owner/9运行历史/49Outbox/12事件/6事项原字段逐值未变。
+- cfacef真实systemd重启仅执行一次，镜像/启动时间/历史不重放断言通过，紧接启动读取lease为0导致探测失败。01b958对同次启动终态复查通过：schema30、owners1、events12、outbox49、leases1、mode ready、integrity ok、running/healthy/restarts0；b9b458证实enabled/active及备份0700、恢复证据0600。只证明进程重启，不证明VM/宿主重启或实时Stream注册。
+- 实时群连接没有伪阳性声明：启动时reconnecting；独立health返回configured，不是原进程状态，443 socket已建立也不替代真实消息ACK/业务回复。尚无新入站/出站/真实模型执行或六场景证据。
+- 423dfd镜像清单EOF，be4165官方registry DNS超时；文档解析镜像未下载/构建/启用。当前无在途句柄。已消费的准备/切换脚本及一次性第4次恢复脚本不得盲目重跑；详见PROGRESS当前检查点。
+
 ## 2026-09-07 已授权第4次映射真实通过
 
 - f05d56：新增9项一次性恢复TDD红灯。8ee40e：3项仍被旧表CHECK约束拦截，因而采取v30独立追加恢复表而不放宽旧表；408d13核心29项通过。de4bcf十文件220项通过/1项旧迁移计数期望失败；修正期望后53533的41项db/mapping、pnpm typecheck及diff全部通过。
