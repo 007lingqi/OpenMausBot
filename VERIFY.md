@@ -1,5 +1,13 @@
 # Meta 协作验证记录
 
+## 2026-09-08 对话版Docker发布前置验证（通过，未切换）
+
+- 构建：0dcc18确认session41518 exit0。候选03b6484镜像`sha256:ee86bbc3be1a2ab8314efc8154df29f3e3839056b5a3afe1661c058544dbea0e`；兼容回退07cae17镜像`sha256:034ea40ae0cc4c1b0d5d0332662cd1821b60d3522d5e2a02c847c964ec4147ed`。固定缓存依赖层、无网络离线重打包，正式六bundle镜像内哈希一致；不替代前两批对应源码的完整回归。
+- 数据预演：778e64/ae552a确认session88094 exit0；66旧业务表的列/行哈希不变、quick_check及foreign_key_check通过、schema31→36健康升级通过。副本新增schema36记录后，兼容回退健康检查保留全部旧数据与新记录。仅挂专用私有副本，无网络/凭据/执行/Stream，不能作为真实交付证明。
+- 在线不变：副本脚本最后检查原容器ID未变、健康、真实库schema31。17bdce白名单配置确认模型Astra/medium、原task/command固定镜像不变。原始回执与恢复步骤见docs/pilot/docker-conversation-preflight-20260908.md。
+- 未完成：实际新版entrypoint/relay/coordinator启动专项。创建脚本的两次权限审核超时且未落地；没有启动测试失败、没有群服务切换。不把health-only结果写为实际contained服务启动通过。
+- 文档收束：6c6fa4确认session31465的`pnpm typecheck && git diff --check` exit0；490694核对构建/副本回执中的固定镜像与数据保留结论一致，并确认startup脚本/attempt均不存在。本轮仅新增证据与恢复记录，无业务代码变化，未重复前两批完整回归。
+
 ## 2026-09-08 进度摘录与未决问题接续（完整验证通过，未部署）
 
 - d8ff20：conversation-ingress先行4项红灯，复现冗长回复与未答问题被同一人的无关发言消耗；29249a：conversation-intent四种短附和在多事项背景仍被关联的红灯。未放松来源/版本/身份/完成证据门禁。
