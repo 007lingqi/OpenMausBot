@@ -77,6 +77,12 @@ function validate(request: ConversationIntentRequest, raw: unknown): Conversatio
   // The eventual ingress router must resolve verified displayed choices separately.
   if (/^(?:(?:我)?(?:就)?选(?:择)?|是)?(?:第[一二三四五六七八九十\d]+(?:个|项)|[123](?:个|项)|前一个|后一个|上一个|下一个)/u.test(request.text)) return ask("reference_unavailable");
   if (request.pendingQuestion && proposal.intent === "acknowledgement") return ask("pending_answer");
+  const shortAssent = /^(?:好的?|对的?|是的?|没错|(?:对)?就(?:是)?这样|就是这个意思|可以|按这个来|同意)$/u
+    .test(request.text.replace(/[，,。.!！\s]/gu, ""));
+  if (shortAssent && (request.pendingQuestion?.workItemIds.length ?? 0) > 1 &&
+    !request.referencedWorkItemId && !quotedContext?.workItemId && ["new_request", "contribution", "status_query"].includes(proposal.intent)) {
+    return ask("pending_answer");
+  }
   if (request.pendingQuestion?.kind === "read_only" && ["new_request", "contribution"].includes(proposal.intent)) return ask("pending_read_only");
   if (request.pendingQuestion?.kind === "approval" && ["new_request", "contribution"].includes(proposal.intent)) return ask("pending_approval");
   if (request.contextTruncated && !["acknowledgement", "control_request"].includes(proposal.intent)) return ask("context_incomplete");
@@ -113,6 +119,7 @@ export async function classifyConversationIntent(model: NaturalIntakeModelPort, 
       "先区分意图，再判断事项：明确独立修改请求new_request；补充或回答需求contribution；查进度status_query；解释之前机器人回复explanation；纯致谢acknowledgement；暂停/审批/部署等control_request；不确定clarify。",
       "查询、解释或致谢不是修改请求；不要因为没有候选事项就创建任务。不能仅凭最近一条、候选顺序或发言人数猜测事项。不同同事可能穿插讨论不同问题。",
       "pendingQuestion若存在表示正在回答的具体问题；‘好、对、就是这个意思’要结合问题用途判定，不能当作纯致谢吞掉，也不能把查询归属回答变成需求补充。审批回答仍是control_request，绝不是修改授权。",
+      "同一人可能中途问进度或另起话题；这不表示之前的需求疑问已回答。有多个未决问题时，单独的‘对、就这样’不能选定其中一项，除非当前有明确引用；请澄清归属，不按最近一项猜。",
       "targetWorkItemId只可选择candidates里的id；new_request/acknowledgement/clarify必须为null。引用的事项或回复不可被忽略或换成另一个事项；已完成/取消的事项可以查询解释，不可补充执行。",
       "explanation的replySourceEventId必须选择history中实际assistant回复；其他意图必须为null。没有可核对的机器人回复就clarify，不拿群成员转述冒充。",
       "history为有限窗口，不是完整群历史。contextTruncated为真时不能臆造遗漏；没有真实展示选项与来源时，不能按候选排列解释‘第二个’。",

@@ -83,6 +83,22 @@ describe("conversation intent before task mutation", () => {
     expect(await classify(proposal("contribution", "WI-LOGIN", input.text), input)).toMatchObject({ action: "ask_context", reason: "pending_read_only" });
   });
 
+  it.each(["对", "好的", "对，就这样。", "就是这个意思"])("does not guess between unresolved topics for %s even if the model is confident", async text => {
+    const input: ConversationIntentRequest = { ...request, text, pendingQuestion: {
+      kind: "association", sourceEventId: "asked", workItemIds: ["WI-LOGIN", "WI-PAYMENT"], text: "有多个问题等待确认，请说明正在回答哪一个。" } };
+    expect(await classify(proposal("contribution", "WI-LOGIN", text), input)).toMatchObject({ action: "ask_context", reason: "pending_answer" });
+    expect(await classify(proposal("new_request", null, text), input)).toMatchObject({ action: "ask_context", reason: "pending_answer" });
+    expect(await classify(proposal("contribution", "WI-LOGIN", text), { ...input, referencedWorkItemId: "WI-LOGIN" }))
+      .toMatchObject({ action: "contribute", target: { id: "WI-LOGIN" } });
+  });
+
+  it("still permits a specific topic answer rather than blocking all multi-topic clarification", async () => {
+    const text = "我说的是登录那个，失败时保留用户名。";
+    expect(await classify(proposal("contribution", "WI-LOGIN", text), { ...request, text, pendingQuestion: {
+      kind: "association", sourceEventId: "asked", workItemIds: ["WI-LOGIN", "WI-PAYMENT"], text: "哪一项？" } }))
+      .toMatchObject({ action: "contribute", target: { id: "WI-LOGIN" } });
+  });
+
   it.each(["new_request", "contribution"])("does not turn an approval answer into %s", async intent => {
     const input: ConversationIntentRequest = { ...request, text: "同意", pendingQuestion: {
       kind: "approval", sourceEventId: "asked", workItemIds: ["WI-LOGIN"], text: "是否批准这次高风险修改？" } };

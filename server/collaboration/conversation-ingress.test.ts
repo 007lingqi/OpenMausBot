@@ -12,7 +12,7 @@ import { InstanceLeaseCoordinator } from "./leases.ts";
 import { OutboxDispatcher } from "./outbox-dispatcher.ts";
 import { ConversationIngressCoordinator } from "./conversation-ingress.ts";
 import { classifyConversationIntent } from "./conversation-intent.ts";
-import { conversationSourceHash, readConversationContext, type ConversationJob } from "./conversation-context.ts";
+import { conversationSourceHash, conversationStatus, readConversationContext, type ConversationJob } from "./conversation-context.ts";
 import { applyCollaborationMigrations } from "./migrations.ts";
 import { readPlanMaterialReadiness } from "./plan-material-readiness.ts";
 
@@ -67,6 +67,64 @@ function job(db: DatabaseSync, source: string): ConversationJob {
 }
 
 describe("durable conversational ingress before Work Item mutation", () => {
+  it("keeps status replies brief without changing the full requirement or its source", async () => {
+    const h = setup(async input => decision(input, input.sourceEventId === "new" ? "new_request" : "status_query", input.sourceEventId === "new" ? null : input.candidates[0].id));
+    const text = "登录失败后保留用户名、清空密码。账号不存在或密码错误，都提示“账号或密码不正确”；网络断开则提示“网络异常，请稍后重试”。";
+    try {
+      h.service.ingestDingTalkMessage(message("new", text)); await h.service.processNaturalIntake(); await deliver(h.db);
+      const before = taskState(h.db);
+      h.service.ingestDingTalkMessage(message("query", "登录现在进展怎么样？")); await h.service.processNaturalIntake(); await deliver(h.db);
+      const response = reply(h.db, "query")!;
+      expect(response).toContain("登录失败后保留用户名、清空密码…");
+      expect(response).not.toContain("账号不存在或密码错误");
+      expect(response.length).toBeLessThan(90);
+      expect(response).toContain("还需要补充信息");
+      expect(taskState(h.db)).toEqual(before);
+      expect(h.db.prepare("SELECT title FROM collaboration_work_items").get()).toEqual({ title: text });
+    } finally { h.service.close(); h.db.close(); }
+  });
+
+  it("bounds an unpunctuated status label after redaction, while keeping actual progress authoritative", async () => {
+    const h = setup(async input => decision(input, "new_request"));
+    try {
+      h.service.ingestDingTalkMessage(message("new", "改进登录错误提示")); await h.service.processNaturalIntake();
+      const target = item(h.db, "new")!;
+      h.db.prepare("UPDATE collaboration_work_items SET title=?,control_state='paused' WHERE id=?")
+        .run("WI-PRIVATE api_key=synthetic_private_value 登录错误提示".repeat(4), target);
+      const response = conversationStatus(h.db, target);
+      expect(response).not.toMatch(/WI-PRIVATE|synthetic_private_value/u);
+      expect(response).toContain("已暂停");
+      expect(response).toContain("…");
+      expect(response.length).toBeLessThan(90);
+    } finally { h.service.close(); h.db.close(); }
+  });
+
+  it("does not consume an unresolved requirement question when its addressee asks for progress", async () => {
+    const h = setup(async input => decision(input, input.sourceEventId === "new" ? "new_request" : "status_query", input.sourceEventId === "new" ? null : input.candidates[0].id));
+    try {
+      h.service.ingestDingTalkMessage(message("new", "登录提示友好一点。")); await h.service.processNaturalIntake(); await deliver(h.db);
+      h.service.ingestDingTalkMessage(message("query", "登录进度怎么样了？")); await h.service.processNaturalIntake(); await deliver(h.db);
+      const before = taskState(h.db);
+      h.service.close();
+      const restarted = startCollaborationService(h.options);
+      try {
+        restarted.ingestDingTalkMessage(message("answer", "对，就是这样。"));
+        expect(readConversationContext(h.db, job(h.db, "answer")).pendingQuestion).toMatchObject({ kind: "requirement", workItemIds: [item(h.db, "new")] });
+        expect(taskState(h.db)).toEqual(before);
+      } finally { restarted.close(); }
+    } finally { h.service.close(); h.db.close(); }
+  });
+
+  it("retains both unanswered topics when the same participant introduces an independent question", async () => {
+    const h = setup(async input => decision(input, "new_request"));
+    try {
+      h.service.ingestDingTalkMessage(message("login", "登录提示友好一点。")); await h.service.processNaturalIntake(); await deliver(h.db);
+      h.service.ingestDingTalkMessage(message("payment", "另一个独立问题，支付提示也要改。")); await h.service.processNaturalIntake(); await deliver(h.db);
+      h.service.ingestDingTalkMessage(message("answer", "就这样。"));
+      expect(readConversationContext(h.db, job(h.db, "answer")).pendingQuestion).toMatchObject({ kind: "association",
+        workItemIds: expect.arrayContaining([item(h.db, "login"), item(h.db, "payment")]) });
+    } finally { h.service.close(); h.db.close(); }
+  });
   it("holds the current plan while an incoming message is unclassified without altering its Spec", async () => {
     const h = setup(async input => decision(input, input.sourceEventId === "new" ? "new_request" : "status_query", input.sourceEventId === "new" ? null : input.candidates[0].id));
     try {

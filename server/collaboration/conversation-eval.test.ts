@@ -52,6 +52,14 @@ describe("conversation evaluation uses the real ingress without real delivery or
     expect(() => selectConversationScenarios(["--live", "--endpoint", "elsewhere"])).toThrow();
   });
 
+  it("includes a multi-topic short-answer regression, not just fully specified follow-ups", () => {
+    const [scenario] = selectConversationScenarios(["--live", "--scenario", "unanswered-topics-and-short-answer"]);
+    expect(scenario.turns[2]).toMatchObject({ text: "对，就这样。", expect: { action: "ask_context", items: 2, unchangedRequirements: true, pendingTasks: 2 } });
+    expect(scenario.turns[3].expect).toMatchObject({ action: "contribute", targetTurn: 0 });
+    const [status] = selectConversationScenarios(["--live", "--scenario", "clear-request-and-status"]);
+    expect(status.turns[1].expect.maxReplyLength).toBe(90);
+  });
+
   it("stops after three model failures instead of retrying or inventing a successful result", async () => {
     let calls = 0;
     const result = await runConversationEvaluation({ model: { async complete() { calls++; throw new Error("private upstream body"); } },

@@ -23,13 +23,14 @@ function pendingQuestion(db: DatabaseSync, job: ConversationJob, sent: SentReply
     .all(job.principal_id) as Array<{ external_id: string }>;
   const pending: NonNullable<ConversationIntentRequest["pendingQuestion"]>[] = [];
   for (const row of sent) {
-    // A question is consumed by a later message from its addressee, not by
-    // unrelated group traffic. The current event is precisely excluded.
+    const card = JSON.parse(row.payload_json) as InboundCard;
+    // Requirement questions are resolved by a newer snapshot, not by an
+    // unrelated message (including a progress query) from the same person.
+    // Other conversational prompts retain their existing turn boundary.
     const intervening = db.prepare("SELECT 1 FROM collaboration_external_events e JOIN collaboration_conversation_intents j ON j.event_id=e.id " +
       "WHERE e.conversation_id=? AND e.principal_id=? AND e.rowid<(SELECT rowid FROM collaboration_external_events WHERE id=?) " +
       "AND j.context_outbox_sequence>=? LIMIT 1").get(job.conversation_id, job.principal_id, job.id, row.delivery_sequence);
-    if (intervening) continue;
-    const card = JSON.parse(row.payload_json) as InboundCard;
+    if (intervening && card.type !== "clarification_card") continue;
     let kind: NonNullable<ConversationIntentRequest["pendingQuestion"]>["kind"] | null = null;
     let text = "";
     if (card.type === "clarification_card" && row.work_item_id && candidates.includes(row.work_item_id)) {
@@ -118,12 +119,24 @@ export function readConversationContext(db: DatabaseSync, job: ConversationJob):
   };
 }
 
+/** A bounded source excerpt for display, never a replacement requirement. */
+function statusTopicExcerpt(value: string): string {
+  const title = redactSensitiveText(value).replace(/\bWI-[A-Z0-9-]+\b/giu, "").replace(/\s+/gu, " ").trim();
+  if (!title) return "这个问题";
+  const boundary = title.search(/[。！？；]/u);
+  const firstSentence = boundary >= 6 ? title.slice(0, boundary) : title;
+  const excerpt = Array.from(firstSentence).slice(0, 36).join("");
+  const omitted = title.slice(excerpt.length).replace(/[。！？；\s]/gu, "").length > 0;
+  return `${excerpt}${omitted ? "…" : ""}`;
+}
+
 /** This is a point-in-time read, not a new execution or an Owner action. */
 export function conversationStatus(db: DatabaseSync, workItemId: string): string {
   const row = db.prepare("SELECT title,status,definition_status,control_state,current_plan_revision,accepted_candidate_sha FROM collaboration_work_items WHERE id=?")
     .get(workItemId) as { title: string; status: string; definition_status: string; control_state: string; current_plan_revision: number | null; accepted_candidate_sha: string | null } | undefined;
   if (!row) return "暂时找不到这个问题的进度，请说一下具体的问题。";
-  const title = redactSensitiveText(row.title).replace(/\bWI-[A-Z0-9-]+\b/giu, "").trim().slice(0, 120) || "这个问题";
+  // Display-only excerpt: full source text and routing candidates stay intact.
+  const title = statusTopicExcerpt(row.title);
   let progress: string;
   if (row.status === "cancelled" || row.control_state === "cancelled") progress = "已取消，不会继续修改。";
   else if (row.control_state === "paused") progress = "已暂停，需要负责人决定是否继续。";
@@ -144,7 +157,7 @@ export function conversationStatus(db: DatabaseSync, workItemId: string): string
       planning: "正在整理修改方案，还没有开始修改。", ready_for_execution: "修改方案已整理好，等待开始执行。",
       planning_failed: "修改方案还没有整理完成，目前没有开始修改。" } as Record<string, string>)[row.definition_status] ?? "最新进度还需要核查。";
   }
-  return `关于“${title}”：${progress}`;
+  return `关于「${title}」：${progress}`;
 }
 
 /** Freeze the actual point-in-time answer immediately before its first send.

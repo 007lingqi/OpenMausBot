@@ -17,6 +17,7 @@ export interface ConversationScenario {
   id: string;
   turns: Array<{ speaker: string; text: string; expect: {
     action: string | string[]; items: number; unchangedRequirements?: boolean; targetTurn?: number;
+    pendingTasks?: number; maxReplyLength?: number;
   } }>;
 }
 interface TurnReport {
@@ -35,7 +36,7 @@ interface EvaluationReport {
 export const CONVERSATION_SCENARIOS: ConversationScenario[] = [
   { id: "clear-request-and-status", turns: [
     { speaker: "product", text: "登录失败后保留用户名、清空密码。账号不存在或密码错误，都提示“账号或密码不正确”；网络断开则提示“网络异常，请稍后重试”。", expect: { action: "create_work", items: 1 } },
-    { speaker: "tester", text: "登录这个现在改好了吗？", expect: { action: "read_status", items: 1, unchangedRequirements: true, targetTurn: 0 } },
+    { speaker: "tester", text: "登录这个现在改好了吗？", expect: { action: "read_status", items: 1, unchangedRequirements: true, targetTurn: 0, maxReplyLength: 90 } },
     { speaker: "tester", text: "好的，谢谢。", expect: { action: "acknowledge", items: 1, unchangedRequirements: true } },
   ] },
   { id: "clarification-and-answer", turns: [
@@ -55,6 +56,12 @@ export const CONVERSATION_SCENARIOS: ConversationScenario[] = [
   ] },
   { id: "unapproved-control", turns: [
     { speaker: "tester", text: "我同意现在发布到生产。", expect: { action: "control_requires_authorization", items: 0, unchangedRequirements: true } },
+  ] },
+  { id: "unanswered-topics-and-short-answer", turns: [
+    { speaker: "product", text: "登录提示友好一点。", expect: { action: "create_work", items: 1 } },
+    { speaker: "product", text: "另外一个独立问题：支付失败后的提示也要改得容易理解。", expect: { action: "create_work", items: 2 } },
+    { speaker: "product", text: "对，就这样。", expect: { action: "ask_context", items: 2, unchangedRequirements: true, pendingTasks: 2 } },
+    { speaker: "product", text: "我说的是登录，账号或密码错误时统一显示“账号或密码不正确”。支付那个先不补充。", expect: { action: "contribute", items: 2, targetTurn: 0 } },
   ] },
 ];
 
@@ -179,6 +186,12 @@ export async function runConversationEvaluation(options: { model: NaturalIntakeM
         }
         if (turn.expect.unchangedRequirements) checks.unchangedRequirements = before === changed;
         if (turn.expect.targetTurn !== undefined) checks.target = intent.target_work_item_id === scenarioTurns[turn.expect.targetTurn]?.target;
+        if (turn.expect.maxReplyLength !== undefined) checks.replyLength = replies.every(reply => reply.text.length <= turn.expect.maxReplyLength!);
+        if (turn.expect.pendingTasks !== undefined) {
+          const request = report.requests.find(request => request.scenario === scenario.id && request.turn === turnIndex && request.phase === "intent")?.request as
+            { pendingQuestion?: { workItemIds: string[] } | null } | undefined;
+          checks.pendingTasks = request?.pendingQuestion?.workItemIds.length === turn.expect.pendingTasks;
+        }
         const result: TurnReport = { scenario: scenario.id, turn: turnIndex, speaker: turn.speaker, text: turn.text,
           action: proposal?.action ?? null, target: intent.target_work_item_id, replies: replies.map(reply => reply.text),
           checks, passed: Object.values(checks).every(Boolean), snapshot,
