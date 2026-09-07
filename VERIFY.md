@@ -1,5 +1,11 @@
 # Meta 协作验证记录
 
+## 2026-09-07 247f99a固定版本真实非生产切换通过
+
+- 1b8947：新controller固定摘要1f53b346ebf8…，四个非controller bundle逐字节等于原受测组件；806258：真实新镜像init+CAP_CHOWN/CAP_SETUID/CAP_SETGID、空合成repo/库/通道下ready，真实Docker自身份proof登记，执行/群/模型0，SIGTERM干净退出。证据/private/tmp/omb-cap-fixed-247f99a-kgRYyT，启动尝试事前独占记录，不重复脚本。
+- 465254/20521发布完整exit0：preflight和停机后无在途校验、schema31当前库备份、Compose只create后restart=no单次start、healthy后恢复原restart策略、systemd接管但完整ID未变。七历史表逐值不变，events12/outbox49，coordinator proof真实绑定1f608281b764…/image1f53…；0fba62 healthy/restarts0，systemd active+enabled。本次没有真实任务/群/模型，不是六真实场景通过。
+- 恢复入口VM releases/247f99a：offline-data为备份不得覆盖后续数据；original-release.conf回退上一schema31 e585镜像，原1fcda45失败141f镜像不可重启。旧CAP_启动失败和回退保留原证据；没有更改其他profile/容器、凭据或Owner。
+
 ## 2026-09-07 固定schema31镜像、迁移回退与Compose权限差异
 
 - 33c655最终exit0：823f42/session68060的147项定向、typecheck、真实CAP_ Docker coordinator烟测、完整pnpm test、末尾typecheck/diff通过。完整链包括主集、broker、桌面和打包/9代理路径/headless/channel；代码/测试固定。新合成控制器实际inspect为CAP_三项，旧epoch停止/原生Git稳定/无假finalization/同ID新epoch区分全部通过。原真实试点失败证据仍保留，本结果仅支持重新打包验证，不冒充线上验收。

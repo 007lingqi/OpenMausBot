@@ -1,5 +1,7 @@
 # 独立任务容器：Provider 与受控写入
 
+最新部署更新（2026-09-07）：247f99a/image1f53…已启用唯一非生产试点的task_container，实际CAP_三项权限与init启动通过，真实coordinator proof已登记，schema31历史数据保留、healthy/restarts0、systemd active+enabled。此前141f镜像因CAP_形式误拒已回退，后续修复不扩大权限，仅识别同三项的两种合法拼写；失败历史保留。新部署先create、禁止自动重试后单次start，健康后恢复原restart策略再交回systemd，完整ID不变。以下未部署描述为历史阶段；真实群完整交付与文档验收仍待完成，不能以健康检查替代。
+
 状态：只读视图、任务容器启动器、两阶段worker及headless显式装配已实现，完整回归通过。真实Linux五类合成场景证明模型前登记、私有候选拒读、失败无写入及脱离进程组后代停止；正式worker已通过现有私有通道调用真实Astra/medium，独立拼写夹具修改后两套隔离断言通过。固定新controller镜像也已通过隔离打包health。完整引擎在途恢复和真实群闭环尚未验收，运行试点仍用既有Provider进程；这些组件证据不是完整引擎Meta收据，不扩大授权。
 
 ## 选择

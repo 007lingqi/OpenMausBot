@@ -1,5 +1,7 @@
 # 内部研发助手 Meta 协作规范
 
+当前部署更新（2026-09-07）：CAP_等价名修复247f99a完整回归及实际init/CAP_镜像启动通过，固定controller1f53…已切换唯一非生产试点，独立task_container正式启用。实际coordinator登记、schema31、原七表数据不变、systemd active+enabled/healthy/restarts0已核验。任务镜像a4cab…与命令镜像700873…保持原固定值。以下“尚未成功上线/仍shared_process”为早期失败检查点，仅被本条部署结果覆盖；完整引擎/真实群/在线文档/主机恢复/Owner验收仍未完成。
+
 当前试点现场（2026-09-07）：1fcda45完整回归与镜像合成启动通过，但真实Compose的CAP_权限名称导致coordinator身份误拒、启动健康失败；已自动回退兼容schema31的0f33d5a固定镜像e585…，当前数据库schema31、历史数据保留，仍用shared_process。新版contained尚未成功上线。正在修复明确三项权限的等价名称识别，不增加权限；再次切换前需完成新验证和固定镜像，不复用失败镜像或旧schema30回退。
 
 未激活启动恢复增量（2026-09-07，未部署）：新contained v2启动的第一条Provider command缺proof且没有后续command时，可通过“旧coordinator事前proof独立stopped＋原签名launch＋唯一实际固定容器＋无执行材料＋持久拒绝门禁”生成独立aborted_before_activation证据；即使有finalization也必须证明旧协调器停止。严格验证worker镜像/命令/环境/隔离/挂载，拒绝控制路径遮蔽和执行环境注入；有界停止仅用于已被拒绝授权的原等待容器，每launch最多三次持久kill预留，取消不可遗弃mutation。原容器/目录永久保留防止迟到start获得授权；不是补签proof、不是代码修改完成、不刷新尝试次数。已激活/查不到/多匹配/历史无协调器proof仍受阻。本增量仅替代满足上述完整条件的缺proof分支。

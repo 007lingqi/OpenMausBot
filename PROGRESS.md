@@ -1,5 +1,14 @@
 # Meta 协作实施进度
 
+## 最新部署：CAP_修复版247f99a已启用独立任务容器（2026-09-07）
+
+- 33c655确认68060完整顺序链exit0（147定向/typecheck/CAP_真实Docker恢复/完整pnpm test/打包/typecheck/diff），9340ae保存本地commit247f99a，用户AGENTS.md/outputs不动、不push。所有此前测试句柄终态，不再轮询。
+- 1b8947固定离线构建：controller image sha256:1f53b346ebf89534c02d831e241681bac2a34191e817373e5121d71606e734eb，tag contained-247f99a；worker/channel/wrapper/applier哈希均与原Astra一次性受测组件相同，未重新调用模型。证据根/private/tmp/omb-cap-fixed-247f99a-kgRYyT（build-receipt、startup-attempt、startup-receipt及五个bundle）。806258实际新镜像、init和CAP_三权限启动/真实自身coordinator登记/干净退出通过，合成库、无真实通道/消息/模型；脚本均已消费。
+- 465254/20521实际发布终态exit0：先双重检查无在途工作、停机备份当前schema31数据；使用单一固定Compose create而不start，在首次start前设restart=no，启动健康后恢复unless-stopped并交回systemd，交回前后完整容器ID不变。只增加contained装配字段/同一授权socket的同路径只读别名及codex等价启动名称；Owner/凭据/仓库/命令镜像/模型与推理强度均未变。
+- 0fba62确认唯一服务controller 1f53… healthy/restarts0/unless-stopped，实际容器1f608281b764…；schema31、实际coordinator proof已登记、七历史表逐值与offline-snapshot一致、events12/outbox49，systemd active+enabled。任务镜像仍a4cab8c8660c…，命令镜像70087328c759…；CAP_错误候选141f…从未再次启动。未处理真实任务、未发真实群消息、无新模型调用，不把部署/健康当完整线上闭环。
+- VM恢复入口：/var/lib/openmausbot-collaboration-pilot/releases/247f99a，含compose.final.json/release.conf/original-release.conf、preflight/offline-snapshot、offline-data及post-start.json。回退只能使用original-release.conf指向1fcda45的compose.rollback-final.json/schema31 e585镜像并保留CURRENT数据；不得覆盖后续事件或使用schema30。/private/tmp/omb-deploy-cap-fix-247f99a.mjs已消费，不重复执行；本次初始start只有一次，未更改其他容器。
+- 已通过异步输入请用户在研发_1发全新实际需求或提供本次非生产Bug文档/表格链接，不冒充发送或Owner操作。完整Spec→代码→开发自测→独立复测→Meta→真实群回复、六真实场景、真实在线正文与来源、非@/群附件/引用的实际能力、跨VM/Mac宿主恢复及Owner最终验收仍待完成。历史WI-EA2FD321158E与一次性Astra组件预算/证据不变，不通过新账本/候选重置。Goal active；下一步以真实新增事件为输入推进验收。
+
 ## 最新现场：schema31试点回退健康，Compose权限等价名修复验证中（2026-09-07）
 
 - CAP_修复最终终态：33c655确认823f42/session68060完整顺序链exit0，147项定向、typecheck、真实CAP_ coordinator/原生Git强杀与重启烟测、完整pnpm test（主集/broker/桌面/打包9代理路径/headless/channel）、末尾typecheck/diff全部通过。验证期间源码/测试固定，仅文档更新。此句柄已完成，不再轮询。保存本批10文件为本地commit；随后从同一受测dist构建新固定镜像，不复用失败141f镜像。
