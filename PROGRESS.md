@@ -1,5 +1,13 @@
 # Meta 协作实施进度
 
+## 最新部署检查点：3c05339已更新非生产试点（2026-09-07）
+
+- c4e355固定缓存离线构建及无群/无执行临时data健康检查通过：openmausbot-collaboration-pilot:opencodex-3c05339，sha256:779586bc572ee7a3e4f6850975aa7d7fd558d1a906d69d9af9910782bf452aa7。沿用60830完整回归受测产物，不增加真实模型调用。
+- daa44b唯一服务切换成功；已解析比较Compose仅controller image变化，命令镜像70087328c759…/policy/仓库/凭据/Owner不变。停止前与停止后确认无在途执行/验证/自然解释和待发Outbox，保存offline-data及原unit，未覆盖历史记录。
+- 0ed5f5确认新固定image/healthy/restarts0、systemd active+enabled；bd5d39核对七张历史表逐值哈希不变，schema30/events12/outbox49/integrity ok/外键0。未发送真实群消息，未运行模型，不等于六场景通过。
+- VM恢复入口为/var/lib/openmausbot-collaboration-pilot/releases/3c05339，含offline-data、preflight/offline/post-start收据、原release.conf及回退说明；仅可退至schema30的3140fea控制镜像并保留当前数据。/private/tmp/omb-build-pilot-3c05339.mjs、/private/tmp/omb-deploy-3c05339.mjs已消费，不原样重跑。
+- 后续重点：模型CLI当前仍与控制面同容器、仅有进程组停止。需要模型调用前真实独立隔离身份和持久阶段登记，使Provider失败也有可校验的退出证据；不能把预先创建的空applier凭据当Provider凭据，不能补造旧无proof会话。真实群和在线文档仍缺实际材料，Owner验收仍由本人完成。Goal active。
+
 ## 最新检查点：写入取消与恢复凭据收紧（2026-09-07，本批验证通过，未部署）
 
 - Docker 状态检查不再将缺字段、错误完整 ID、多对象、残余 PID、created/dead/restarting 或自动重启策略当成 empty。只有正确绑定、明确 exited/Pid0/非暂停/非重启的状态可用于释放；created 仅允许原调用在 create/start 已结束后的清理，不能签发执行凭据。

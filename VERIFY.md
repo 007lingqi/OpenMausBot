@@ -1,5 +1,11 @@
 # Meta 协作验证记录
 
+## 2026-09-07 3c05339非生产部署
+
+- c4e355离线固定镜像779586bc572e…构建及health/schema30通过，依据前批60830完整回归产物；未重复全仓或模型测试。
+- daa44b切换唯一控制面，Compose严格比对仅image变化；停机后再次确认无在途执行/验证/解释或待发Outbox，保存一致性备份与原unit。0ed5f5新image healthy/restarts0、systemd active+enabled；bd5d39七历史表哈希不变、schema30/events12/outbox49/integrity ok/外键0。
+- 不证明真实群六场景、在线文档、Provider独立cgroup或完整在途恢复。所有构建/部署命令终态，已消费脚本不可重跑；新部署路径和回退入口见PROGRESS顶部。
+
 ## 2026-09-07 写入停止与Docker恢复观察
 
 - 843427先行TDD：新增23项红灯，复现错误/不完整Docker观察被当empty、已取消仍创建、失败不确认退出、停止未等待及迟到gate。
