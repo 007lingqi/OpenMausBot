@@ -1,5 +1,14 @@
 # Meta 协作验证记录
 
+## 2026-09-07 真实模型候选、唯一服务切换与Colima重启
+
+- 15297/bceea4 exit0：原请求哈希匹配第2次预留，Astra/medium第3次只读建议completed，2文件、76940ms；原账本7表哈希不变，容器自然Exited0，模型私有目录已清理。没有第4次调用或原任务自动执行重试。
+- 93900/2a1c96 exit0：原proposal仅应用到同一证据根下独立候选副本；developer/verifier两个独立容器分别7条真实断言passed，可信第三脚本四项业务条件通过。所有容器无网络、只读候选、UID10001、cap-drop/资源限制，无Docker socket；Exited0/Pid0/无OOM。原proposal/request/失败历史及原工作树不改。候选诊断报告不冒充正式Meta收据或真实群验收。
+- c8872b部署前确认schema30/Owner1/events12/Outbox49、无在途任务或未收束真实会话。43123/7c52c0切换3140fea固定镜像；全量Compose配置严格比较仅controller image不同。fd202c再次核对Owner及7历史表哈希/完整性/外键通过，079553运行healthy/restarts0/systemd active+enabled。原command image和policy保持不变。
+- 65749/d91608 Colima专用profile真实stop/start exit0；ea9053/a26c83确认boot代次改变、服务自动启动healthy、唯一liveLease、history unchanged/events12/Outbox49/integrity ok。c34b8c绕过relay自身校验、按relay UID直连宿主私有socket，得到400/local_gateway_request_denied；无模型调用，证明通道自动恢复。不是Mac重启，也不覆盖在途执行/独立cgroup supervisor。
+- 378535只证明DWS doc +fetch本地契约read/available/not_required；未读取任何真实在线文档或改变认证。原Schema的Skill升级提示是工具输出，未执行升级。已请求真实非生产链接，待用户材料与机器人身份接线。
+- 以上句柄全部终态。代码仍3140fea（此前完整14079/4a48c9通过），本批仅运维与诊断资产；不重复全量或增加真实模型请求来制造额外通过。恢复目录与未完成项详见PROGRESS顶部。
+
 - 固定3140fea镜像构建及健康探测62376终态exit0：sha256:954bfc5f7685244b7b4ae671c21f27f1a416803354dd13d40ae2c9f670baa477。显式headless --health、仅/tmp临时data、禁群禁执行、无网络；schema30/status healthy。基于已通过14079/4a48c9的当前dist，不是业务执行、群连接或模型复查通过；镜像未部署，所有验证句柄终态。
 
 ## 2026-09-07 跨UID停止TDD和当前完整回归

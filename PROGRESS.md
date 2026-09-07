@@ -1,5 +1,15 @@
 # Meta 协作实施进度
 
+## 最新检查点：真实建议和独立候选验证通过，新服务已部署并完成VM重启（2026-09-07）
+
+- 15297/bceea4 exit0：同一原合成事项WI-EA2FD321158E、同一请求哈希的第3次只读复查，Astra/medium于76940ms返回completed/2文件；无应用、实际群发送或业务账本变更，CLI私有状态清理且容器自然停止。保留第1次引擎失败、第2次超时和本次第3次记录，不重跑/private/tmp/omb-run-provider-review-3140fea.mjs。原VM证据根/var/lib/openmausbot-engine-probe-188ebd46-1b0b-4f6d-8887-1969df34dffd/provider-review-3；本机manifest /private/tmp/omb-provider-review-build-aCmeTs。
+- 93900/2a1c96 exit0：在上述原证据根下建立独立候选副本（12个原文件，仅应用模型建议的app/release-board-state.ts、tests/board-behavior.test.mjs），不改原工作树/执行账本。两个独立无网络/只读/10001容器分别7项通过；第三个可信验收脚本确认默认P2、旧项不变、名称处理及默认待复核四项。candidate-setup.json和candidate-tests-raw.json保留来源哈希/变更哈希/报告/容器ID。这是实际模型建议的候选诊断，不是生产Executor/Meta正式收据，不解锁旧无proof会话。
+- 43123/7c52c0切换唯一非生产服务成功：服务镜像更新为3140fea/sha256:954bfc5f7685244b7b4ae671c21f27f1a416803354dd13d40ae2c9f670baa477；Compose解析后严格比对，仅controller image变化，原命令镜像70087328c759…/验收policy/仓库/凭据/Owner都不改。停机后再次确认无在途工作并保存offline-data；fd202c证实7张历史表逐值哈希不变、schema30/Owner1/events12/Outbox49/integrity ok。服务healthy/restarts0/systemd active+enabled。
+- 65749/d91608仅重启Colima openmausbot-pilot，默认profile未重启、Mac未重启。ea9053/a26c83确认新boot3066c764…不同于cc947218…，新固定服务自动启动healthy、liveLease1、7张历史表不变、events12/Outbox49，无重复处理。c34b8c以relay UID直连私有Unix socket到宿主网关，收到正确400拒绝空请求，证明重启后宿主通道恢复（modelCalls0），不是重启后模型交付证明。没有在途任务参与此次重启，不能宣称强杀在途或独立supervisor验收完成。
+- 固定恢复入口（VM）：/var/lib/openmausbot-collaboration-pilot/releases/3140fea，保存原release.conf、固定Compose/env、offline-data、preflight/offline/post-start/VM重启收据及ROLLBACK.txt。回退只用schema30旧def5f17服务和当前数据，不覆盖后续事件，不用schema11镜像。/private/tmp/omb-deploy-3140fea.mjs已消费；所有句柄终态，不重跑、不轮询。
+- DWS仅查询doc +fetch leaf Schema，确认只读/可用且必须唯一node或query；未登录/切换profile/搜索用户文档/修改权限或Skill。已异步请Owner提供本次非生产Bug文档/表格链接，尚未取得实际正文。不得把Schema视为正文读取或机器人身份已接入；群文件/非@消息的官方通道限制仍需解决。
+- 下一步：接收研发_1真实自然语言任务，核验实际Spec→修改→开发/独立复测→Meta→群回复；继续多人补充、文档/表格、关键澄清、高风险Owner决策等六场景。旧合成事项proof缺失、独立supervisor/在途恢复、Mac宿主重启（需另行协调影响）及Owner本人最终验收仍待完成。Goal active；本轮为真实模型/候选/部署/VM恢复进展，不能标complete。
+
 ## 固定镜像接续入口（2026-09-07）
 
 - 已本地提交3140fea（9个本任务文件），完整14079/4a48c9终态通过，不push。基于当前已验证dist-server离线构建openmausbot-collaboration-pilot:opencodex-3140fea，摘要sha256:954bfc5f7685244b7b4ae671c21f27f1a416803354dd13d40ae2c9f670baa477；62376构建及显式headless临时data健康探测exit0/schema30，未部署。/private/tmp/omb-build-pilot-3140fea.mjs已消费，不原样重复。
