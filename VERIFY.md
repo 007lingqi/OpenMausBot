@@ -1,5 +1,57 @@
 # Meta 协作验证记录
 
+## 2026-09-08 进度解释不再只复读（完整回归与真实模型通过，未部署）
+
+- 249280实际service/临时Ledger/替身模型三轮复现解释只复读，旧机器checks_passed不能覆盖该行为，原报告9oIe7B保留。24cfb2先行正式回归缺模块及实际解释内容失败；270bad确认3文件72项/typecheck通过。
+- fddff5确认新增解释轮和语义检查后的11文件271项/typecheck/diff退出0，覆盖精确历史阶段、标题引用/追加/未知拒绝、实际Outbox来源、只读/重放、自然入口/意图/提醒/通知、Outbox投递/核查、钉钉Stream与渲染。
+- d69055确认b17828/session70472完整宿主`pnpm test && pnpm typecheck && git diff --check`终态exit0：主集317文件通过/1跳过，3889项通过/18跳过（3907注册）；broker7、桌面15+5+2+10、打包无node_modules启动/9代理路径、headless及合成通道启动退出、类型/diff全链通过。主集报告位于临时omb-test-floor-LF9x6k/vitest-summary.json，不借用上批05fee4作为本解释补丁的全套。
+- 41698a确认f06211/session47516的`node --experimental-strip-types scripts/collaboration-pilot/conversation-eval.ts --live`终态exit0。TBNnjl真实OpenCodex/gpt-6-astra/medium七场景24轮37请求均completed、全部机器检查通过；sourceUnchanged=true，当前指纹`c33337c2c074475c77aa483ef71156405be284fee4e650989dea49fd31c368be`与受测指纹相同。原report SHA256=`088d595ce794ffed6b9d3568c071053436193f7b819156c2ad183490cf741bb6`。合成群/参与者/临时Ledger、静态Planner，无执行器或真实群，全部实际回复已审阅，详见评测第八批。
+- 持久摘录conversation-20260908-TBNnjl.json保留原始naturalnessReview=pending，主Agent审阅单独记录；9oIe7B是修复前替身模型诊断，原报告SHA256=`72060b2b4e8fc32566f4d1f7b2d856ef0c8fed4a72f38c23b1e98a5cb051bf93`。两者按原元数据、去完整请求输入、以SHA256替代快照的确定性投影核验。84d854是抽取检查错误预设请求status=ok，实际契约为completed，修正只读检查后通过，未修改原始报告、源码或重跑模型。
+- 两条会话均终态，源码测试在验证期间固定；没有重试Git提交或Docker，没有真实群发送、Owner或凭据变化。下一验收必须针对当前schema37候选，不用旧镜像或局部测试代替。
+
+## 2026-09-08 直接、简短的业务追问（完整回归及真实模型通过，未部署）
+
+- 4addb2先行两文件55项中5红灯，明确普通业务问句仍带流程开场且模型表达契约缺失。d1d050确认修复后55项/typecheck/diff通过，含完整长问题/转义/逐题回答人/原群提醒/恢复与混合系统门禁保留。
+- 36d1d8为新增评测字段缺实现的先行红灯，两项失败；补directBusinessQuestions及conciseBusinessQuestions后，f196fe确认12文件264项/typecheck/diff退出0，包含natural-intake、conversation-eval/ingress/notifications/status-reminder、plan-reviser/readiness、钉钉sender/session-message/Stream、delivery-routing与Owner actions。长模型问题仍applied且完整显示，仅评测不能通过；未放松生产门禁。
+- a5f14a确认1907bf/session62988的`node --experimental-strip-types scripts/collaboration-pilot/conversation-eval.ts --live`终态exit0：宿主Astra/medium，七场景23轮36次请求均成功，全部机器检查通过。源码指纹`3656699557724d9679a5047b467626182e7b7d0cf3bcb650758c7fa4aa65ade7`前后不变；原report哈希`1fcad15c929e8dda86f4e06f837dc615a1b72fa6a538185c432626f8094244fe`。持久摘录docs/pilot/evidence/conversation-20260908-g3i9fg.json与原始投影及当前源码核对一致；11条问句各17–27码点，主Agent语义/后续效果审阅另见第七批，不把长度检查代替自然性全面验收。
+- 05fee4确认8f361c/session52027完整宿主`pnpm test && pnpm typecheck && git diff --check`终态exit0：主集316文件通过/1跳过、3871项通过/18跳过（3889注册），broker7项及桌面15+5+2+10项通过；打包无node_modules启动/9代理路径、headless及合成模型/文档通道启动退出、typecheck/diff通过。原生主集报告在临时omb-test-floor-sRZR5e/vitest-summary.json。代码测试在模型与全套运行期间固定，所有会话终态，不使用上一批fa09ec作为本补丁全套。没有重新提交Git或启动Docker，没有真实群/Owner或凭据修改。
+
+## 2026-09-08 同轮对话通知合并（完整回归与真实模型通过，未部署）
+
+- a4fba4为先行红灯，4bef48确认最初8项/typecheck通过，4d9ca8确认扩大10文件218项/typecheck/diff通过。新增事务回滚与原失败预算、跨任务/群/版本/卡片/规划/材料保护后15项通知测试通过；9e3505的评测新增断言缺实现是预期红灯，补noRedundantReceipt后c46bbb确认session64913最终2文件23项/typecheck/diff退出0。
+- 04da4f确认14b376/session88216真实模型命令`node --experimental-strip-types scripts/collaboration-pilot/conversation-eval.ts --live`终态exit0：gpt-6-astra/medium，七场景23轮36次调用全部成功，每轮一条有效模拟回复、noRedundantReceipt与当前阶段投递检查均通过。独立临时Ledger、静态Planner，无执行器或真实群；sourceFingerprint=`747f5de6df43a4653db8e09c9a367b5eba1c9d5b62535d7f42274249aa02c184`前后不变。原report哈希`5f7cec0e9bfae839ff42c357bda53ba27c6f0b72d3085c8a7486ab951904a82c`；docs/pilot/evidence/conversation-20260908-zvYxKy.json与原始确定性投影、哈希和当前源码核对一致，审阅另列评测第六批，不篡改原始自然性pending。
+- fa09ec确认09c0fc/session25784当前固定源码完整宿主`pnpm test && pnpm typecheck && git diff --check`终态exit0：主集316文件通过/1跳过、3860项通过/18跳过（3878注册），broker7项、桌面15+5+2+10项全部通过；无node_modules打包服务启动、9代理路径、headless及合成模型/文档通道启动退出、类型/diff检查通过。原生全套汇总在临时omb-test-floor-KE07DE/vitest-summary.json。代码/测试在完整集和真实模型期间保持不变，所有会话已终态，不用上一批fb4558代替本补丁全套。
+- 未提交、未启动Docker、未改真实Owner或凭据；相关测试和模型权限不扩大为此前等待用户答复的Git/Docker权限。
+
+## 2026-09-08 进度回复的具体待答问题（完整回归及真实模型通过，未部署）
+
+- ce0910先行9项中3红灯确认查询不带具体问题；其余未发送/后来发送/改版/跨群/暂停保护保持。f36fa8的答案替身包含禁止回答的系统natural-input-pending，被既有生产校验正确拒绝，修正测试输入后c723ba确认3文件61项/typecheck/diff通过。13f493扩大8文件218项通过；补充不重发已经尝试且过期的提示与六轮连续场景后，907c82确认最终2文件18项/typecheck/diff通过。f08f17、dde771保留新增评测约束/后续回答尚未加入的预期红灯。
+- 324181确认真实模型session64933终态exit0，nGraGX六轮九调用无失败/重试，sourceFingerprint=`59777cf14f19e7081edb499b11e043a2472dbc5013105ff48b2a5b5f4a4d8d43`前后不变；持久证据docs/pilot/evidence/conversation-20260908-nGraGX.json与审阅第五批。6fb975对照原始报告投影、哈希和当前源码再次核验通过。不把模拟投递/静态Planner当真实群或研发完成。
+- fb4558确认63fe1c/session78001完整宿主命令链`pnpm test && pnpm typecheck && git diff --check`终态exit0。f87fdc记录主集315文件通过/1跳过、3845通过/18跳过（3863注册，数量门槛通过），broker7项、桌面15+5+2+10项、脱离node_modules打包启动及9代理路径；fb4558记录headless/合成模型和文档通道启动退出、类型检查及diff检查通过。无代码/测试变更跨越此次完整运行，所有会话终态。没有重试提交或Docker、没有真实Owner/凭据变更。
+
+## 2026-09-08 当前源码完整七类真实模型对话评测（机器检查通过，未部署）
+
+- d21ba5启动`node --experimental-strip-types scripts/collaboration-pilot/conversation-eval.ts --live`，63a54e确认session49297终态exit0：7场景21轮33次模型请求全部成功；模型固定宿主OpenCodex/gpt-6-astra/medium，未新增密钥、无隐式重试、无真实群发送或执行器。bf9adf先前HTTP400仅是通道预检，不算推理成功证据。
+- 775662/后续摘录核对源指纹`9ac73c26583d4d46b57e43fcb034e3317e32ea095c3a0395834cc813363c0de9`运行前后相同；原始report哈希`7dfd7fdc504c6342057f6e71932270bbf239b2e057258a5596c49a63d02711a3`。持久摘录见docs/pilot/evidence/conversation-20260908-2W9SP8.json，省略完整请求上下文/快照正文，不冒充原始报告。原始自然性状态pending保留，主Agent21轮审阅另记在conversation-eval文档第四批。
+- 所有适用的关联、只读不改需求、阶段通知、幂等、未执行/无虚假完成及条目数检查通过；不证明真实投递或任意自然表达。发现12轮双通知、长追问与名称摘录、待补充查询缺具体下一步；静态Planner与无审批sink的局限如实保留。此批没有生产代码/测试改动，不用机器通过替代自然性最终验收，也未重新声称完成全套回归。
+- cbfcb9确认持久证据摘录与原始报告的确定性投影逐字段一致、原始哈希匹配、当前代码重新计算的指纹仍等于受测指纹，21轮/33请求和无真实钉钉/执行范围匹配；git diff --check退出0。未操作Git暂存/提交或Docker，所有模型会话已终态。
+
+## 2026-09-08 普通退回反馈与改口防误触（完整回归通过，未部署）
+
+- ad913c确认预期红灯：6种不以“因为”开头的自然反馈返回null；“因为先不退回了”错误执行了退回。61ee41补充4种真实短句边界（先别退回、这个先不退、改主意、多久能好）复现初稿误退回；记录这些缺陷，不用仅有正例的通过掩盖误触。
+- 6c097e确认b3f871/session17055：candidate-approval、conversation-ingress、conversation-intent、actions、delivery-routing、stream-adapter共6文件278项，typecheck/diff退出0。170a90确认7416fc/session55398补充敏感反馈后的candidate-approval91项/typecheck/diff退出0。原因来自实际回答、保存前脱敏、不要求固定前缀；同事务的身份/固定展示/时序/重放门禁未放宽。
+- ce8e40确认7e3e6e/session73124完整宿主`pnpm test && pnpm typecheck && git diff --check`退出0：主集314文件通过/1跳过、3835通过/18跳过（3853注册，数量门槛通过），broker7项，桌面15+5+2+10项，打包无node_modules启动、9代理路径及headless/合成模型和文档通道启动退出通过，typecheck/diff通过。代码和测试在全套运行期间保持不变，所有测试会话已终态。测试权限不等于Git提交或Docker启动授权；本次没有重试上一轮超时的提交，没有真实群、模型或外部服务操作。
+
+## 2026-09-08 无编号自然审批（完整回归通过，未部署）
+
+- 前置先行红灯e178fd缺入口、4002ae未走Stream控制sink；本轮6522f5确认缺少已发审批的对话上下文、拒绝路径的源/群/时间边界校验、完成回复缺具体事项；4735b6确认新Markdown仍展示WI指令。均为实现前新增断言。夹具类型错误按实际file/capabilityRef修复，无unknown强制转换。
+- 1798bb：3文件103项/typecheck通过；26ed06确认bd87fa/session71489最终6文件206项/typecheck/diff退出0。覆盖candidate-approval、runtime、delivery-routing、stream-adapter、text-actions、session-message；包含真实service接线、当前sender权限/换Owner/失去租约、原群展示、TTL/改版、多目标追问、缺退回原因、发送前后接续、重启/重放、原事件不得升级控制、冲突哈希、控制与回复失败原子回滚、已发历史可见边界、原群合成发送、普通入站仍可正常工作。
+- 5eac14扩大回归的6项失败保留：新自然入口给不参与控制的附件也校验receivedAt，触发固定时钟夹具的不ACK；修复为排除的普通输入保留原入口，同时已处理自然事件附加附件的重放仍拒绝。另两项是租约夹具违背expires_at>heartbeat_at约束、自然渲染夹具含旧actions；改为实际推进时钟、明确无旧actions的新Markdown，未修改生产安全约束。修复后上述206项通过。
+- de4f3b/session71404：旧版完整回归因只读review发现runtime审批摘要泛化而主动停止；690a12只向核实的自有Vitest PID发SIGINT，d8f3b9确认exit130，无完整结果，不记作通过。补充approvalTopic来自当前需求的有界业务摘要，随原始/恢复/刷新通知实际显示，固定展示hash覆盖该字段；审批匹配读取已显示名称。71d02a先行显示测试红灯；775b6c/8fbaf0复现最初直接摘原需求将实现路径带出，已改为复用businessSentences过滤，未放松不显示实现约束的断言。
+- d52301确认5eb2be/session7809最终6文件208项、pnpm typecheck、git diff --check退出0，新增真实runtime通知→实际显示名称→按名称批准的合成端到端检查。该固定代码版本重新执行完整宿主`pnpm test && pnpm typecheck && git diff --check`，结果待更新。宿主权限仅用于本机测试socket，不是Docker授权。未发送真实群消息、调用真实模型、启动Docker或迁移真实账本。
+- 最终证据：b09c8f确认b28913/session46324完整命令链exit0；主回归、broker、桌面15+5+2+10项、无node_modules打包启动、9代理路径、headless/合成模型及文档通道启动退出、typecheck和diff检查全部通过。中间7682fb明确记录candidate-approval60项、delivery-routing51项、conversation-ingress44项及runtime27项通过；cd83e0含Stream29项、service和Outbox等通过。主集总数输出折叠，未另行抄录猜测。代码/测试从本次全套启动到结束保持不变；各测试会话均已终态。本地提交包含本批代码/测试和目标记录，不代表真实群或试点通过。
+- 提交尚未完成：cell1562与cell1563的一次重试均为自动权限审核超时，CreateProcess未执行；没有本批commit，不影响b09c8f已完成的验证证据。上述“本地提交包含”是计划范围，实际成果仍为基于d5909b6的工作区增量。没有再次重试、没有push或外部部署。
+
 ## 2026-09-08 审批通知后的对话接续（定向验证通过，未部署）
 
 - c08b1c/4bbd7b：首次历史卡夹具经正常Outbox发送被材料门禁正确标为superseded，未到达预期SQL路径，不算缺字段复现。调整为明确的历史已投递夹具后，9fa952确认原实现五种角色均因no such column: principal_id失败；没有更改真实发送规则。

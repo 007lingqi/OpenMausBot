@@ -10,9 +10,13 @@ import { InstanceLeaseCoordinator } from "./leases.ts";
 import { LocalOwnerRegistry } from "./owner.ts";
 import { readApprovalPresentation, approvalPayloadHash, confirmApprovalPresentation } from "./approval-presentation.ts";
 import { applyCollaborationMigrations } from "./migrations.ts";
+import { OwnerActionController } from "./actions.ts";
+import { renderDingTalkSessionMessage } from "../integrations/dingtalk/session-message.ts";
 
 import { startCollaborationService } from "./service.ts";
 import { completeVerifiedLowRiskCandidate } from "./candidate-approval.ts";
+import { readConversationContext, type ConversationJob } from "./conversation-context.ts";
+import { enqueueOwnerDecisionForWorkItem } from "./operations/runtime.ts";
 
 const scratch: string[] = [];
 
@@ -130,6 +134,268 @@ function presentationFixture() {
   const options = { maxAttempts: 3, claimTtlMs: 10000, baseBackoffMs: 10, maxBackoffMs: 100 };
   return { ...fixture, create, lease, options };
 }
+
+const naturalMessage = (text = "批准这次改动", sourceEventId = "natural", receivedAt = 600) => ({
+  sourceEventId, transportMessageId: sourceEventId, conversationId: "conversation-1", addressedToBot: true, text, receivedAt,
+  sender: { senderCorpId: "corp-1", senderStaffId: "staff-1", senderId: "sender-1", displayName: "负责人" },
+});
+async function sendPresentation(f: ReturnType<typeof presentationFixture>, now = 400) {
+  return new OutboxDispatcher(f.database, { async deliver(message) { return { outcome: "sent" as const,
+    approvalDelivery: { sourceEventId: "source-1", payloadHash: approvalPayloadHash(message.payload) } }; } }, f.options).dispatchOne(f.lease, now);
+}
+
+function secondCandidate(f: ReturnType<typeof presentationFixture>) {
+  const service = startCollaborationService({ dataDirectory: f.dataDirectory });
+  const second = service.ingestDingTalkMessage(naturalMessage("新任务：支付提示调整", "source-2", 200)).workItemId!; service.close();
+  if (!second) throw new Error("fixture_second_task_not_created");
+  f.database.prepare("UPDATE collaboration_work_items SET current_plan_revision=1,definition_status='ready_for_execution' WHERE id=?").run(second);
+  const copy = (table: string, where: string, changes: (row: Record<string, import('node:sqlite').SQLInputValue>) => Record<string, import('node:sqlite').SQLInputValue>) => {
+    const rows = f.database.prepare(`SELECT * FROM ${table} WHERE ${where}`).all() as Record<string, import('node:sqlite').SQLInputValue>[];
+    for (const row of rows) { const next = changes(row), keys = Object.keys(next);
+      f.database.prepare(`INSERT INTO ${table}(${keys.join(',')}) VALUES(${keys.map(() => '?').join(',')})`).run(...keys.map(key => next[key])); }
+  };
+  copy("collaboration_work_item_snapshots", "revision=1", row => ({ ...row, work_item_id: second, goal: "支付提示调整" }));
+  copy("collaboration_plan_revisions", "id='plan-1'", row => ({ ...row, id: "plan-2", work_item_id: second }));
+  copy("collaboration_work_nodes", "plan_revision=1", row => ({ ...row, work_item_id: second }));
+  copy("collaboration_runs", "id='run-1'", row => ({ ...row, id: "run-2", work_item_id: second, thread_id: "thread-2", turn_id: "turn-2" }));
+  copy("collaboration_candidates", "id='candidate-1'", row => ({ ...row, id: "candidate-2", run_id: "run-2" }));
+  copy("collaboration_test_evidence", "run_id='run-1'", row => ({ ...row, id: "evidence-2", run_id: "run-2" }));
+  const reviews = assertionReviewFixture(f.database, second, "target");
+  copy("collaboration_candidate_reviews", "candidate_run_id='run-1'", row => ({ ...row, id: `${row.id}-second`, candidate_run_id: "run-2",
+    verdict_json: JSON.stringify(row.stage === "verifier" ? reviews.verifier : reviews.meta) }));
+  f.database.prepare("UPDATE collaboration_outbox SET delivery_state='sent',sent_at=250,delivery_sequence=2 WHERE source_event_id='source-2'").run();
+  return enqueueInboundCard(f.database, { sourceEventId: "approval-2", aggregateType: "plan", aggregateId: second, aggregateVersion: 1, now: 301,
+    card: { type: "plan_status_card", headline: "修改完成，需要负责人确认", status: "candidate_ready", workItemId: second,
+      workItemVersion: 1, planRevision: 1, candidateSha: "2".repeat(40), approvalRequired: true, summary: "支付提示已调整，涉及金额展示。" } });
+}
+
+describe("natural approval controls", () => {
+  it("approves by the subject actually shown by the runtime, even when its status summary is generic", async () => {
+    const f = presentationFixture();
+    const service = startCollaborationService({ dataDirectory: f.dataDirectory });
+    try {
+      expect(enqueueOwnerDecisionForWorkItem(f.database, f.workItemId, undefined, "runtime-approval", 300)).toBe(true);
+      const row = f.database.prepare("SELECT payload_json FROM collaboration_outbox WHERE source_event_id='runtime-approval'").get() as { payload_json: string };
+      const payload = JSON.parse(row.payload_json);
+      expect(payload.approvalTopic).toBe("让发布结果更容易理解");
+      expect(JSON.stringify(renderDingTalkSessionMessage(payload))).toContain(payload.approvalTopic);
+      await sendPresentation(f);
+      expect(service.performNaturalApproval(naturalMessage(`批准${payload.approvalTopic}`), 600)).toMatchObject({ allowed: true, workItemId: f.workItemId });
+    } finally { service.close(); f.database.close(); }
+  });
+
+  it.each(["accepted", "question"])("keeps the delivered %s reply in subsequent conversational context, not another group", async kind => {
+    const f = presentationFixture(); f.create();
+    const service = startCollaborationService({ dataDirectory: f.dataDirectory });
+    try {
+      await sendPresentation(f);
+      const result = service.performNaturalApproval(naturalMessage(kind === "accepted" ? "批准这次改动" : "退回这次改动"), 600);
+      expect(result).toMatchObject({ allowed: kind === "accepted" });
+      const original = f.database.prepare("SELECT * FROM collaboration_external_events WHERE source_event_id='source-1'").get() as unknown as ConversationJob;
+      const job = { ...original, received_at: 800, context_outbox_sequence: 100, requested_work_item_id: null };
+      const reply = f.database.prepare("SELECT id FROM collaboration_outbox WHERE source_event_id='natural'").get() as { id: string };
+      expect(readConversationContext(f.database, job).history.some(row => row.sourceEventId === `outbox:${reply.id}`)).toBe(false);
+      await sendPresentation(f, 700);
+      const context = readConversationContext(f.database, job);
+      expect(context.history).toContainEqual(expect.objectContaining({ sourceEventId: `outbox:${reply.id}`, role: "assistant",
+        text: expect.stringContaining(kind === "accepted" ? "已批准" : "退回原因") }));
+      expect(context.pendingQuestion?.kind ?? null).toBe(kind === "accepted" ? null : "approval");
+      expect(readConversationContext(f.database, { ...job, conversation_id: "another-group" }).history).toEqual([]);
+      expect(readConversationContext(f.database, { ...job, context_outbox_sequence: 1 }).history.some(row => row.sourceEventId === `outbox:${reply.id}`)).toBe(false);
+    } finally { service.close(); f.database.close(); }
+  });
+
+  it.each(["source", "group", "time"])("rejects invalid %s before saving even a denied approval", boundary => {
+    const f = presentationFixture();
+    const service = startCollaborationService({ dataDirectory: f.dataDirectory });
+    try {
+      const input = naturalMessage();
+      if (boundary === "source") input.sourceEventId = "x".repeat(257);
+      if (boundary === "group") input.conversationId = "bad\u0000group";
+      if (boundary === "time") input.receivedAt = -1;
+      expect(() => service.performNaturalApproval(input, 600)).toThrow(/invalid/u);
+      expect(f.database.prepare("SELECT count(*) n FROM collaboration_owner_text_commands").get()).toEqual({ n: 0 });
+    } finally { service.close(); f.database.close(); }
+  });
+
+  it.each(["owner", "version", "expiry"])("does not use a delivered question after %s changes", async boundary => {
+    const f = presentationFixture(); f.create();
+    const service = startCollaborationService({ dataDirectory: f.dataDirectory });
+    try {
+      await sendPresentation(f);
+      expect(service.performNaturalApproval(naturalMessage("退回这次改动"), 600)).toMatchObject({ question: { kind: "reason" } });
+      await sendPresentation(f, 700);
+      const input = naturalMessage("因为提示仍然不准确", "reason", 800);
+      if (boundary === "version") f.database.exec("UPDATE collaboration_work_items SET version=version+1");
+      if (boundary === "owner") {
+        const owner = new LocalOwnerRegistry(join(f.dataDirectory, "collaboration", "collaboration.sqlite"));
+        owner.recover({ expectedGeneration: 1, senderCorpId: "corp-1", senderStaffId: "replacement", now: 750 }); owner.close();
+        input.sender.senderStaffId = "replacement";
+      }
+      expect(service.performNaturalApproval(input, boundary === "expiry" ? 1_000_000 : 800)?.allowed ?? false).toBe(false);
+      expect(f.database.prepare("SELECT count(*) n FROM collaboration_control_events").get()).toEqual({ n: 0 });
+    } finally { service.close(); f.database.close(); }
+  });
+
+  it("does not upgrade a previously ingested ordinary event on redelivery", async () => {
+    const f = presentationFixture(); f.create();
+    const service = startCollaborationService({ dataDirectory: f.dataDirectory });
+    try {
+      const input = naturalMessage("可以", "ordinary", 350);
+      service.ingestDingTalkMessage(input);
+      await sendPresentation(f);
+      expect(service.performNaturalApproval({ ...input, receivedAt: 600 }, 600)).toBeNull();
+      expect(f.database.prepare("SELECT count(*) n FROM collaboration_control_events").get()).toEqual({ n: 0 });
+    } finally { service.close(); f.database.close(); }
+  });
+
+  it.each(["member", "weak-identity", "new-owner", "old-owner", "version", "expired", "not-sent", "other-group", "quoted", "conditional", "attachment", "intervening", "future-message"])("does not approve at boundary %s", async boundary => {
+    const f = presentationFixture(); f.create();
+    const controller = new OwnerActionController(join(f.dataDirectory, "collaboration", "collaboration.sqlite"));
+    try {
+      if (boundary !== "not-sent") await sendPresentation(f);
+      const input: import('../integrations/dingtalk/types.ts').DingTalkInboundMessage = naturalMessage();
+      if (boundary === "member") input.sender = { ...input.sender, senderId: "member", senderStaffId: "member" };
+      if (boundary === "weak-identity") input.sender = { ...input.sender, senderStaffId: undefined };
+      if (boundary === "new-owner" || boundary === "old-owner") {
+        const registry = new LocalOwnerRegistry(join(f.dataDirectory, "collaboration", "collaboration.sqlite"));
+        registry.recover({ expectedGeneration: 1, senderCorpId: "corp-1", senderStaffId: "new-owner", now: 500 }); registry.close();
+        if (boundary === "new-owner") input.sender = { ...input.sender, senderId: "new-owner", senderStaffId: "new-owner" };
+      }
+      if (boundary === "version") f.database.exec("UPDATE collaboration_work_items SET version=version+1");
+      if (boundary === "other-group") input.conversationId = "foreign-group";
+      if (boundary === "quoted") input.text = "他说：批准这次改动";
+      if (boundary === "conditional") input.text = "批准这次改动，但不包括权限变化";
+      if (boundary === "attachment") input.resources = [{ kind: "file", name: "instruction.txt", capabilityRef: "fixture-resource" }];
+      if (boundary === "intervening") {
+        const service = startCollaborationService({ dataDirectory: f.dataDirectory });
+        service.ingestDingTalkMessage(naturalMessage("另外一个问题", "intervening", 500)); service.close();
+      }
+      if (boundary === "future-message") input.receivedAt = 300;
+      const result = controller.performNaturalApproval(input, boundary === "expired" ? 900301 : 600);
+      expect(result?.allowed ?? false).toBe(false);
+      expect(f.database.prepare("SELECT count(*) n FROM collaboration_control_events").get()).toEqual({ n: 0 });
+      expect(f.database.prepare("SELECT status FROM collaboration_work_items WHERE id=?").get(f.workItemId)).toEqual({ status: "collecting" });
+    } finally { controller.close(); f.database.close(); }
+  });
+
+  it("asks which displayed change and accepts a named short answer only after that question was delivered", async () => {
+    const f = presentationFixture(); f.create(); secondCandidate(f);
+    const file = join(f.dataDirectory, "collaboration", "collaboration.sqlite");
+    let controller = new OwnerActionController(file);
+    try {
+      await sendPresentation(f, 400); await sendPresentation(f, 450);
+      const question = controller.performNaturalApproval(naturalMessage(), 600);
+      expect(question).toMatchObject({ allowed: false, question: { kind: "choose" } });
+      expect(controller.performNaturalApproval(naturalMessage("登录那个", "too-early", 650), 650)).toBeNull();
+      await sendPresentation(f, 700);
+      controller.close(); controller = new OwnerActionController(file);
+      expect(controller.performNaturalApproval(naturalMessage("登录那个", "answer", 800), 800))
+        .toMatchObject({ allowed: true, workItemId: f.workItemId, action: "accept" });
+      expect(f.database.prepare("SELECT count(*) n FROM collaboration_work_items WHERE status='accepted'").get()).toEqual({ n: 1 });
+    } finally { controller.close(); f.database.close(); }
+  });
+
+  it("asks for a rejection reason and records the real answer, never invented feedback", async () => {
+    const f = presentationFixture(); f.create();
+    const controller = new OwnerActionController(join(f.dataDirectory, "collaboration", "collaboration.sqlite"));
+    try {
+      await sendPresentation(f);
+      expect(controller.performNaturalApproval(naturalMessage("退回这次改动"), 600)).toMatchObject({ allowed: false, question: { kind: "reason" } });
+      expect(f.database.prepare("SELECT count(*) n FROM collaboration_control_events").get()).toEqual({ n: 0 });
+      await sendPresentation(f, 700);
+      const result = controller.performNaturalApproval(naturalMessage("因为提示还是看不懂", "reason", 800), 800);
+      expect(result).toMatchObject({ allowed: true, action: "reject", revisedSnapshotRevision: 2 });
+      expect(f.database.prepare("SELECT reason FROM collaboration_control_events").get()).toEqual({ reason: "提示还是看不懂" });
+    } finally { controller.close(); f.database.close(); }
+  });
+
+  it.each([
+    ["提示还是看不懂", "提示还是看不懂"],
+    ["错误提示太笼统，需要说明具体原因。", "错误提示太笼统，需要说明具体原因。"],
+    ["账号不存在时却显示密码错误", "账号不存在时却显示密码错误"],
+    ["移动端缺了空输入的检查", "移动端缺了空输入的检查"],
+    ["需要保留用户名，密码仍然清空", "需要保留用户名，密码仍然清空"],
+    ["原因是：提示没有说明怎么处理", "提示没有说明怎么处理"],
+  ])("takes an ordinary answer to the delivered rejection question: %s", async (text, reason) => {
+    const f = presentationFixture(); f.create();
+    let service = startCollaborationService({ dataDirectory: f.dataDirectory });
+    try {
+      await sendPresentation(f);
+      expect(service.performNaturalApproval(naturalMessage("退回这次改动"), 600)).toMatchObject({ question: { kind: "reason" } });
+      await sendPresentation(f, 700);
+      service.close(); service = startCollaborationService({ dataDirectory: f.dataDirectory });
+      const result = service.performNaturalApproval(naturalMessage(text, "plain-reason", 800), 800);
+      expect(result).toMatchObject({ allowed: true, action: "reject", workItemId: f.workItemId, revisedSnapshotRevision: 2 });
+      expect(f.database.prepare("SELECT reason FROM collaboration_control_events").get()).toEqual({ reason });
+      expect(service.performNaturalApproval(naturalMessage(text, "plain-reason", 800), 900)).toMatchObject({ duplicate: true });
+      expect(f.database.prepare("SELECT count(*) n FROM collaboration_control_events").get()).toEqual({ n: 1 });
+    } finally { service.close(); f.database.close(); }
+  });
+
+  it.each(["好的，谢谢", "先等等", "不退回了", "先别退回了", "这个先不退了", "我改主意了", "先暂停这项", "改成批准吧", "这是在问什么", "为什么要原因", "提示哪里不对？", "多久能好",
+    "登录那个", "另外问个问题", "新任务：支付提示不对", "他说：提示太笼统", "```提示太笼统```", "因为先不退回了"])("does not mistake %s for rejection feedback", async text => {
+    const f = presentationFixture(); f.create();
+    const service = startCollaborationService({ dataDirectory: f.dataDirectory });
+    try {
+      await sendPresentation(f);
+      service.performNaturalApproval(naturalMessage("退回这次改动"), 600);
+      await sendPresentation(f, 700);
+      expect(service.performNaturalApproval(naturalMessage(text, "not-feedback", 800), 800)?.allowed ?? false).toBe(false);
+      expect(f.database.prepare("SELECT count(*) n FROM collaboration_control_events").get()).toEqual({ n: 0 });
+    } finally { service.close(); f.database.close(); }
+  });
+
+  it.each(["not-sent", "member", "other-group", "version", "expiry", "intervening"])("does not consume plain feedback across %s", async boundary => {
+    const f = presentationFixture(); f.create();
+    const service = startCollaborationService({ dataDirectory: f.dataDirectory });
+    try {
+      await sendPresentation(f);
+      service.performNaturalApproval(naturalMessage("退回这次改动"), 600);
+      if (boundary !== "not-sent") await sendPresentation(f, 700);
+      const input = naturalMessage("提示还是看不懂", "feedback-boundary", 800);
+      if (boundary === "member") input.sender.senderStaffId = "another-member";
+      if (boundary === "other-group") input.conversationId = "another-group";
+      if (boundary === "version") f.database.exec("UPDATE collaboration_work_items SET version=version+1");
+      if (boundary === "intervening") service.ingestDingTalkMessage(naturalMessage("现在到哪了", "intervening-query", 750));
+      expect(service.performNaturalApproval(input, boundary === "expiry" ? 1_000_000 : 800)?.allowed ?? false).toBe(false);
+      expect(f.database.prepare("SELECT count(*) n FROM collaboration_control_events").get()).toEqual({ n: 0 });
+    } finally { service.close(); f.database.close(); }
+  });
+
+  it("redacts secrets in ordinary rejection feedback before saving the reason", async () => {
+    const f = presentationFixture(); f.create();
+    const service = startCollaborationService({ dataDirectory: f.dataDirectory });
+    try {
+      await sendPresentation(f);
+      service.performNaturalApproval(naturalMessage("退回这次改动"), 600);
+      await sendPresentation(f, 700);
+      expect(service.performNaturalApproval(naturalMessage("提示包含 password=synth-reason-secret，不应显示敏感信息", "secret-feedback", 800), 800))
+        .toMatchObject({ allowed: true, action: "reject" });
+      const reason = f.database.prepare("SELECT reason FROM collaboration_control_events").get() as { reason: string };
+      expect(reason.reason).toContain("提示包含");
+      expect(reason.reason).not.toContain("synth-reason-secret");
+      for (const table of ["collaboration_owner_text_commands", "collaboration_outbox", "collaboration_work_item_snapshots", "collaboration_audit_events"]) {
+        expect(JSON.stringify(f.database.prepare(`SELECT * FROM ${table}`).all())).not.toContain("synth-reason-secret");
+      }
+    } finally { service.close(); f.database.close(); }
+  });
+
+  it("rolls back control, receipt and audit if the natural reply cannot be saved", async () => {
+    const f = presentationFixture(); f.create();
+    const controller = new OwnerActionController(join(f.dataDirectory, "collaboration", "collaboration.sqlite"));
+    try {
+      await sendPresentation(f);
+      f.database.exec("CREATE TRIGGER fail_natural_reply BEFORE INSERT ON collaboration_outbox WHEN NEW.source_event_id='natural' BEGIN SELECT RAISE(ABORT,'fixture_reply_failure'); END");
+      expect(() => controller.performNaturalApproval(naturalMessage(), 600)).toThrow("fixture_reply_failure");
+      expect(f.database.prepare("SELECT count(*) n FROM collaboration_control_events").get()).toEqual({ n: 0 });
+      expect(f.database.prepare("SELECT count(*) n FROM collaboration_action_tokens").get()).toEqual({ n: 0 });
+      expect(f.database.prepare("SELECT 1 FROM collaboration_owner_text_commands WHERE source_event_id='natural'").get()).toBeUndefined();
+      f.database.exec("DROP TRIGGER fail_natural_reply");
+      expect(controller.performNaturalApproval(naturalMessage(), 601)).toMatchObject({ allowed: true });
+    } finally { controller.close(); f.database.close(); }
+  });
+});
 
 describe("fixed approval presentation provenance", () => {
   it("stages without authorizing and activates only with a proven original-group send, surviving restart", async () => {
@@ -331,6 +597,36 @@ describe("fixed approval presentation provenance", () => {
 });
 
 describe("candidate approval routing", () => {
+  it("lets the authenticated Owner approve the displayed fixed change without an ID, once across restart", async () => {
+    const f = presentationFixture(), card = f.create();
+    const file = join(f.dataDirectory, "collaboration", "collaboration.sqlite");
+    let controller = new OwnerActionController(file);
+    const input = { sourceEventId: "natural-yes", transportMessageId: "natural-yes", conversationId: "conversation-1", addressedToBot: true,
+      text: "可以，就按这次改动来。", sender: { senderCorpId: "corp-1", senderStaffId: "staff-1", senderId: "sender-1", displayName: "负责人" }, receivedAt: 500 };
+    try {
+      await new OutboxDispatcher(f.database, { async deliver(message) { return { outcome: "sent", approvalDelivery: {
+        sourceEventId: "source-1", payloadHash: approvalPayloadHash(message.payload),
+      } }; } }, f.options).dispatchOne(f.lease, 400);
+      const result = controller.performNaturalApproval(input, 500);
+      expect(result).toMatchObject({ allowed: true, action: "accept", workItemId: f.workItemId, approvalPresentationId: card.id });
+      expect(f.database.prepare("SELECT status FROM collaboration_work_items WHERE id=?").get(f.workItemId)).toEqual({ status: "accepted" });
+      controller.close(); controller = new OwnerActionController(file);
+      expect(controller.performNaturalApproval(input, 600)).toEqual({ ...result, duplicate: true });
+      expect(() => controller.performNaturalApproval({ ...input, text: "退回这次改动，因为提示不对" }, 601)).toThrow("conflict");
+      expect(f.database.prepare("SELECT count(*) n FROM collaboration_control_events").get()).toEqual({ n: 1 });
+      expect(f.database.prepare("SELECT count(*) n FROM collaboration_external_events").get()).toEqual({ n: 1 });
+      const reply = f.database.prepare("SELECT payload_json FROM collaboration_outbox WHERE source_event_id=?").get(input.sourceEventId) as { payload_json: string };
+      const rendered = JSON.stringify(renderDingTalkSessionMessage(JSON.parse(reply.payload_json)));
+      expect(rendered).toContain("已批准"); expect(rendered).not.toMatch(/WI-|SHA|token|candidate/u);
+      expect(rendered).toContain("登录提示");
+      for (const changed of [{ ...input, sender: { ...input.sender, senderStaffId: "member" } },
+        { ...input, conversationId: "another-group" }, { ...input, resources: [{ kind: "file" as const, capabilityRef: "fixture" }] }]) {
+        expect(() => controller.performNaturalApproval(changed, 602)).toThrow("conflict");
+      }
+      const audit = f.database.prepare("SELECT resource_json FROM collaboration_audit_events WHERE action='control.accept' AND outcome='allow'").get() as { resource_json: string };
+      expect(JSON.parse(audit.resource_json)).toMatchObject({ approvalPresentationId: card.id });
+    } finally { controller.close(); f.database.close(); }
+  });
   it("automatically completes a verified low-risk candidate in one audited transaction", () => {
     const { database, workItemId } = seedCandidate({ changedPaths: ["app/release-board.tsx"] });
     const result = completeVerifiedLowRiskCandidate(database, {

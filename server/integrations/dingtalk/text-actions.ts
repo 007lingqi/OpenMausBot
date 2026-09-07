@@ -21,7 +21,7 @@ const COMMANDS: Readonly<Record<string, DingTalkOwnerTextCommandName>> = {
  * The optional label is the one our replies render; arbitrary @people are not stripped.
  * This is intent parsing only. Identity, candidate and replay gates remain in the core.
  */
-function directControlText(message: DingTalkInboundMessage): string | null {
+export function directControlText(message: DingTalkInboundMessage): string | null {
   if (!message.addressedToBot || message.resources?.length || /[\r\n\u2028\u2029\p{Cf}]/u.test(message.text)) return null;
   return message.text.trim().replace(/^@研发助手[ \t]+/u, "");
 }

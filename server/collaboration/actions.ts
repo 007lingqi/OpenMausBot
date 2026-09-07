@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-import type { DingTalkSender } from "../integrations/dingtalk/types.ts";
+import type { DingTalkSender, DingTalkInboundMessage } from "../integrations/dingtalk/types.ts";
 import { appendControlAudit } from "./audit.ts";
 import { pendingPreparation } from "./execution-preparation.ts";
 import {
@@ -16,6 +16,13 @@ import {
 import { assertLedgerArmed } from "./restore-guard.ts";
 import { prepareTokenActionReceipt, persistTokenActionReceipt, type TokenActionRequest } from "./token-action-receipt.ts";
 import { enqueueDirectOwnerReply } from "./owner-command-reply.ts";
+import { directControlText } from "../integrations/dingtalk/text-actions.ts";
+import { approvalConversation, latestApprovalConversationDisplay, uninterruptedApprovalDisplay, shownApprovals,
+  matchingApprovals, pendingNaturalApproval, parseNaturalApproval, rejectionFeedback, naturalApprovalHash, naturalApprovalReply,
+  type NaturalApprovalOutcome, type NaturalApprovalQuestion } from "./natural-approval.ts";
+import { enqueueInboundCard } from "./outbox.ts";
+import { renderConversationReplyCard } from "./message-renderer.ts";
+import { redactSensitiveText } from "./sensitive-text.ts";
 
 const TOKEN_VERSION = 1 as const;
 const DEFAULT_TOKEN_TTL_MS = 15 * 60_000;
@@ -592,6 +599,96 @@ export class OwnerActionController {
 
   /** Applies a WI-addressed Owner command and its transport dedupe record in one Ledger transaction. */
   performDirect(input: PerformDirectOwnerActionInput): OwnerActionOutcome {
+    return this.performDirectTransaction(input);
+  }
+
+  /** Only the authenticated transport calls this entry point. It resolves an
+   * already displayed object under the same write lock as the sole apply core. */
+  performNaturalApproval(message: DingTalkInboundMessage, now = Date.now(), assertActive = () => {}): NaturalApprovalOutcome | null {
+    this.assertOpen();
+    const text = directControlText(message);
+    if (text === null || message.replyToSourceEventId) {
+      if (this.database.prepare("SELECT 1 FROM collaboration_owner_text_commands WHERE source_event_id=? AND json_extract(outcome_json,'$.kind')='natural_approval'").get(message.sourceEventId)) throw new Error("natural_approval_event_conflict");
+      return null;
+    }
+    const receivedAt = message.receivedAt ?? now;
+    const hash = naturalApprovalHash(message);
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      assertActive(); assertLedgerArmed(this.database);
+      const previous = this.database.prepare("SELECT payload_hash,outcome_json FROM collaboration_owner_text_commands WHERE source_event_id=?")
+        .get(message.sourceEventId) as TextCommandRow | undefined;
+      if (previous && JSON.parse(previous.outcome_json).kind === "natural_approval") {
+        if (previous.payload_hash !== hash) throw new Error("natural_approval_event_conflict");
+        this.database.exec("COMMIT"); return { ...JSON.parse(previous.outcome_json), duplicate: true } as NaturalApprovalOutcome;
+      }
+      // A normal event cannot become a control on redelivery just because an
+      // approval presentation appeared later. Preserve its original ingress path.
+      if (this.database.prepare("SELECT 1 FROM collaboration_external_events WHERE source='dingtalk' AND source_event_id=?")
+        .get(message.sourceEventId)) { this.database.exec("ROLLBACK"); return null; }
+      let intent = parseNaturalApproval(message);
+      const conversation = approvalConversation(this.database, message.conversationId);
+      const display = conversation ? latestApprovalConversationDisplay(this.database, conversation) : null;
+      const uninterrupted = !!conversation && !!display && uninterruptedApprovalDisplay(this.database, conversation, display, receivedAt);
+      const pending = display && uninterrupted ? pendingNaturalApproval(this.database, display, now) : null;
+      if (!intent && !pending) { this.database.exec("ROLLBACK"); return null; }
+      const shown = conversation ? shownApprovals(this.database, conversation, now, receivedAt, !intent && pending ? pending.presentationIds : undefined) : [];
+      let fromQuestion = false;
+      if (!intent && pending) {
+        const feedback = pending.kind === "reason" ? rejectionFeedback(text) : null;
+        if (feedback) {
+          intent = { action: "reject", topic: "", reason: feedback, contextual: false }; fromQuestion = true;
+        } else if (pending.kind === "choose" && matchingApprovals(shown, text).length === 1) {
+          intent = { action: pending.action, topic: text, contextual: false }; fromQuestion = true;
+        }
+      }
+      if (!intent || (intent.contextual && (!uninterrupted || !shown.length || !shown.some(item => item.proof.outbox_id === display?.id)))) {
+        this.database.exec("ROLLBACK"); return null;
+      }
+      if (!message.sourceEventId || message.sourceEventId !== message.sourceEventId.trim() || message.sourceEventId.length > 256 || /[\u0000-\u001f\u007f]/u.test(message.sourceEventId)) throw new Error("natural_approval_source_event_invalid");
+      if (!message.conversationId.trim() || message.conversationId.length > 512 || /[\u0000-\u001f\u007f]/u.test(message.conversationId)) throw new Error("natural_approval_conversation_invalid");
+      if (!Number.isSafeInteger(receivedAt) || !Number.isSafeInteger(now) || receivedAt < 0 || now < 0 || receivedAt > now) throw new Error("natural_approval_time_invalid");
+      if (previous || this.database.prepare("SELECT 1 FROM collaboration_outbox WHERE source='dingtalk' AND source_event_id=? " +
+        "UNION ALL SELECT 1 FROM collaboration_attachment_recovery_requests WHERE source_event_id=? " +
+        "UNION ALL SELECT 1 FROM collaboration_natural_intake_recovery_requests WHERE source_event_id=?")
+        .get(message.sourceEventId, message.sourceEventId, message.sourceEventId)) throw new Error("natural_approval_event_conflict");
+      const policy = evaluateOwnerPolicy(this.database, { sender: message.sender, capability: capabilityForAction(intent.action), now });
+      const matches = matchingApprovals(shown, intent.topic);
+      // Unnamed assent must answer the actual immediately visible presentation.
+      const fixed = matches.length === 1 && (intent.topic || fromQuestion || (uninterrupted && matches[0].proof.outbox_id === display?.id)) ? matches[0] : null;
+      const activeOwner = this.database.prepare("SELECT id,generation FROM collaboration_owner_bindings WHERE active=1").get() as { id: string; generation: number } | undefined;
+      const questionCurrent = !fromQuestion || (pending?.ownerBindingId === activeOwner?.id && pending?.ownerGeneration === policy.ownerGeneration);
+      let decision: NaturalApprovalOutcome;
+      if (policy.decision === "allow" && questionCurrent && fixed && (intent.action !== "reject" || intent.reason?.trim())) {
+        decision = this.performDirectTransaction({ sourceEventId: message.sourceEventId, conversationId: message.conversationId,
+          action: intent.action, workItemId: fixed.proof.work_item_id, candidateSha: fixed.proof.candidate_sha,
+          sender: message.sender, now, ...(intent.reason ? { reason: redactSensitiveText(intent.reason) } : {}) },
+          { managed: false, hash, presentationId: fixed.proof.outbox_id }) as NaturalApprovalOutcome;
+      } else {
+        let question: NaturalApprovalQuestion | undefined;
+        const reason = policy.decision !== "allow" ? policy.reason : !questionCurrent ? "approval_context_stale"
+          : fixed && intent.action === "reject" ? "reject_reason_required" : "approval_target_unavailable";
+        const offered = fixed ? [fixed] : matches.length ? matches : shown;
+        if (policy.decision === "allow" && questionCurrent && offered.length && activeOwner && (fixed || offered.length > 1)) {
+          question = { kind: fixed ? "reason" : "choose", action: intent.action,
+            presentationIds: offered.slice(0, 3).map(item => item.proof.outbox_id), ownerBindingId: activeOwner.id,
+            ownerGeneration: activeOwner.generation, expiresAt: Math.min(...offered.slice(0, 3).map(item => item.proof.expires_at)) };
+        }
+        decision = { ...outcome({ allowed: false, action: intent.action, reason }), kind: "natural_approval",
+          conversationId: message.conversationId, ...(question ? { question } : {}) };
+        appendControlAudit(this.database, { actorPrincipalId: policy.principalId, requestId: randomUUID(), action: `control.${intent.action}`,
+          outcome: "deny", policyRule: "natural-approval-presentation-v1", resource: { sourceEventIdHash: stateHash(message.sourceEventId) }, error: reason, now });
+        this.database.prepare("INSERT INTO collaboration_owner_text_commands(source_event_id,payload_hash,outcome_json,processed_at) VALUES(?,?,?,?)")
+          .run(message.sourceEventId, hash, JSON.stringify(decision), now);
+      }
+      enqueueInboundCard(this.database, { sourceEventId: message.sourceEventId, aggregateType: "association", aggregateId: message.sourceEventId,
+        aggregateVersion: 1, now, card: renderConversationReplyCard(naturalApprovalReply(decision,
+          decision.question ? shown.filter(item => decision.question!.presentationIds.includes(item.proof.outbox_id)) : shown)) });
+      this.database.exec("COMMIT"); return decision;
+    } catch (error) { this.database.exec("ROLLBACK"); throw error; }
+  }
+
+  private performDirectTransaction(input: PerformDirectOwnerActionInput, options: { managed?: boolean; hash?: string; presentationId?: string } = {}): OwnerActionOutcome {
     this.assertOpen();
     const now = input.now ?? Date.now();
     const sourceEventId = input.sourceEventId.trim();
@@ -602,9 +699,10 @@ export class OwnerActionController {
     }
     if (!/^WI-[A-F0-9]{12}$/u.test(workItemId)) throw new Error("owner_text_work_item_invalid");
     const normalized = { ...input, sourceEventId, workItemId, now };
-    const payloadHash = directCommandHash(normalized);
+    const payloadHash = options.hash ?? directCommandHash(normalized);
     const requestId = randomUUID();
-    this.database.exec("BEGIN IMMEDIATE");
+    if (options.managed !== false) this.database.exec("BEGIN IMMEDIATE");
+    else if (!this.database.isTransaction) throw new Error("owner_action_transaction_required");
     try {
       assertLedgerArmed(this.database);
       const previous = this.database
@@ -618,7 +716,7 @@ export class OwnerActionController {
         if (decision.conversationId !== undefined && decision.conversationId !== input.conversationId) {
           throw new Error("owner_text_command_event_conflict");
         }
-        this.database.exec("COMMIT");
+        if (options.managed !== false) this.database.exec("COMMIT");
         return { ...decision, duplicate: true };
       }
 
@@ -743,6 +841,7 @@ export class OwnerActionController {
                 tokenId,
                 sourceEventIdHash: stateHash(sourceEventId),
                 candidateSha: syntheticToken.candidate_sha,
+                ...(options.presentationId ? { approvalPresentationId: options.presentationId } : {}),
               },
               beforeHash,
               afterHash: stateHash(applied.workItem),
@@ -768,15 +867,16 @@ export class OwnerActionController {
         }
       }
       if (input.conversationId !== undefined) decision!.conversationId = input.conversationId;
+      if (options.presentationId) Object.assign(decision!, { kind: "natural_approval", approvalPresentationId: options.presentationId });
       this.database.prepare(
         "INSERT INTO collaboration_owner_text_commands " +
           "(source_event_id, payload_hash, outcome_json, processed_at) VALUES (?, ?, ?, ?)",
       ).run(sourceEventId, payloadHash, JSON.stringify(decision!), now);
       if (input.replyRequested) enqueueDirectOwnerReply(this.database, normalized, decision!, now);
-      this.database.exec("COMMIT");
+      if (options.managed !== false) this.database.exec("COMMIT");
       return decision!;
     } catch (error) {
-      this.database.exec("ROLLBACK");
+      if (options.managed !== false) this.database.exec("ROLLBACK");
       throw error;
     }
   }

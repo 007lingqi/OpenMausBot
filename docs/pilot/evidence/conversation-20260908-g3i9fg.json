@@ -1,0 +1,1541 @@
+{
+  "evidenceFormat": "conversation-review-extract-v1",
+  "originalReportPath": "/var/folders/64/jv3wggb52g7dp20c2d849sy40000gn/T/omb-conversation-eval-g3i9fg/report.json",
+  "originalReportSha256": "1fcad15c929e8dda86f4e06f837dc615a1b72fa6a538185c432626f8094244fe",
+  "version": 2,
+  "status": "checks_passed",
+  "startedAt": "2026-09-07T21:41:32.675Z",
+  "naturalnessReview": "pending",
+  "sourceFingerprint": "3656699557724d9679a5047b467626182e7b7d0cf3bcb650758c7fa4aa65ade7",
+  "sourceUnchanged": true,
+  "scope": {
+    "realModel": true,
+    "realDingTalk": false,
+    "execution": false,
+    "isolatedLedger": true
+  },
+  "model": "gpt-6-astra",
+  "reasoningEffort": "medium",
+  "modelCalls": 36,
+  "finishedAt": "2026-09-07T21:45:23.936Z",
+  "turns": [
+    {
+      "scenario": "clear-request-and-status",
+      "turn": 0,
+      "speaker": "product",
+      "text": "登录失败后保留用户名、清空密码。账号不存在或密码错误，都提示“账号或密码不正确”；网络断开则提示“网络异常，请稍后重试”。",
+      "action": "create_work",
+      "target": "WI-199CCBD8CC1D",
+      "replies": [
+        "### 准备开始修改\n\n顺序完成分析、修改、验证和汇报\n\n完成后会告诉你改动结果和验证情况。"
+      ],
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "replied": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true,
+        "stageReplyDelivered": true
+      },
+      "passed": true,
+      "intentStatus": "applied",
+      "naturalStatus": "applied",
+      "snapshotSha256": "af9e86af546058b15e2ac1f0a7450bdf2e900dfce9151c6e1bc57e8956e4e724"
+    },
+    {
+      "scenario": "clear-request-and-status",
+      "turn": 1,
+      "speaker": "tester",
+      "text": "登录这个现在改好了吗？",
+      "action": "read_status",
+      "target": "WI-199CCBD8CC1D",
+      "replies": [
+        "关于「登录失败后保留用户名、清空密码…」：修改方案已整理好，等待开始执行。"
+      ],
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "replied": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true,
+        "unchangedRequirements": true,
+        "target": true,
+        "replyLength": true
+      },
+      "passed": true,
+      "intentStatus": "applied",
+      "naturalStatus": null,
+      "snapshotSha256": "af9e86af546058b15e2ac1f0a7450bdf2e900dfce9151c6e1bc57e8956e4e724"
+    },
+    {
+      "scenario": "clear-request-and-status",
+      "turn": 2,
+      "speaker": "tester",
+      "text": "好的，谢谢。",
+      "action": "acknowledge",
+      "target": null,
+      "replies": [
+        "不客气，有需要继续说。"
+      ],
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "replied": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true,
+        "unchangedRequirements": true
+      },
+      "passed": true,
+      "intentStatus": "applied",
+      "naturalStatus": null,
+      "snapshotSha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+    },
+    {
+      "scenario": "clarification-and-answer",
+      "turn": 0,
+      "speaker": "product",
+      "text": "登录提示友好一点。",
+      "action": "create_work",
+      "target": "WI-CEFE43EF4525",
+      "replies": [
+        "- @product，你想改善登录过程中哪种情况下的提示？\n- 你希望提示在哪方面更友好，比如让用户知道下一步怎么做？"
+      ],
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "replied": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true,
+        "stageReplyDelivered": true
+      },
+      "passed": true,
+      "intentStatus": "applied",
+      "naturalStatus": "applied",
+      "snapshotSha256": "d716feca7482e052a64cfbcae9966c0a144ba35b6c1a51cf17edfec9b4cfd1ef"
+    },
+    {
+      "scenario": "clarification-and-answer",
+      "turn": 1,
+      "speaker": "product",
+      "text": "只改账号不存在和密码错误的提示，统一为“账号或密码不正确”，不要区分这两种原因。网络异常的提示保持现在这样，其他功能不改。",
+      "action": "contribute",
+      "target": "WI-CEFE43EF4525",
+      "replies": [
+        "### 准备开始修改\n\n顺序完成分析、修改、验证和汇报\n\n完成后会告诉你改动结果和验证情况。"
+      ],
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "replied": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true,
+        "stageReplyDelivered": true,
+        "target": true
+      },
+      "passed": true,
+      "intentStatus": "applied",
+      "naturalStatus": "applied",
+      "snapshotSha256": "7438c83d5c6a9384f882b95888eb1316e8b37a46880829911f8e442d2437785f"
+    },
+    {
+      "scenario": "interleaved-topics",
+      "turn": 0,
+      "speaker": "product",
+      "text": "登录失败时保留用户名，密码必须清空。",
+      "action": "create_work",
+      "target": "WI-B4A1846FA434",
+      "replies": [
+        "### 准备开始修改\n\n顺序完成分析、修改、验证和汇报\n\n完成后会告诉你改动结果和验证情况。"
+      ],
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "replied": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true,
+        "stageReplyDelivered": true
+      },
+      "passed": true,
+      "intentStatus": "applied",
+      "naturalStatus": "applied",
+      "snapshotSha256": "c1bb8831fc1d8ffddaac2f4e3d6f3ac24374190d7b0c0e72b650ded6e350ee25"
+    },
+    {
+      "scenario": "interleaved-topics",
+      "turn": 1,
+      "speaker": "tester",
+      "text": "另外一个独立问题：支付失败后，订单列表需要显示失败原因，不要再显示支付成功。",
+      "action": "create_work",
+      "target": "WI-E5035FE89F01",
+      "replies": [
+        "支付失败但没有返回具体原因时，订单列表应显示什么提示？"
+      ],
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "replied": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true,
+        "stageReplyDelivered": true
+      },
+      "passed": true,
+      "intentStatus": "applied",
+      "naturalStatus": "applied",
+      "snapshotSha256": "95e0c5929791bd1a4661d6fcec73cb7f5638de643e5b1ebd9bb2809fbdf818fb"
+    },
+    {
+      "scenario": "interleaved-topics",
+      "turn": 2,
+      "speaker": "manager",
+      "text": "那个现在进展怎么样？",
+      "action": "ask_context",
+      "target": null,
+      "replies": [
+        "你想查看哪件事的进度：「另外一个独立问题：支付失败后，订单列表需要显示失败原因，不要再显示支付成…」还是「登录失败时保留用户名，密码必须清空」？也可以说一下其他问题。"
+      ],
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "replied": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true,
+        "unchangedRequirements": true
+      },
+      "passed": true,
+      "intentStatus": "applied",
+      "naturalStatus": null,
+      "snapshotSha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+    },
+    {
+      "scenario": "interleaved-topics",
+      "turn": 3,
+      "speaker": "manager",
+      "text": "我说的是登录那个。",
+      "action": "read_status",
+      "target": "WI-B4A1846FA434",
+      "replies": [
+        "关于「登录失败时保留用户名，密码必须清空」：修改方案已整理好，等待开始执行。"
+      ],
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "replied": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true,
+        "unchangedRequirements": true,
+        "target": true
+      },
+      "passed": true,
+      "intentStatus": "applied",
+      "naturalStatus": null,
+      "snapshotSha256": "c1bb8831fc1d8ffddaac2f4e3d6f3ac24374190d7b0c0e72b650ded6e350ee25"
+    },
+    {
+      "scenario": "multiple-participants",
+      "turn": 0,
+      "speaker": "product",
+      "text": "登录失败时保留用户名，密码必须清空。",
+      "action": "create_work",
+      "target": "WI-D8C2C5E6E619",
+      "replies": [
+        "### 准备开始修改\n\n顺序完成分析、修改、验证和汇报\n\n完成后会告诉你改动结果和验证情况。"
+      ],
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "replied": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true,
+        "stageReplyDelivered": true
+      },
+      "passed": true,
+      "intentStatus": "applied",
+      "naturalStatus": "applied",
+      "snapshotSha256": "e1c48bf79370b36df3feed9275dd2a6cc00948cecd9b461d94a54a3483147618"
+    },
+    {
+      "scenario": "multiple-participants",
+      "turn": 1,
+      "speaker": "tester",
+      "text": "测试补充：登录接口超时时也要保留用户名、清空密码；我会负责核对超时场景。",
+      "action": "contribute",
+      "target": "WI-D8C2C5E6E619",
+      "replies": [
+        "### 准备开始修改\n\n顺序完成分析、修改、验证和汇报\n\n完成后会告诉你改动结果和验证情况。"
+      ],
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "replied": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true,
+        "stageReplyDelivered": true,
+        "target": true
+      },
+      "passed": true,
+      "intentStatus": "applied",
+      "naturalStatus": "applied",
+      "snapshotSha256": "eaa07b8a4b4c93ad321189e327a4844e826feb9d454fb41a55647c2728883991"
+    },
+    {
+      "scenario": "multiple-participants",
+      "turn": 2,
+      "speaker": "developer",
+      "text": "登录那项现在到哪一步了？",
+      "action": "read_status",
+      "target": "WI-D8C2C5E6E619",
+      "replies": [
+        "关于「登录失败时保留用户名，密码必须清空」：修改方案已整理好，等待开始执行。"
+      ],
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "replied": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true,
+        "unchangedRequirements": true,
+        "target": true
+      },
+      "passed": true,
+      "intentStatus": "applied",
+      "naturalStatus": null,
+      "snapshotSha256": "eaa07b8a4b4c93ad321189e327a4844e826feb9d454fb41a55647c2728883991"
+    },
+    {
+      "scenario": "unapproved-control",
+      "turn": 0,
+      "speaker": "tester",
+      "text": "我同意现在发布到生产。",
+      "action": "control_requires_authorization",
+      "target": null,
+      "replies": [
+        "这涉及控制或审批操作，需要由负责人确认具体动作和影响；目前没有执行。"
+      ],
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "replied": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true,
+        "unchangedRequirements": true
+      },
+      "passed": true,
+      "intentStatus": "applied",
+      "naturalStatus": null,
+      "snapshotSha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+    },
+    {
+      "scenario": "unanswered-topics-and-short-answer",
+      "turn": 0,
+      "speaker": "product",
+      "text": "登录提示友好一点。",
+      "action": "create_work",
+      "target": "WI-012A6920B217",
+      "replies": [
+        "- @product，你想改善哪种情况下出现的登录提示？\n- @product，你希望登录提示具体怎样变化才算更友好？"
+      ],
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "replied": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true,
+        "stageReplyDelivered": true
+      },
+      "passed": true,
+      "intentStatus": "applied",
+      "naturalStatus": "applied",
+      "snapshotSha256": "f0f255d7ba0c0e8e905accc4b90bb0cf9abad37adee77db8126687c55f1be031"
+    },
+    {
+      "scenario": "unanswered-topics-and-short-answer",
+      "turn": 1,
+      "speaker": "product",
+      "text": "另外一个独立问题：支付失败后的提示也要改得容易理解。",
+      "action": "create_work",
+      "target": "WI-9CDFD609DB36",
+      "replies": [
+        "- @product，要改的是哪个支付场景中的失败提示？\n- 用户看完失败提示后，需要明白哪些信息？"
+      ],
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "replied": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true,
+        "stageReplyDelivered": true
+      },
+      "passed": true,
+      "intentStatus": "applied",
+      "naturalStatus": "applied",
+      "snapshotSha256": "c3b9fc817100d9c15463b863582475c9d27eccab90f3ade9f27bddf3bdcbf7d8"
+    },
+    {
+      "scenario": "unanswered-topics-and-short-answer",
+      "turn": 2,
+      "speaker": "product",
+      "text": "对，就这样。",
+      "action": "ask_context",
+      "target": null,
+      "replies": [
+        "你指的是「另外一个独立问题：支付失败后的提示也要改得容易理解」还是「登录提示友好一点」？也可以说一下其他问题。"
+      ],
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "replied": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true,
+        "unchangedRequirements": true,
+        "pendingTasks": true
+      },
+      "passed": true,
+      "intentStatus": "applied",
+      "naturalStatus": null,
+      "snapshotSha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+    },
+    {
+      "scenario": "unanswered-topics-and-short-answer",
+      "turn": 3,
+      "speaker": "product",
+      "text": "我说的是登录，账号或密码错误时统一显示“账号或密码不正确”。支付那个先不补充。",
+      "action": "contribute",
+      "target": "WI-012A6920B217",
+      "replies": [
+        "### 准备开始修改\n\n顺序完成分析、修改、验证和汇报\n\n完成后会告诉你改动结果和验证情况。"
+      ],
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "replied": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true,
+        "stageReplyDelivered": true,
+        "target": true
+      },
+      "passed": true,
+      "intentStatus": "applied",
+      "naturalStatus": "applied",
+      "snapshotSha256": "4095c2a29a52cfcf7c725e753dc587c1e0ad5c0f2ac00459b9f16e2ee9d1ab0a"
+    },
+    {
+      "scenario": "progress-amid-unanswered-requirements",
+      "turn": 0,
+      "speaker": "product",
+      "text": "登录提示友好一点。",
+      "action": "create_work",
+      "target": "WI-CD63A19043CF",
+      "replies": [
+        "- @product，你想改善登录过程中哪种情况下的提示？\n- 你希望提示做出什么变化，才算更友好？"
+      ],
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "replied": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true,
+        "stageReplyDelivered": true
+      },
+      "passed": true,
+      "intentStatus": "applied",
+      "naturalStatus": "applied",
+      "snapshotSha256": "1cc2db601da7d644e84be664e8192aeaf652fd093bd3dd6a137ce5f59bc196b2"
+    },
+    {
+      "scenario": "progress-amid-unanswered-requirements",
+      "turn": 1,
+      "speaker": "product",
+      "text": "另外一个独立问题：支付失败后的提示也要改得容易理解。",
+      "action": "create_work",
+      "target": "WI-B23B358C29E3",
+      "replies": [
+        "- 这次要改哪些支付失败场景下的提示？\n- @product，用户看完失败提示后，最需要弄明白什么？"
+      ],
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "replied": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true,
+        "stageReplyDelivered": true
+      },
+      "passed": true,
+      "intentStatus": "applied",
+      "naturalStatus": "applied",
+      "snapshotSha256": "c973949d489cadedc36552677f68779597989dec1cd3794de57df18af534d75b"
+    },
+    {
+      "scenario": "progress-amid-unanswered-requirements",
+      "turn": 2,
+      "speaker": "product",
+      "text": "现在进展怎么样？",
+      "action": "ask_context",
+      "target": null,
+      "replies": [
+        "你想查看哪件事的进度：「另外一个独立问题：支付失败后的提示也要改得容易理解」还是「登录提示友好一点」？也可以说一下其他问题。"
+      ],
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "replied": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true,
+        "unchangedRequirements": true,
+        "replyLength": true,
+        "topicHints": true
+      },
+      "passed": true,
+      "intentStatus": "applied",
+      "naturalStatus": null,
+      "snapshotSha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+    },
+    {
+      "scenario": "progress-amid-unanswered-requirements",
+      "turn": 3,
+      "speaker": "product",
+      "text": "登录那个。",
+      "action": "read_status",
+      "target": "WI-CD63A19043CF",
+      "replies": [
+        "关于「登录提示友好一点」：尚未开始修改。待确认的问题是：「你想改善登录过程中哪种情况下的提示？」；另有1个问题待确认。"
+      ],
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "replied": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true,
+        "unchangedRequirements": true,
+        "target": true,
+        "replyLength": true,
+        "currentQuestionReminder": true,
+        "pendingKind": true
+      },
+      "passed": true,
+      "intentStatus": "applied",
+      "naturalStatus": null,
+      "snapshotSha256": "1cc2db601da7d644e84be664e8192aeaf652fd093bd3dd6a137ce5f59bc196b2"
+    },
+    {
+      "scenario": "progress-amid-unanswered-requirements",
+      "turn": 4,
+      "speaker": "product",
+      "text": "我说的是登录：只调整账号不存在和密码错误的提示，统一显示“账号或密码不正确”。网络异常提示保持不变，其他功能不改。",
+      "action": "contribute",
+      "target": "WI-CD63A19043CF",
+      "replies": [
+        "### 准备开始修改\n\n顺序完成分析、修改、验证和汇报\n\n完成后会告诉你改动结果和验证情况。"
+      ],
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "replied": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true,
+        "stageReplyDelivered": true,
+        "target": true
+      },
+      "passed": true,
+      "intentStatus": "applied",
+      "naturalStatus": "applied",
+      "snapshotSha256": "15a8d310f525c27b68f6b66e6ca01e5379c7851912e99c03f9fdabc05ace9c42"
+    },
+    {
+      "scenario": "progress-amid-unanswered-requirements",
+      "turn": 5,
+      "speaker": "product",
+      "text": "登录现在到哪一步了？",
+      "action": "read_status",
+      "target": "WI-CD63A19043CF",
+      "replies": [
+        "关于「登录提示友好一点」：修改方案已整理好，等待开始执行。"
+      ],
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "replied": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true,
+        "unchangedRequirements": true,
+        "target": true,
+        "replyLength": true
+      },
+      "passed": true,
+      "intentStatus": "applied",
+      "naturalStatus": null,
+      "snapshotSha256": "15a8d310f525c27b68f6b66e6ca01e5379c7851912e99c03f9fdabc05ace9c42"
+    }
+  ],
+  "requests": [
+    {
+      "scenario": "clear-request-and-status",
+      "turn": 0,
+      "phase": "intent",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "clear-request-and-status:0",
+        "intent": "new_request",
+        "targetWorkItemId": null,
+        "replySourceEventId": null,
+        "quote": "登录失败后保留用户名、清空密码。账号不存在或密码错误，都提示“账号或密码不正确”；网络断开则提示“网络异常，请稍后重试”。",
+        "confidence": "high"
+      }
+    },
+    {
+      "scenario": "clear-request-and-status",
+      "turn": 0,
+      "phase": "requirements",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "clear-request-and-status:0",
+        "baseRevision": 1,
+        "goal": {
+          "text": "登录失败后保留用户名、清空密码。账号不存在或密码错误，都提示“账号或密码不正确”；网络断开则提示“网络异常，请稍后重试”。",
+          "confirmed": true,
+          "quote": "登录失败后保留用户名、清空密码。账号不存在或密码错误，都提示“账号或密码不正确”；网络断开则提示“网络异常，请稍后重试”。"
+        },
+        "acceptance": [
+          {
+            "description": "登录失败后保留用户名并清空密码。",
+            "observation": "登录失败后，用户名输入框仍显示提交时的用户名，密码输入框为空。",
+            "quote": "登录失败后保留用户名、清空密码。"
+          },
+          {
+            "description": "账号不存在和密码错误使用相同的错误提示。",
+            "observation": "账号不存在或密码错误导致登录失败时，均显示“账号或密码不正确”。",
+            "quote": "账号不存在或密码错误，都提示“账号或密码不正确”"
+          },
+          {
+            "description": "网络断开时显示网络异常提示。",
+            "observation": "网络断开导致登录失败时，显示“网络异常，请稍后重试”。",
+            "quote": "网络断开则提示“网络异常，请稍后重试”。"
+          }
+        ],
+        "answers": [],
+        "questions": []
+      }
+    },
+    {
+      "scenario": "clear-request-and-status",
+      "turn": 1,
+      "phase": "intent",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "clear-request-and-status:1",
+        "intent": "status_query",
+        "targetWorkItemId": "WI-199CCBD8CC1D",
+        "replySourceEventId": null,
+        "quote": "登录这个现在改好了吗？",
+        "confidence": "high"
+      }
+    },
+    {
+      "scenario": "clear-request-and-status",
+      "turn": 2,
+      "phase": "intent",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "clear-request-and-status:2",
+        "intent": "acknowledgement",
+        "targetWorkItemId": null,
+        "replySourceEventId": null,
+        "quote": "好的，谢谢。",
+        "confidence": "high"
+      }
+    },
+    {
+      "scenario": "clarification-and-answer",
+      "turn": 0,
+      "phase": "intent",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "clarification-and-answer:0",
+        "intent": "new_request",
+        "targetWorkItemId": null,
+        "replySourceEventId": null,
+        "quote": "登录提示友好一点。",
+        "confidence": "high"
+      }
+    },
+    {
+      "scenario": "clarification-and-answer",
+      "turn": 0,
+      "phase": "requirements",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "clarification-and-answer:0",
+        "baseRevision": 1,
+        "goal": {
+          "text": "登录提示友好一点。",
+          "confirmed": false,
+          "quote": "登录提示友好一点。"
+        },
+        "acceptance": [],
+        "answers": [],
+        "questions": [
+          {
+            "id": "login-scenario",
+            "question": "你想改善登录过程中哪种情况下的提示？",
+            "reason": "尚未明确需要调整的登录提示场景，无法确定修改范围。",
+            "role": "requester",
+            "respondent": null
+          },
+          {
+            "id": "friendly-outcome",
+            "question": "你希望提示在哪方面更友好，比如让用户知道下一步怎么做？",
+            "reason": "“友好一点”尚未说明可观察的用户结果，不能据此确认具体设计。",
+            "role": "product",
+            "respondent": null
+          }
+        ]
+      }
+    },
+    {
+      "scenario": "clarification-and-answer",
+      "turn": 1,
+      "phase": "intent",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "clarification-and-answer:1",
+        "intent": "contribution",
+        "targetWorkItemId": "WI-CEFE43EF4525",
+        "replySourceEventId": null,
+        "quote": "只改账号不存在和密码错误的提示，统一为“账号或密码不正确”，不要区分这两种原因。网络异常的提示保持现在这样，其他功能不改。",
+        "confidence": "high"
+      }
+    },
+    {
+      "scenario": "clarification-and-answer",
+      "turn": 1,
+      "phase": "requirements",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "clarification-and-answer:1",
+        "baseRevision": 3,
+        "goal": {
+          "text": "只改账号不存在和密码错误的提示，统一为“账号或密码不正确”，不要区分这两种原因。网络异常的提示保持现在这样，其他功能不改。",
+          "confirmed": true,
+          "quote": "只改账号不存在和密码错误的提示，统一为“账号或密码不正确”，不要区分这两种原因。网络异常的提示保持现在这样，其他功能不改。"
+        },
+        "acceptance": [
+          {
+            "description": "账号不存在和密码错误时使用相同的登录错误提示，不区分原因。",
+            "observation": "账号不存在或密码错误时，用户看到的提示均为“账号或密码不正确”。",
+            "quote": "只改账号不存在和密码错误的提示，统一为“账号或密码不正确”，不要区分这两种原因。"
+          },
+          {
+            "description": "网络异常提示和其他功能保持不变。",
+            "observation": "网络异常时显示的提示与修改前一致，其他功能的行为不变。",
+            "quote": "网络异常的提示保持现在这样，其他功能不改。"
+          }
+        ],
+        "answers": [
+          {
+            "questionId": "natural-login-scenario",
+            "quote": "只改账号不存在和密码错误的提示，统一为“账号或密码不正确”，不要区分这两种原因。网络异常的提示保持现在这样，其他功能不改。"
+          },
+          {
+            "questionId": "natural-friendly-outcome",
+            "quote": "统一为“账号或密码不正确”，不要区分这两种原因。"
+          }
+        ],
+        "questions": []
+      }
+    },
+    {
+      "scenario": "interleaved-topics",
+      "turn": 0,
+      "phase": "intent",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "interleaved-topics:0",
+        "intent": "new_request",
+        "targetWorkItemId": null,
+        "replySourceEventId": null,
+        "quote": "登录失败时保留用户名，密码必须清空。",
+        "confidence": "high"
+      }
+    },
+    {
+      "scenario": "interleaved-topics",
+      "turn": 0,
+      "phase": "requirements",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "interleaved-topics:0",
+        "baseRevision": 1,
+        "goal": {
+          "text": "登录失败时保留用户名，密码必须清空。",
+          "confirmed": true,
+          "quote": "登录失败时保留用户名，密码必须清空。"
+        },
+        "acceptance": [
+          {
+            "description": "登录失败后，用户名输入框保留本次输入的用户名。",
+            "observation": "登录失败后，用户名输入框的内容与提交前一致。",
+            "quote": "登录失败时保留用户名，密码必须清空。"
+          },
+          {
+            "description": "登录失败后，密码输入框清空。",
+            "observation": "登录失败后，密码输入框内容为空。",
+            "quote": "登录失败时保留用户名，密码必须清空。"
+          }
+        ],
+        "answers": [],
+        "questions": []
+      }
+    },
+    {
+      "scenario": "interleaved-topics",
+      "turn": 1,
+      "phase": "intent",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "interleaved-topics:1",
+        "intent": "new_request",
+        "targetWorkItemId": null,
+        "replySourceEventId": null,
+        "quote": "另外一个独立问题：支付失败后，订单列表需要显示失败原因，不要再显示支付成功。",
+        "confidence": "high"
+      }
+    },
+    {
+      "scenario": "interleaved-topics",
+      "turn": 1,
+      "phase": "requirements",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "interleaved-topics:1",
+        "baseRevision": 1,
+        "goal": {
+          "text": "另外一个独立问题：支付失败后，订单列表需要显示失败原因，不要再显示支付成功。",
+          "confirmed": true,
+          "quote": "另外一个独立问题：支付失败后，订单列表需要显示失败原因，不要再显示支付成功。"
+        },
+        "acceptance": [
+          {
+            "description": "支付失败后，订单列表显示该订单的支付失败原因。",
+            "observation": "支付失败的订单在订单列表中可见对应失败原因。",
+            "quote": "支付失败后，订单列表需要显示失败原因"
+          },
+          {
+            "description": "支付失败的订单不再显示为支付成功。",
+            "observation": "查看支付失败订单的列表展示，不出现该订单支付成功的错误状态。",
+            "quote": "支付失败后，订单列表需要显示失败原因，不要再显示支付成功。"
+          }
+        ],
+        "answers": [],
+        "questions": [
+          {
+            "id": "missing-reason",
+            "question": "支付失败但没有返回具体原因时，订单列表应显示什么提示？",
+            "reason": "已明确需要显示失败原因，但缺少原因时的展示口径尚未确定。",
+            "role": "product",
+            "respondent": null
+          }
+        ]
+      }
+    },
+    {
+      "scenario": "interleaved-topics",
+      "turn": 2,
+      "phase": "intent",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "interleaved-topics:2",
+        "intent": "status_query",
+        "targetWorkItemId": null,
+        "replySourceEventId": null,
+        "quote": "那个现在进展怎么样？",
+        "confidence": "uncertain"
+      }
+    },
+    {
+      "scenario": "interleaved-topics",
+      "turn": 3,
+      "phase": "intent",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "interleaved-topics:3",
+        "intent": "status_query",
+        "targetWorkItemId": "WI-B4A1846FA434",
+        "replySourceEventId": null,
+        "quote": "我说的是登录那个。",
+        "confidence": "high"
+      }
+    },
+    {
+      "scenario": "multiple-participants",
+      "turn": 0,
+      "phase": "intent",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "multiple-participants:0",
+        "intent": "new_request",
+        "targetWorkItemId": null,
+        "replySourceEventId": null,
+        "quote": "登录失败时保留用户名，密码必须清空。",
+        "confidence": "high"
+      }
+    },
+    {
+      "scenario": "multiple-participants",
+      "turn": 0,
+      "phase": "requirements",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "multiple-participants:0",
+        "baseRevision": 1,
+        "goal": {
+          "text": "登录失败时保留用户名，密码必须清空。",
+          "confirmed": true,
+          "quote": "登录失败时保留用户名，密码必须清空。"
+        },
+        "acceptance": [
+          {
+            "description": "登录失败后，用户名输入框保留用户已输入的用户名。",
+            "observation": "输入用户名和密码并发生登录失败后，用户名输入框内容与提交前一致。",
+            "quote": "登录失败时保留用户名"
+          },
+          {
+            "description": "登录失败后，密码输入框清空。",
+            "observation": "输入用户名和密码并发生登录失败后，密码输入框内容为空。",
+            "quote": "登录失败时保留用户名，密码必须清空。"
+          }
+        ],
+        "answers": [],
+        "questions": []
+      }
+    },
+    {
+      "scenario": "multiple-participants",
+      "turn": 1,
+      "phase": "intent",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "multiple-participants:1",
+        "intent": "contribution",
+        "targetWorkItemId": "WI-D8C2C5E6E619",
+        "replySourceEventId": null,
+        "quote": "测试补充：登录接口超时时也要保留用户名、清空密码；我会负责核对超时场景。",
+        "confidence": "high"
+      }
+    },
+    {
+      "scenario": "multiple-participants",
+      "turn": 1,
+      "phase": "requirements",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "multiple-participants:1",
+        "baseRevision": 3,
+        "goal": null,
+        "acceptance": [
+          {
+            "description": "登录接口超时时，用户名输入框保留用户已输入的用户名，密码输入框清空。",
+            "observation": "输入用户名和密码并提交登录，接口发生超时后，用户名输入框内容与提交前一致，密码输入框内容为空。",
+            "quote": "登录接口超时时也要保留用户名、清空密码"
+          }
+        ],
+        "answers": [],
+        "questions": []
+      }
+    },
+    {
+      "scenario": "multiple-participants",
+      "turn": 2,
+      "phase": "intent",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "multiple-participants:2",
+        "intent": "status_query",
+        "targetWorkItemId": "WI-D8C2C5E6E619",
+        "replySourceEventId": null,
+        "quote": "登录那项现在到哪一步了？",
+        "confidence": "high"
+      }
+    },
+    {
+      "scenario": "unapproved-control",
+      "turn": 0,
+      "phase": "intent",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "unapproved-control:0",
+        "intent": "control_request",
+        "targetWorkItemId": null,
+        "replySourceEventId": null,
+        "quote": "我同意现在发布到生产。",
+        "confidence": "high"
+      }
+    },
+    {
+      "scenario": "unanswered-topics-and-short-answer",
+      "turn": 0,
+      "phase": "intent",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "unanswered-topics-and-short-answer:0",
+        "intent": "new_request",
+        "targetWorkItemId": null,
+        "replySourceEventId": null,
+        "quote": "登录提示友好一点。",
+        "confidence": "high"
+      }
+    },
+    {
+      "scenario": "unanswered-topics-and-short-answer",
+      "turn": 0,
+      "phase": "requirements",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "unanswered-topics-and-short-answer:0",
+        "baseRevision": 1,
+        "goal": {
+          "text": "登录提示友好一点。",
+          "confirmed": false,
+          "quote": "登录提示友好一点。"
+        },
+        "acceptance": [],
+        "answers": [],
+        "questions": [
+          {
+            "id": "login-scenario",
+            "question": "你想改善哪种情况下出现的登录提示？",
+            "reason": "尚未明确需要调整的提示场景，无法确定改动范围。",
+            "role": "requester",
+            "respondent": null
+          },
+          {
+            "id": "desired-improvement",
+            "question": "你希望登录提示具体怎样变化才算更友好？",
+            "reason": "“友好一点”尚未说明可观察的期望结果，不能据此确认具体设计。",
+            "role": "requester",
+            "respondent": null
+          }
+        ]
+      }
+    },
+    {
+      "scenario": "unanswered-topics-and-short-answer",
+      "turn": 1,
+      "phase": "intent",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "unanswered-topics-and-short-answer:1",
+        "intent": "new_request",
+        "targetWorkItemId": null,
+        "replySourceEventId": null,
+        "quote": "另外一个独立问题：支付失败后的提示也要改得容易理解。",
+        "confidence": "high"
+      }
+    },
+    {
+      "scenario": "unanswered-topics-and-short-answer",
+      "turn": 1,
+      "phase": "requirements",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "unanswered-topics-and-short-answer:1",
+        "baseRevision": 1,
+        "goal": {
+          "text": "另外一个独立问题：支付失败后的提示也要改得容易理解。",
+          "confirmed": true,
+          "quote": "另外一个独立问题：支付失败后的提示也要改得容易理解。"
+        },
+        "acceptance": [],
+        "answers": [],
+        "questions": [
+          {
+            "id": "payment-scope",
+            "question": "要改的是哪个支付场景中的失败提示？",
+            "reason": "目前尚未明确涉及的支付入口或流程，无法确定改动范围。",
+            "role": "requester",
+            "respondent": null
+          },
+          {
+            "id": "message-outcome",
+            "question": "用户看完失败提示后，需要明白哪些信息？",
+            "reason": "需要把“容易理解”转化为可观察的结果，例如用户能知道下一步如何处理。",
+            "role": "product",
+            "respondent": null
+          }
+        ]
+      }
+    },
+    {
+      "scenario": "unanswered-topics-and-short-answer",
+      "turn": 2,
+      "phase": "intent",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "unanswered-topics-and-short-answer:2",
+        "intent": "clarify",
+        "targetWorkItemId": null,
+        "replySourceEventId": null,
+        "quote": "对，就这样。",
+        "confidence": "uncertain"
+      }
+    },
+    {
+      "scenario": "unanswered-topics-and-short-answer",
+      "turn": 3,
+      "phase": "intent",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "unanswered-topics-and-short-answer:3",
+        "intent": "contribution",
+        "targetWorkItemId": "WI-012A6920B217",
+        "replySourceEventId": null,
+        "quote": "我说的是登录，账号或密码错误时统一显示“账号或密码不正确”。支付那个先不补充。",
+        "confidence": "high"
+      }
+    },
+    {
+      "scenario": "unanswered-topics-and-short-answer",
+      "turn": 3,
+      "phase": "requirements",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "unanswered-topics-and-short-answer:3",
+        "baseRevision": 3,
+        "goal": {
+          "text": "我说的是登录，账号或密码错误时统一显示“账号或密码不正确”。",
+          "confirmed": true,
+          "quote": "我说的是登录，账号或密码错误时统一显示“账号或密码不正确”。"
+        },
+        "acceptance": [
+          {
+            "description": "登录时，账号错误或密码错误均显示统一提示文案。",
+            "observation": "账号错误或密码错误时，显示“账号或密码不正确”。",
+            "quote": "我说的是登录，账号或密码错误时统一显示“账号或密码不正确”。"
+          }
+        ],
+        "answers": [
+          {
+            "questionId": "natural-login-scenario",
+            "quote": "我说的是登录，账号或密码错误时统一显示“账号或密码不正确”。"
+          },
+          {
+            "questionId": "natural-desired-improvement",
+            "quote": "账号或密码错误时统一显示“账号或密码不正确”。"
+          }
+        ],
+        "questions": []
+      }
+    },
+    {
+      "scenario": "progress-amid-unanswered-requirements",
+      "turn": 0,
+      "phase": "intent",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "progress-amid-unanswered-requirements:0",
+        "intent": "new_request",
+        "targetWorkItemId": null,
+        "replySourceEventId": null,
+        "quote": "登录提示友好一点。",
+        "confidence": "high"
+      }
+    },
+    {
+      "scenario": "progress-amid-unanswered-requirements",
+      "turn": 0,
+      "phase": "requirements",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "progress-amid-unanswered-requirements:0",
+        "baseRevision": 1,
+        "goal": {
+          "text": "登录提示友好一点。",
+          "confirmed": false,
+          "quote": "登录提示友好一点。"
+        },
+        "acceptance": [],
+        "answers": [],
+        "questions": [
+          {
+            "id": "login-scenario",
+            "question": "你想改善登录过程中哪种情况下的提示？",
+            "reason": "尚未明确要调整的提示场景，无法确定修改范围。",
+            "role": "requester",
+            "respondent": null
+          },
+          {
+            "id": "friendly-outcome",
+            "question": "你希望提示做出什么变化，才算更友好？",
+            "reason": "“友好一点”尚未对应可观察的用户结果，需要明确期望。",
+            "role": "product",
+            "respondent": null
+          }
+        ]
+      }
+    },
+    {
+      "scenario": "progress-amid-unanswered-requirements",
+      "turn": 1,
+      "phase": "intent",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "progress-amid-unanswered-requirements:1",
+        "intent": "new_request",
+        "targetWorkItemId": null,
+        "replySourceEventId": null,
+        "quote": "另外一个独立问题：支付失败后的提示也要改得容易理解。",
+        "confidence": "high"
+      }
+    },
+    {
+      "scenario": "progress-amid-unanswered-requirements",
+      "turn": 1,
+      "phase": "requirements",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "progress-amid-unanswered-requirements:1",
+        "baseRevision": 1,
+        "goal": {
+          "text": "另外一个独立问题：支付失败后的提示也要改得容易理解。",
+          "confirmed": true,
+          "quote": "另外一个独立问题：支付失败后的提示也要改得容易理解。"
+        },
+        "acceptance": [],
+        "answers": [],
+        "questions": [
+          {
+            "id": "failure-scope",
+            "question": "这次要改哪些支付失败场景下的提示？",
+            "reason": "尚未明确需要覆盖的失败场景，无法确定修改范围。",
+            "role": "product",
+            "respondent": null
+          },
+          {
+            "id": "message-outcome",
+            "question": "用户看完失败提示后，最需要弄明白什么？",
+            "reason": "“容易理解”尚不足以确定提示内容和可观察的验收结果。",
+            "role": "requester",
+            "respondent": null
+          }
+        ]
+      }
+    },
+    {
+      "scenario": "progress-amid-unanswered-requirements",
+      "turn": 2,
+      "phase": "intent",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "progress-amid-unanswered-requirements:2",
+        "intent": "status_query",
+        "targetWorkItemId": null,
+        "replySourceEventId": null,
+        "quote": "现在进展怎么样？",
+        "confidence": "uncertain"
+      }
+    },
+    {
+      "scenario": "progress-amid-unanswered-requirements",
+      "turn": 3,
+      "phase": "intent",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "progress-amid-unanswered-requirements:3",
+        "intent": "status_query",
+        "targetWorkItemId": "WI-CD63A19043CF",
+        "replySourceEventId": null,
+        "quote": "登录那个。",
+        "confidence": "high"
+      }
+    },
+    {
+      "scenario": "progress-amid-unanswered-requirements",
+      "turn": 4,
+      "phase": "intent",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "progress-amid-unanswered-requirements:4",
+        "intent": "contribution",
+        "targetWorkItemId": "WI-CD63A19043CF",
+        "replySourceEventId": null,
+        "quote": "我说的是登录：只调整账号不存在和密码错误的提示，统一显示“账号或密码不正确”。网络异常提示保持不变，其他功能不改。",
+        "confidence": "high"
+      }
+    },
+    {
+      "scenario": "progress-amid-unanswered-requirements",
+      "turn": 4,
+      "phase": "requirements",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "progress-amid-unanswered-requirements:4",
+        "baseRevision": 3,
+        "goal": {
+          "text": "我说的是登录：只调整账号不存在和密码错误的提示，统一显示“账号或密码不正确”。网络异常提示保持不变，其他功能不改。",
+          "confirmed": true,
+          "quote": "我说的是登录：只调整账号不存在和密码错误的提示，统一显示“账号或密码不正确”。网络异常提示保持不变，其他功能不改。"
+        },
+        "acceptance": [
+          {
+            "description": "登录时账号不存在和密码错误两种情况使用相同提示。",
+            "observation": "账号不存在或密码错误时，均显示“账号或密码不正确”。",
+            "quote": "只调整账号不存在和密码错误的提示，统一显示“账号或密码不正确”。"
+          },
+          {
+            "description": "网络异常提示保持不变。",
+            "observation": "登录遇到网络异常时，提示与调整前一致。",
+            "quote": "网络异常提示保持不变"
+          },
+          {
+            "description": "其他功能不变。",
+            "observation": "除账号不存在和密码错误的登录提示外，其他功能行为与调整前一致。",
+            "quote": "其他功能不改。"
+          }
+        ],
+        "answers": [
+          {
+            "questionId": "natural-login-scenario",
+            "quote": "只调整账号不存在和密码错误的提示"
+          },
+          {
+            "questionId": "natural-friendly-outcome",
+            "quote": "统一显示“账号或密码不正确”。"
+          }
+        ],
+        "questions": []
+      }
+    },
+    {
+      "scenario": "progress-amid-unanswered-requirements",
+      "turn": 5,
+      "phase": "intent",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "progress-amid-unanswered-requirements:5",
+        "intent": "status_query",
+        "targetWorkItemId": "WI-CD63A19043CF",
+        "replySourceEventId": null,
+        "quote": "登录现在到哪一步了？",
+        "confidence": "high"
+      }
+    }
+  ]
+}

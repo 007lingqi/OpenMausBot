@@ -114,6 +114,24 @@ class FakeSdk implements DingTalkStreamSdkPort {
 }
 
 describe("DingTalk Stream adapter", () => {
+  it("routes natural approval to the durable control sink before ingress and ACKs only after commit", async () => {
+    const sdk = new FakeSdk(), ingest = vi.fn((input: DingTalkInboundMessage) => inboundOutcome(input));
+    const performNaturalApproval = vi.fn().mockRejectedValueOnce(new Error("fixture_ledger_unavailable"))
+      .mockResolvedValue({ ...ownerOutcome(), action: "accept", kind: "natural_approval" });
+    const adapter = new DingTalkStreamAdapter(sdk, { ingest }, { perform: () => ownerOutcome(), performNaturalApproval }, new DingTalkSessionReplyRegistry());
+    await adapter.start();
+    try {
+      const packet = envelope("bot-message-text.json", "natural-approval");
+      const payload = JSON.parse(packet.data); payload.text.content = "可以，就按这次改动来。";
+      const input = { ...packet, data: JSON.stringify(payload) };
+      await sdk.emit("robot", input); expect(sdk.acknowledgements).toEqual([]);
+      await sdk.emit("robot", input); expect(sdk.acknowledgements).toEqual(["natural-approval"]);
+      expect(ingest).not.toHaveBeenCalled(); expect(performNaturalApproval).toHaveBeenCalledTimes(2);
+      performNaturalApproval.mockResolvedValue(null);
+      await sdk.emit("robot", { ...input, headers: { ...input.headers, messageId: "ordinary" } });
+      expect(ingest).toHaveBeenCalledTimes(1);
+    } finally { adapter.stop(); }
+  });
   it.each([
     "示例： 批准 WI-A1B2C3D4E5F6",
     "不要 暂停 WI-A1B2C3D4E5F6",

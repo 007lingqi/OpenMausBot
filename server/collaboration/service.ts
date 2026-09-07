@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { recheckPlanMaterials } from "./plan-material-readiness.ts";
+import type { NaturalApprovalOutcome } from "./natural-approval.ts";
 
 import type { DingTalkInboundMessage } from "../integrations/dingtalk/types.ts";
 import {
@@ -70,6 +71,7 @@ export interface CollaborationService {
   issueOwnerAction(input: IssueOwnerActionInput): IssuedOwnerAction;
   performOwnerAction(input: PerformOwnerActionInput): OwnerActionOutcome;
   performDirectOwnerAction(input: PerformDirectOwnerActionInput): OwnerActionOutcome;
+  performNaturalApproval(message: DingTalkInboundMessage, now?: number, assertActive?: () => void): NaturalApprovalOutcome | null;
   pendingOutbox(): CollaborationOutboxEntry[];
   close(): void;
 }
@@ -249,6 +251,15 @@ export function startCollaborationService(options: CollaborationServiceOptions):
       try {
         return actions.performDirect(input);
       } catch (error) {
+        if (isSqliteFailure(error)) serviceDegradedReason = "audit_unwritable";
+        throw error;
+      }
+    },
+    performNaturalApproval(message, now, assertActive) {
+      if (closed) throw new Error("Collaboration service is closed");
+      assertServiceArmed();
+      try { return actions.performNaturalApproval(message, now, assertActive); }
+      catch (error) {
         if (isSqliteFailure(error)) serviceDegradedReason = "audit_unwritable";
         throw error;
       }

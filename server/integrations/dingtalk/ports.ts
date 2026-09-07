@@ -1,5 +1,6 @@
 import type { InboundMessageOutcome } from "../../collaboration/inbound.ts";
 import type { OwnerActionOutcome } from "../../collaboration/actions.ts";
+import type { NaturalApprovalOutcome } from "../../collaboration/natural-approval.ts";
 import type { DeliveryReviewOutcome } from "../../collaboration/delivery-review.ts";
 import type {
   DingTalkCardAction,
@@ -20,6 +21,7 @@ export interface DingTalkInboundSink {
 }
 
 export interface DingTalkOwnerActionSink {
+  performNaturalApproval?(message: DingTalkInboundMessage): MaybePromise<NaturalApprovalOutcome | null>;
   reviewDeliveries?(message: DingTalkInboundMessage): MaybePromise<DeliveryReviewOutcome>;
   recoverRequirements?(message: DingTalkInboundMessage): MaybePromise<DingTalkRequirementRecoveryOutcome>;
   recoverProjection?(message: DingTalkInboundMessage): MaybePromise<DingTalkProjectionRecoveryOutcome>;

@@ -32,6 +32,21 @@ function harness(interpreter: NaturalIntakeInterpreter) {
 }
 
 describe("durable source-bound natural requirement intake", () => {
+  it("asks for concise independent decisions without truncating questions or changing the grounded-source contract", async () => {
+    let envelope!: { system: string; responseSchema: unknown; user: string };
+    const interpreter = new ModelNaturalIntakeInterpreter({ async complete(input) { envelope = input; return {}; } });
+    const request = { event: { text: "登录提示友好一点。" }, questions: [] } as unknown as NaturalIntakeRequest;
+    await interpreter.interpret(request, new AbortController().signal);
+    expect(envelope.system).toContain("每条 question 只问一个可单独回答的关键决定");
+    expect(envelope.system).toContain("通常不超过60个汉字");
+    expect(envelope.system).toContain("不能为缩短而省略关键条件");
+    expect(envelope.system).toContain("不要加‘为了避免返工’");
+    expect(envelope.system).toContain("已回答的问题不要重问");
+    expect(envelope.responseSchema).toMatchObject({ properties: { questions: { maxItems: 3,
+      items: { properties: { question: { maxLength: 500 } } } } } });
+    expect(JSON.parse(envelope.user)).toEqual(request);
+  });
+
   it("tells the model the exact confirmed-goal contract without imposing a user input format", async () => {
     let system = "";
     const interpreter = new ModelNaturalIntakeInterpreter({ async complete(input) { system = input.system; return {}; } });

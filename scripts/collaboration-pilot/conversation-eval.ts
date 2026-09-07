@@ -17,7 +17,7 @@ export interface ConversationScenario {
   id: string;
   turns: Array<{ speaker: string; text: string; expect: {
     action: string | string[]; items: number; unchangedRequirements?: boolean; targetTurn?: number;
-    pendingTasks?: number; maxReplyLength?: number; replyTopics?: string[];
+    pendingTasks?: number; maxReplyLength?: number; replyTopics?: string[]; currentQuestionReminder?: boolean; readinessExplanation?: boolean;
     pendingKind?: "requirement" | "association" | "read_only" | "approval";
   } }>;
 }
@@ -38,6 +38,7 @@ export const CONVERSATION_SCENARIOS: ConversationScenario[] = [
   { id: "clear-request-and-status", turns: [
     { speaker: "product", text: "登录失败后保留用户名、清空密码。账号不存在或密码错误，都提示“账号或密码不正确”；网络断开则提示“网络异常，请稍后重试”。", expect: { action: "create_work", items: 1 } },
     { speaker: "tester", text: "登录这个现在改好了吗？", expect: { action: "read_status", items: 1, unchangedRequirements: true, targetTurn: 0, maxReplyLength: 90 } },
+    { speaker: "tester", text: "你说的等待开始执行是什么意思？", expect: { action: "explain_reply", items: 1, unchangedRequirements: true, targetTurn: 0, maxReplyLength: 150, readinessExplanation: true } },
     { speaker: "tester", text: "好的，谢谢。", expect: { action: "acknowledge", items: 1, unchangedRequirements: true } },
   ] },
   { id: "clarification-and-answer", turns: [
@@ -68,11 +69,20 @@ export const CONVERSATION_SCENARIOS: ConversationScenario[] = [
     { speaker: "product", text: "登录提示友好一点。", expect: { action: "create_work", items: 1 } },
     { speaker: "product", text: "另外一个独立问题：支付失败后的提示也要改得容易理解。", expect: { action: "create_work", items: 2 } },
     { speaker: "product", text: "现在进展怎么样？", expect: { action: "ask_context", items: 2, unchangedRequirements: true, replyTopics: ["登录", "支付"], maxReplyLength: 150 } },
-    { speaker: "product", text: "登录那个。", expect: { action: "read_status", items: 2, unchangedRequirements: true, targetTurn: 0, pendingKind: "read_only", maxReplyLength: 90 } },
+    { speaker: "product", text: "登录那个。", expect: { action: "read_status", items: 2, unchangedRequirements: true, targetTurn: 0, pendingKind: "read_only", maxReplyLength: 220, currentQuestionReminder: true } },
+    { speaker: "product", text: "我说的是登录：只调整账号不存在和密码错误的提示，统一显示“账号或密码不正确”。网络异常提示保持不变，其他功能不改。", expect: { action: "contribute", items: 2, targetTurn: 0 } },
+    { speaker: "product", text: "登录现在到哪一步了？", expect: { action: "read_status", items: 2, unchangedRequirements: true, targetTurn: 0, maxReplyLength: 90 } },
   ] },
 ];
 
-interface DeliveredCard { type?: string; status?: string; snapshotRevision?: number; questions?: Array<{ id?: string }> }
+interface DeliveredCard { type?: string; status?: string; snapshotRevision?: number; headline?: string;
+  questions?: Array<{ id?: string; question?: string; showRecommendedAnswer?: boolean }> }
+
+function businessQuestionReply(reply: DeliveredCard): boolean {
+  return reply.type === "clarification_card" && reply.headline === "需要澄清" && !!reply.questions?.length &&
+    reply.questions.every(question => question.id?.startsWith("natural-") &&
+      !["natural-input-pending", "natural-context-incomplete"].includes(question.id) && question.showRecommendedAnswer === false);
+}
 
 export function stageReplyDelivered(status: string, snapshotRevision: number, replies: DeliveredCard[]): boolean {
   if (!["waiting_clarification", "planning", "planning_failed", "ready_for_execution"].includes(status)) return false;
@@ -186,6 +196,17 @@ export async function runConversationEvaluation(options: { model: NaturalIntakeM
           noRedundantGoalQuestion: replies.every(reply => !reply.questions?.some(q => q.id?.startsWith("natural-") &&
             !["natural-input-pending", "natural-context-incomplete"].includes(q.id)) ||
             !reply.questions.some(q => ["goal", "acceptance"].includes(q.id ?? ""))),
+          // This harness drains only after interpretation. When a real stage
+          // is already available, an additional generic receipt is redundant.
+          // Slow in-flight responses are covered by deterministic tests.
+          noRedundantReceipt: !replies.some(reply => reply.type === "primary_status_card") ||
+            !replies.some(reply => ["clarification_card", "plan_status_card"].includes(reply.type ?? "")),
+          directBusinessQuestions: replies.filter(businessQuestionReply).every(reply => !reply.text.startsWith("### ")),
+          // An evaluation threshold for these short synthetic scenarios, not
+          // a production truncation or rejection rule. Read the full replies
+          // as well: shortness alone cannot prove one decision per question.
+          conciseBusinessQuestions: replies.filter(businessQuestionReply).every(reply =>
+            reply.questions!.every(question => typeof question.question === "string" && [...question.question].length <= 90)),
         };
         if (["create_work", "contribute"].includes(proposal?.action ?? "")) {
           const item = db.prepare("SELECT definition_status FROM collaboration_work_items WHERE id=?").get(intent.target_work_item_id);
@@ -195,6 +216,17 @@ export async function runConversationEvaluation(options: { model: NaturalIntakeM
         if (turn.expect.targetTurn !== undefined) checks.target = intent.target_work_item_id === scenarioTurns[turn.expect.targetTurn]?.target;
         if (turn.expect.maxReplyLength !== undefined) checks.replyLength = replies.every(reply => reply.text.length <= turn.expect.maxReplyLength!);
         if (turn.expect.replyTopics !== undefined) checks.topicHints = replies.some(reply => turn.expect.replyTopics!.every(topic => reply.text.includes(topic)));
+        if (turn.expect.readinessExplanation) checks.readinessExplanation = replies.some(reply =>
+          reply.text.includes("当时还没开始修改") && reply.text.includes("等待原因") && !reply.text.includes("之前的回复内容是"));
+        if (turn.expect.currentQuestionReminder) {
+          // This scenario now requires the actual outstanding question, not a
+          // generic "waiting for information". Its larger length allowance is
+          // conditional on useful, current content and is not a blanket waiver.
+          const questions = JSON.parse(String(snapshot?.blocking_ambiguities_json ?? "[]")) as Array<{ id: string; question: string }>;
+          checks.currentQuestionReminder = questions.some(question => question.id.startsWith("natural-") &&
+            !["natural-input-pending", "natural-context-incomplete"].includes(question.id) &&
+            replies.some(reply => reply.text.includes(question.question)));
+        }
         if (turn.expect.pendingKind !== undefined) {
           const request = report.requests.find(request => request.scenario === scenario.id && request.turn === turnIndex && request.phase === "intent")?.request as
             { pendingQuestion?: { kind: string } | null } | undefined;

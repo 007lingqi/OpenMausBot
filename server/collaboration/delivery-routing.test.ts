@@ -54,6 +54,25 @@ function fixture(environment: NodeJS.ProcessEnv) {
 }
 
 describe("production delivery group routing", () => {
+  it("delivers a natural approval reply to its persisted original group without an external requirement event", async () => {
+    const f = fixture({ OMB_DINGTALK_ALLOWED_CONVERSATION_IDS: "group-a,group-b",
+      OMB_DINGTALK_PROACTIVE_CONVERSATION_MAP: '{"group-a":"open-a","group-b":"open-b"}' });
+    const service = startCollaborationService({ dataDirectory: f.root });
+    try {
+      expect(service.performNaturalApproval({ sourceEventId: "natural-control", transportMessageId: "transport", conversationId: "group-a",
+        addressedToBot: true, text: "批准这次改动", receivedAt: 1200,
+        sender: { senderId: "sender", senderCorpId: "corp", senderStaffId: "staff", displayName: "Test" } }, 1200))
+        .toMatchObject({ allowed: false });
+      expect(f.db.prepare("SELECT 1 FROM collaboration_external_events WHERE source_event_id='natural-control'").get()).toBeUndefined();
+      const row = f.db.prepare("SELECT * FROM collaboration_outbox WHERE source_event_id='natural-control'").get() as Record<string, string | number>;
+      const reply: Parameters<OutboxDeliveryPort["deliver"]>[0] = { id: String(row.id), source: "dingtalk", dedupeKey: String(row.dedupe_key),
+        aggregateType: "association", aggregateId: String(row.aggregate_id), aggregateVersion: 1,
+        kind: "command_status_card", payload: JSON.parse(String(row.payload_json)) };
+      expect(await f.delivery.deliver(reply)).toMatchObject({ outcome: "sent" });
+      expect(f.destinations).toEqual(["open-a"]);
+    } finally { service.close(); f.db.close(); }
+  });
+
   it("does not attest a cached receipt discovered between the outer query and sender query", async () => {
     const f = fixture({ OMB_DINGTALK_ALLOWED_CONVERSATION_IDS: "group-a", OMB_DINGTALK_PROACTIVE_OPEN_CONVERSATION_ID: "open-a" });
     try {

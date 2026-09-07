@@ -107,6 +107,7 @@ export interface RuntimeStream {
 }
 
 export interface RuntimeDingTalkSinks {
+  performNaturalApproval(message: DingTalkInboundMessage): ReturnType<CollaborationService["performNaturalApproval"]>;
   reviewDeliveries(message: DingTalkInboundMessage): ReturnType<typeof requestDeliveryReview>;
   recoverRequirements(message: DingTalkInboundMessage): ReturnType<typeof recoverNaturalIntake>;
   recoverProjection(message: DingTalkInboundMessage): ReturnType<typeof recoverAttachmentProjection>;
@@ -318,6 +319,7 @@ export function enqueueExecutionOutcomeStatus(input: {
       workItemVersion: workItem!.version,
       status: "candidate_ready" as const,
       summary: CANDIDATE_READY_SUMMARY,
+      approvalTopic: assessment?.approvalTopic,
       approvalReasons: assessment?.approvalReasons,
       approvalRequired: true,
       candidateSha: input.outcome.resultSha!,
@@ -333,6 +335,7 @@ export function enqueueExecutionOutcomeStatus(input: {
       ...(passed
         ? {
             summary: CANDIDATE_READY_SUMMARY,
+            approvalTopic: assessment?.approvalTopic,
             approvalReasons: assessment?.approvalReasons,
             candidateSha: input.outcome.resultSha!,
             ...(candidatePreview ? { candidatePreview } : {}),
@@ -437,6 +440,7 @@ export function enqueuePendingOwnerDecisionCards(
               planRevision: row.plan_revision,
               status: "candidate_ready",
               summary: CANDIDATE_READY_SUMMARY,
+              approvalTopic: completion.approvalTopic,
               approvalReasons: completion.approvalReasons,
               approvalRequired: true,
               candidateSha: row.result_sha,
@@ -450,6 +454,7 @@ export function enqueuePendingOwnerDecisionCards(
               planRevision: row.plan_revision,
               status: "candidate_ready",
               summary: CANDIDATE_READY_SUMMARY,
+              approvalTopic: completion.approvalTopic,
               approvalReasons: completion.approvalReasons,
               candidateSha: row.result_sha,
               ...(candidatePreview ? { candidatePreview } : {}),
@@ -524,6 +529,7 @@ export function enqueueOwnerDecisionForWorkItem(
         planRevision: row.plan_revision,
         status: "candidate_ready" as const,
         summary: CANDIDATE_READY_SUMMARY,
+        approvalTopic: assessment.approvalTopic,
         approvalReasons: assessment.approvalReasons,
         approvalRequired: true,
         candidateSha: row.result_sha,
@@ -537,6 +543,7 @@ export function enqueueOwnerDecisionForWorkItem(
         planRevision: row.plan_revision,
         status: "candidate_ready",
         summary: CANDIDATE_READY_SUMMARY,
+        approvalTopic: assessment.approvalTopic,
         approvalReasons: assessment.approvalReasons,
         candidateSha: row.result_sha,
         ...(candidatePreview ? { candidatePreview } : {}),
@@ -903,6 +910,16 @@ export class CollaborationHeadlessRuntime {
       this.scheduleReadyExecution(outcome.workItemId);
     }
     return outcome;
+  }
+
+  performDingTalkNaturalApproval(message: DingTalkInboundMessage): ReturnType<CollaborationService["performNaturalApproval"]> {
+    this.assertOperational();
+    const result = this.service!.performNaturalApproval(message, this.clock.now(), () => {
+      this.assertOperational();
+      assertCurrentInstanceLease(this.database!, this.lease!, this.clock.now());
+    });
+    if (result?.workItemId && !result.duplicate) this.syncMetaBundleBestEffort(result.workItemId, true);
+    return result;
   }
 
   performDingTalkOwnerAction(action: DingTalkCardAction): OwnerActionOutcome {
@@ -1860,6 +1877,7 @@ export class CollaborationHeadlessRuntime {
             ? { ingestAttachments: (capabilities) => this.ingestDingTalkAttachments(capabilities) }
             : {}),
           perform: (action) => this.performDingTalkOwnerAction(action),
+          performNaturalApproval: (message) => this.performDingTalkNaturalApproval(message),
           performCommand: (command) => this.performDingTalkOwnerTextCommand(command),
           recoverProjection: (message) => this.recoverDingTalkAttachmentProjection(message),
           recoverRequirements: (message) => this.recoverDingTalkRequirements(message),

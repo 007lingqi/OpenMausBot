@@ -184,6 +184,11 @@ export class DingTalkStreamAdapter {
         });
         return;
       }
+      const naturalApproval = await this.ownerActions.performNaturalApproval?.(normalized.message);
+      if (naturalApproval) {
+        this.acknowledge(envelope.headers.messageId);
+        return;
+      }
       const outcome = await this.inbound.ingest(normalized.message);
       if (normalized.privateCapabilities?.length) {
         if (!this.inbound.ingestAttachments) throw new Error("dingtalk_attachment_ingestion_not_configured");

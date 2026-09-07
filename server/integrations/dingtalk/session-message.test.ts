@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { renderPlanStatusCard, renderPrimaryStatusCard, renderConversationReplyCard } from "../../collaboration/message-renderer.ts";
+import { renderPlanStatusCard, renderPrimaryStatusCard, renderConversationReplyCard, renderClarificationCard } from "../../collaboration/message-renderer.ts";
 import { renderDingTalkSessionMessage } from "./session-message.ts";
 
 function markdown(payload: unknown): { title: string; text: string } {
@@ -17,6 +17,64 @@ function expectBusinessOnly(value: string) {
 }
 
 describe("natural DingTalk session replies", () => {
+  const businessQuestion = (id: string, question: string) => ({ id: `natural-${id}`, title: "待确认", question,
+    recommendedAnswer: "内部解释不应重复播报", showRecommendedAnswer: false });
+
+  it("asks a single business question directly, keeping the exact question and its actual recipient", () => {
+    const question = "账号或密码错误时，希望显示什么提示？";
+    const card = renderClarificationCard({ workItemId: "WI-INTERNAL", snapshotRevision: 3,
+      questions: [{ ...businessQuestion("copy", question), requestedResponder: { targetId: "staff-product", displayName: "小李" } }],
+      requestedResponders: [{ targetId: "staff-product", displayName: "小李" }] });
+    const before = structuredClone(card), reply = renderDingTalkSessionMessage(card);
+    expect(reply.markdown).toEqual({ title: "想确认一下", text: `@小李，${question}` });
+    expect(reply.at).toEqual({ atUserIds: ["staff-product"], isAtAll: false });
+    expect(card).toEqual(before);
+  });
+
+  it("keeps distinct questions with their own people and does not assign an unowned question", () => {
+    const card = renderClarificationCard({ workItemId: "WI-INTERNAL", snapshotRevision: 3,
+      questions: [
+        { ...businessQuestion("where", "在哪个页面会出现？"), requestedResponder: { displayName: "小王" } },
+        { ...businessQuestion("result", "希望改成什么提示？"), requestedResponder: { displayName: "小李" } },
+        businessQuestion("empty", "没有返回原因时显示什么？"),
+      ] });
+    expect(markdown(card).text).toBe("- @小王，在哪个页面会出现？\n- @小李，希望改成什么提示？\n- 没有返回原因时显示什么？");
+  });
+
+  it("preserves an existing group recipient and context without the procedural preamble", () => {
+    const reply = markdown(renderClarificationCard({ workItemId: "WI-INTERNAL", snapshotRevision: 3,
+      contextSummary: "原消息已保存，不必重复发送。", requestedResponders: [{ displayName: "小李" }],
+      questions: [businessQuestion("copy", "希望显示什么提示？")] }));
+    expect(reply.text).toContain("原消息已保存，不必重复发送。");
+    expect(reply.text).toContain("@小李，想确认一下：");
+    expect(reply.text).toContain("希望显示什么提示？");
+    expect(reply.text).not.toMatch(/###|为了避免返工|关键信息|建议回答/u);
+  });
+
+  it("does not truncate or rewrite a long business question to make it look concise", () => {
+    const question = `在${"特殊登录条件、".repeat(25)}情况下，是否保留用户名但不保留密码？<原文> *提示*`;
+    const reply = markdown(renderClarificationCard({ workItemId: "WI-INTERNAL", snapshotRevision: 3,
+      questions: [businessQuestion("long", question)] }));
+    expect(reply.text).toBe(question.replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll("*", "\\*"));
+  });
+
+  it.each(["natural-input-pending", "natural-context-incomplete", "repository"])("retains operational context for %s instead of treating it as a concise business question", id => {
+    const reply = markdown(renderClarificationCard({ workItemId: "WI-INTERNAL", snapshotRevision: 3,
+      questions: [businessQuestion("copy", "希望显示什么提示？"), { id, title: "需处理", question: "当前还有信息待核对。",
+        recommendedAnswer: "请负责人检查后再继续。" }] }));
+    expect(reply.text).toContain("### 需要澄清");
+    expect(reply.text).toContain("当前还有信息待核对。");
+    expect(reply.text).toContain("请负责人检查后再继续。");
+  });
+
+  it("does not compact a recovery notice even if it includes a business question", () => {
+    const reply = markdown({ ...renderClarificationCard({ workItemId: "WI-INTERNAL", snapshotRevision: 3,
+      questions: [businessQuestion("copy", "希望显示什么提示？")] }), headline: "需求整理未完成",
+      contextSummary: "请负责人检查后回复“继续整理需求”。" });
+    expect(reply.text).toContain("### 需求整理未完成");
+    expect(reply.text).toContain("请负责人检查后回复“继续整理需求”。");
+  });
+
   it("answers ordinary conversation directly without a workflow heading", () => {
     expect(markdown(renderConversationReplyCard("不客气，有需要继续说。")).text).toBe("不客气，有需要继续说。");
   });
@@ -116,14 +174,23 @@ describe("natural DingTalk session replies", () => {
     expectBusinessOnly(reply.text);
   });
 
-  it("keeps Owner approval commands actionable and does not call a risky candidate completed", () => {
+  it("invites natural Owner approval without an ID and does not call a risky candidate completed", () => {
     const reply = markdown({ ...renderPlanStatusCard({ workItemId: "WI-INTERNAL", status: "candidate_ready", summary: "准备调整登录校验规则。",
-      approvalReasons: ["会改变身份校验规则，需要负责人确认影响。"] }), ...internalEvidence });
+      approvalReasons: ["会改变身份校验规则，需要负责人确认影响。"] }), ...internalEvidence, actions: undefined });
     expect(reply.title).toBe("待负责人审批");
     expect(reply.text).toContain("会改变身份校验规则");
-    expect(reply.text).toContain("@研发助手 批准 WI\\-INTERNAL");
-    expect(reply.text).toContain("@研发助手 退回 WI\\-INTERNAL 请说明原因");
+    expect(reply.text).toContain("负责人是否批准这次改动");
+    expect(reply.text).toContain("直接回复即可");
+    expect(reply.text).toContain("需要调整的地方");
+    expectBusinessOnly(reply.text);
     expect(reply.text).not.toMatch(/private|target_passed|修改完成/u);
+  });
+
+  it("shows the current requirement topic even when the approval summary is generic", () => {
+    const reply = markdown({ type: "plan_status_card", status: "candidate_ready", approvalRequired: true,
+      approvalTopic: "登录错误提示", summary: "存在需要负责人确认的风险。", workItemId: "WI-INTERNAL" });
+    expect(reply.text).toContain("登录错误提示");
+    expectBusinessOnly(reply.text);
   });
 
   it("still escapes untrusted business text and preserves recovery instructions", () => {

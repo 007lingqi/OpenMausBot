@@ -7,6 +7,7 @@ import { renderPlanStatusCard } from "./message-renderer.ts";
 import { enqueueInboundCard } from "./outbox.ts";
 import { assertLedgerArmed } from "./restore-guard.ts";
 import { readLatestWorkItemSnapshot } from "./snapshot.ts";
+import { redactSensitiveText } from "./sensitive-text.ts";
 
 const FULL_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
 
@@ -24,6 +25,7 @@ export interface CandidateApprovalAssessment {
   approvalRequired: boolean;
   approvalReasons: string[];
   summary: string;
+  approvalTopic: string;
   resultHighlights: string[];
 }
 
@@ -71,15 +73,18 @@ function businessSentences(value: string | null | undefined): string[] {
     .map((item) => item.slice(0, 180));
 }
 
-function resultCopy(database: DatabaseSync, workItemId: string): { summary: string; resultHighlights: string[] } {
+function resultCopy(database: DatabaseSync, workItemId: string): { summary: string; approvalTopic: string; resultHighlights: string[] } {
   const snapshot = readLatestWorkItemSnapshot(database, workItemId);
   const goalHighlights = businessSentences(snapshot?.goal);
   const summary = goalHighlights[0] ?? "已按确认的需求完成修改。";
+  // A source excerpt naming the requested work, not a claim about changed behavior.
+  const topic = Array.from(redactSensitiveText(goalHighlights[0] ?? "本次需求").replace(/WI-[A-Z0-9-]+/giu, "").replace(/\s+/gu, " ").trim());
   const highlights = (snapshot?.acceptanceConditions ?? [])
     .flatMap((condition) => businessSentences(condition.description))
     .slice(0, 3);
   return {
     summary,
+    approvalTopic: topic.slice(0, 96).join("") + (topic.length > 96 ? "…" : "") || "本次需求",
     resultHighlights: highlights.length
       ? highlights
       : goalHighlights.length

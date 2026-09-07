@@ -3,6 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import type { InboundCard } from "./message-renderer.ts";
 import { stageApprovalPresentation, type ApprovalDeliveryProof } from "./approval-presentation.ts";
+import { coalesceConversationNotification } from "./conversation-notifications.ts";
 
 export interface CollaborationOutboxEntry {
   id: string;
@@ -99,6 +100,7 @@ export function enqueueInboundCard(
   },
 ): CollaborationOutboxEntry {
   const id = randomUUID();
+  let deliveryState: "pending" | "superseded" = "pending";
   database.exec("SAVEPOINT enqueue_inbound_card");
   try {
     if (input.supersessionKey) {
@@ -130,6 +132,7 @@ export function enqueueInboundCard(
         input.now,
       );
     stageApprovalPresentation(database, id, input.now);
+    deliveryState = coalesceConversationNotification(database, id, input.now);
     database.exec("RELEASE enqueue_inbound_card");
   } catch (error) {
     database.exec("ROLLBACK TO enqueue_inbound_card; RELEASE enqueue_inbound_card");
@@ -147,7 +150,7 @@ export function enqueueInboundCard(
     card: input.card,
     createdAt: input.now,
     sentAt: null,
-    deliveryState: "pending",
+    deliveryState,
     attempt: 0,
     nextAttemptAt: input.now,
     lastError: null,

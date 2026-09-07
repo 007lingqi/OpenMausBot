@@ -81,6 +81,7 @@ export interface PlanStatusCard {
   testStates?: string[];
   resultHighlights?: string[];
   approvalReasons?: string[];
+  approvalTopic?: string;
   approvalRequired?: boolean;
   workItemVersion?: number;
   cardTemplateId?: string;
@@ -222,6 +223,7 @@ export function renderPlanStatusCard(input: {
   testStates?: string[];
   resultHighlights?: string[];
   approvalReasons?: string[];
+  approvalTopic?: string;
   workItemVersion?: number;
 }): PlanStatusCard {
   if (["owner_accepted", "owner_rejected", "owner_action_denied"].includes(input.status)) {
@@ -271,6 +273,7 @@ export function renderPlanStatusCard(input: {
       changedPaths: input.changedPaths ?? [],
       testStates: input.testStates ?? [],
       approvalReasons: input.approvalReasons ?? ["本次改动需要负责人确认后才能完成。"],
+      ...(input.approvalTopic ? { approvalTopic: input.approvalTopic } : {}),
       approvalRequired: true,
       workItemVersion: input.workItemVersion,
     };

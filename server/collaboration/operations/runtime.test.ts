@@ -107,6 +107,28 @@ function seedRunningRun(dataDirectory: string, ownerId: string): { proof: Contai
 }
 
 describe("production-isomorphic collaboration runtime", () => {
+  it("wires natural approval to the durable service and fences it before writes after lease loss", async () => {
+    const dataDirectory = temporaryDirectory();
+    let now = 1000;
+    let sinks: RuntimeDingTalkSinks | undefined;
+    const runtime = new CollaborationHeadlessRuntime({ dataDirectory, platform: "linux", ownerId: "natural-runtime",
+      instanceLeaseTtlMs: 1000, clock: { now: () => now }, dingTalk: { enabled: true,
+        credentials: { load: () => ({ clientId: "synthetic", clientSecret: "synthetic" }) },
+        createStream: (_credentials, input) => { sinks = input; return { start: async () => "connected", stop() {}, state: () => "connected" }; } } });
+    await runtime.start();
+    const db = new DatabaseSync(join(dataDirectory, "collaboration", "collaboration.sqlite"));
+    try {
+      expect(sinks).toBeDefined();
+      expect(sinks!.performNaturalApproval({ ...message("natural-command"), text: "批准这次改动" }))
+        .toMatchObject({ allowed: false, reason: "owner_not_configured" });
+      expect(db.prepare("SELECT count(*) n FROM collaboration_owner_text_commands").get()).toEqual({ n: 1 });
+      now = 2001;
+      expect(() => sinks!.performNaturalApproval({ ...message("lost-lease"), text: "批准这次改动" })).toThrow();
+      expect(db.prepare("SELECT count(*) n FROM collaboration_owner_text_commands").get()).toEqual({ n: 1 });
+      expect(db.prepare("SELECT count(*) n FROM collaboration_control_events").get()).toEqual({ n: 0 });
+    } finally { await runtime.stop(); db.close(); }
+  });
+
   it.each([false, true])("publishes an empty execution policy only outside probe mode (probe=%s)", async probeOnly => {
     const dataDirectory = temporaryDirectory();
     const runtime = new CollaborationHeadlessRuntime({ dataDirectory, platform: "linux", probeOnly });
@@ -298,7 +320,7 @@ describe("production-isomorphic collaboration runtime", () => {
       "INSERT INTO collaboration_work_item_snapshots " +
         "(work_item_id,revision,source_work_item_version,goal,goal_confirmed,repository,facts_json,assumptions_json," +
         "acceptance_json,blocking_ambiguities_json,created_at) " +
-        "VALUES (?,1,1,'existing candidate',1,?,'[]','[]',?,'[]',1)",
+        "VALUES (?,1,1,'登录错误提示',1,?,'[]','[]',?,'[]',1)",
     ).run(workItemId, repository, JSON.stringify([{ description: "pilot passes", observation: "pilot" }]));
     database.prepare(
       "INSERT INTO collaboration_plan_revisions " +
@@ -364,6 +386,8 @@ describe("production-isomorphic collaboration runtime", () => {
       testStates: ["pilot: target_passed"],
     });
     expect(row.payload_json).not.toContain("actionToken");
+    const snapshot = database.prepare("SELECT goal FROM collaboration_work_item_snapshots WHERE work_item_id=? AND revision=1").get(workItemId) as { goal: string };
+    expect(JSON.parse(row.payload_json).approvalTopic).toBe(snapshot.goal);
     expect(enqueueOwnerDecisionForWorkItem(database, workItemId, undefined, "refresh-command-1", 3_000)).toBe(true);
     expect(enqueueOwnerDecisionForWorkItem(database, workItemId, undefined, "refresh-command-1", 4_000)).toBe(true);
     const refreshed = database.prepare(
@@ -374,6 +398,7 @@ describe("production-isomorphic collaboration runtime", () => {
       workItemId,
       status: "candidate_ready",
       candidateSha: resultSha,
+      approvalTopic: snapshot.goal,
     });
     expect(database.prepare(
       "SELECT count(*) AS count FROM collaboration_outbox WHERE source_event_id = 'refresh-command-1'",

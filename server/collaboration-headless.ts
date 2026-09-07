@@ -648,6 +648,7 @@ function productionRuntimeOptions(
           },
           {
             perform: (action) => sinks.perform(action),
+            performNaturalApproval: (message) => sinks.performNaturalApproval(message),
             performCommand: (command) => sinks.performCommand(command),
             recoverProjection: (message) => sinks.recoverProjection(message),
             recoverRequirements: (message) => sinks.recoverRequirements(message),

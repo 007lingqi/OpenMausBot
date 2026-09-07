@@ -88,14 +88,26 @@ export function renderDingTalkSessionMessage(payload: unknown): Record<string, u
   const card = record(payload);
   const type = typeof card?.type === "string" ? card.type : "unknown";
   const status = typeof card?.status === "string" ? card.status : "";
+  // Only ordinary business questions whose explanatory boilerplate was
+  // explicitly hidden use this layout. Operational and mixed notices retain
+  // their context; presentation is not a new provenance or permission gate.
+  const plainQuestions = type === "clarification_card" && card?.headline === "需要澄清" &&
+    Array.isArray(card.questions) && card.questions.length > 0 && card.questions.length <= 3 &&
+    card.questions.every(question => {
+      const item = record(question);
+      return typeof item?.id === "string" && item.id.startsWith("natural-") &&
+        !["natural-input-pending", "natural-context-incomplete"].includes(item.id) && item.showRecommendedAnswer === false &&
+        typeof item.question === "string" && item.question.trim().length > 0;
+    });
   const headline = type === "primary_status_card"
     ? card?.association === "associated" ? "补充已收到" : "需求已收到"
     : type === "plan_status_card"
       ? (Object.hasOwn(PLAN_HEADLINES, status) ? PLAN_HEADLINES[status] : "进度待核查")
     : type === "command_status_card"
       ? text(card?.headline, "任务状态", 120)
+    : plainQuestions ? "想确认一下"
     : text(card?.headline, "协作状态更新", 120);
-  const lines = [`### ${headline}`];
+  const lines = plainQuestions ? [] : [`### ${headline}`];
 
   if (type === "primary_status_card") {
     const resourceCount = typeof card?.resourceCount === "number" && card.resourceCount > 0
@@ -141,13 +153,18 @@ export function renderDingTalkSessionMessage(payload: unknown): Record<string, u
           return displayName ? [text(displayName, "相关人员", 128)] : [];
         })
       : [];
-    if (Array.isArray(card?.questions) && card.questions.length > 0) lines.push(
+    if (plainQuestions) {
+      if (typeof card?.contextSummary === "string" && card.contextSummary.trim()) {
+        lines.push(text(card.contextSummary, "", 500), "");
+      }
+      if (responders.length && !perQuestionRecipients) lines.push(`${responders.map(name => `@${name}`).join("、")}，想确认一下：`, "");
+    } else if (Array.isArray(card?.questions) && card.questions.length > 0) lines.push(
       "",
       responders.length && !perQuestionRecipients
         ? `为了避免返工，建议由 ${responders.map((name) => `@${name}`).join("、")} 补充以下信息：`
         : "为了避免返工，请补充以下关键信息：",
     );
-    if (typeof card?.contextSummary === "string" && card.contextSummary.trim()) {
+    if (!plainQuestions && typeof card?.contextSummary === "string" && card.contextSummary.trim()) {
       lines.splice(1, 0, text(card.contextSummary, "附件内容已读取。", 500), "");
     }
     if (Array.isArray(card?.questions)) {
@@ -156,7 +173,7 @@ export function renderDingTalkSessionMessage(payload: unknown): Record<string, u
         const recipient = record(item?.requestedResponder);
         const name = typeof recipient?.displayName === "string" && recipient.displayName.trim()
           ? `@${text(recipient.displayName, "相关同事", 128)}，` : "";
-        lines.push(`- ${name}${text(item?.question, "需要补充信息")}`);
+        lines.push(`${plainQuestions && card.questions.length === 1 ? "" : "- "}${name}${text(item?.question, "需要补充信息")}`);
         if (item?.showRecommendedAnswer !== false && typeof item?.recommendedAnswer === "string" && item.recommendedAnswer.trim()) {
           lines.push(`  - 建议回答：${text(item.recommendedAnswer, "请给出明确答案", 500)}`);
         }
@@ -187,6 +204,7 @@ export function renderDingTalkSessionMessage(payload: unknown): Record<string, u
         "完成后会告诉你改动结果和验证情况。",
       );
     } else if (status === "candidate_ready") {
+      if (typeof card?.approvalTopic === "string" && card.approvalTopic.trim()) lines.push("", `事项：${text(card.approvalTopic, "本次需求", 100)}`);
       lines.push(
         "",
         text(card?.summary, "改动已准备好，但存在需要负责人确认的风险，任务尚未完成。", 1_000),
@@ -197,13 +215,16 @@ export function renderDingTalkSessionMessage(payload: unknown): Record<string, u
       for (const reason of approvalReasons.length ? approvalReasons : ["本次改动需要负责人确认后才能完成。"]) {
         lines.push(`- ${reason}`);
       }
-      const workItemId = text(card?.workItemId, "WI-...", 128);
-      lines.push(
-        "",
-        `- 任务编号：${workItemId}`,
-        `- 确认继续：@研发助手 批准 ${workItemId}`,
-        `- 需要调整：@研发助手 退回 ${workItemId} 请说明原因`,
-      );
+      if (card?.approvalRequired === true && card.cardTemplateId === undefined && card.actions === undefined) {
+        lines.push("", "负责人是否批准这次改动？@研发助手 直接回复即可；如不同意，请说一下需要调整的地方。");
+      } else {
+        // Preserve legacy presentation behavior: token/template cards do not
+        // establish the fixed Markdown provenance used by natural approval.
+        const workItemId = text(card?.workItemId, "WI-...", 128);
+        lines.push("", `- 任务编号：${workItemId}`,
+          `- 确认继续：@研发助手 批准 ${workItemId}`,
+          `- 需要调整：@研发助手 退回 ${workItemId} 请说明原因`);
+      }
     } else if (status === "completed") {
       const summary = text(userFacingSummary(card?.summary, "已按确认的需求完成修改。"), "已按确认的需求完成修改。", 1_000);
       lines.push("", summary);

@@ -7,6 +7,58 @@ const directories: string[] = [];
 afterEach(() => { for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
 
 describe("conversation evaluation uses the real ingress without real delivery or execution", () => {
+  it("explains an actually delivered status instead of echoing it, without a new modification", async () => {
+    const model: NaturalIntakeModelPort = { async complete(envelope) {
+      const input = JSON.parse(envelope.user);
+      if (input.candidates) {
+        const explain = input.text.includes("什么意思"), query = input.text.includes("改好");
+        return { version: 1, sourceEventId: input.sourceEventId, intent: explain ? "explanation" : query ? "status_query" : "new_request",
+          targetWorkItemId: explain || query ? input.candidates[0]?.id : null,
+          replySourceEventId: explain ? input.history.find((entry: { role: string; text: string }) => entry.role === "assistant" && entry.text.includes("等待开始执行"))?.sourceEventId : null,
+          quote: input.text, confidence: "high" };
+      }
+      return { version: 1, sourceEventId: input.event.sourceEventId, baseRevision: input.snapshot.revision,
+        goal: { text: input.event.text, quote: input.event.text, confirmed: true },
+        acceptance: [{ description: input.event.text, observation: input.event.text, quote: input.event.text }], answers: [], questions: [] };
+    } };
+    const result = await runConversationEvaluation({ model, scenarios: [{ id: "explain-progress", turns: [
+      { speaker: "product", text: "登录失败时保留用户名，密码必须清空。", expect: { action: "create_work", items: 1 } },
+      { speaker: "tester", text: "登录改好了吗？", expect: { action: "read_status", items: 1, unchangedRequirements: true, targetTurn: 0 } },
+      { speaker: "tester", text: "你说的等待开始执行是什么意思？", expect: { action: "explain_reply", items: 1, unchangedRequirements: true, targetTurn: 0, readinessExplanation: true } },
+    ] }] });
+    directories.push(result.directory);
+    const actual = result.report.turns[2];
+    expect(actual.action).toBe("explain_reply");
+    expect(actual.replies).toHaveLength(1);
+    expect(actual.replies[0]).toContain("当时还没开始修改");
+    expect(actual.replies[0]).toContain("等待原因");
+    expect(actual.replies[0]).not.toContain("之前的回复内容是");
+    expect(actual.checks).toMatchObject({ unchangedRequirements: true, replayIdempotent: true, noExecution: true, readinessExplanation: true });
+    expect(result.report.status).toBe("checks_passed");
+  });
+
+  it.each([false, true])("measures concise business questions without truncating a long model response: %s", async long => {
+    const question = long ? `${"特殊登录场景、".repeat(15)}希望显示什么提示？` : "希望显示什么登录提示？";
+    const model: NaturalIntakeModelPort = { async complete(envelope) {
+      const input = JSON.parse(envelope.user);
+      if (input.candidates) return { version: 1, sourceEventId: input.sourceEventId, intent: "new_request",
+        targetWorkItemId: null, replySourceEventId: null, quote: input.text, confidence: "high" };
+      return { version: 1, sourceEventId: input.event.sourceEventId, baseRevision: input.snapshot.revision,
+        goal: null, acceptance: [], answers: [], questions: [{ id: "copy", question, reason: "确认效果", role: "requester", respondent: null }] };
+    } };
+    const result = await runConversationEvaluation({ model, scenarios: [{ id: "concise-question", turns: [
+      { speaker: "product", text: "登录提示友好一点。", expect: { action: "create_work", items: 1 } },
+    ] }] });
+    directories.push(result.directory);
+    expect(result.report.turns[0].checks.directBusinessQuestions).toBe(true);
+    expect(result.report.turns[0].checks.conciseBusinessQuestions).toBe(!long);
+    expect(result.report.turns[0].checks.stageReplyDelivered).toBe(true);
+    expect(result.report.turns[0].naturalStatus).toBe("applied");
+    expect(result.report.turns[0].replies).toHaveLength(1);
+    expect(result.report.turns[0].replies[0]).toContain(question);
+    expect(result.report.status).toBe(long ? "failed" : "checks_passed");
+  });
+
   it("records actual task, reply and immutable-query evidence from a tool-free model port", async () => {
     const model: NaturalIntakeModelPort = { async complete(request) {
       const input = JSON.parse(request.user);
@@ -28,6 +80,8 @@ describe("conversation evaluation uses the real ingress without real delivery or
     expect(result.report.sourceUnchanged).toBe(true);
     expect(result.report.sourceFingerprint).toMatch(/^[a-f0-9]{64}$/u);
     expect(result.report.turns[0].checks.stageReplyDelivered).toBe(true);
+    expect(result.report.turns[0].checks.noRedundantReceipt).toBe(true);
+    expect(result.report.turns[0].replies).toHaveLength(1);
     expect(result.report.modelCalls).toBe(3);
     expect(result.report.turns).toHaveLength(2);
     expect(result.report.turns[1].checks).toMatchObject({ action: true, items: true, unchangedRequirements: true, replayIdempotent: true });
@@ -58,27 +112,37 @@ describe("conversation evaluation uses the real ingress without real delivery or
     expect(scenario.turns[3].expect).toMatchObject({ action: "contribute", targetTurn: 0 });
     const [status] = selectConversationScenarios(["--live", "--scenario", "clear-request-and-status"]);
     expect(status.turns[1].expect.maxReplyLength).toBe(90);
+    expect(status.turns[2]).toMatchObject({ text: "你说的等待开始执行是什么意思？", expect: { action: "explain_reply", unchangedRequirements: true, readinessExplanation: true } });
   });
 
   it("checks named hints and the preserved read-only purpose in a continuous multi-question scenario", async () => {
     const [scenario] = selectConversationScenarios(["--live", "--scenario", "progress-amid-unanswered-requirements"]);
     expect(scenario.turns.every(turn => turn.speaker === "product")).toBe(true);
     expect(scenario.turns[3]).toMatchObject({ text: "登录那个。", expect: { action: "read_status", unchangedRequirements: true, pendingKind: "read_only" } });
+    expect(scenario.turns[3].expect).toMatchObject({ currentQuestionReminder: true, maxReplyLength: 220 });
+    expect(scenario.turns.slice(4).map(turn => turn.expect.action)).toEqual(["contribute", "read_status"]);
     const model: NaturalIntakeModelPort = { async complete(envelope) {
       const input = JSON.parse(envelope.user);
       if (input.candidates) {
         const turn = Number(input.sourceEventId.split(":").at(-1));
-        return { version: 1, sourceEventId: input.sourceEventId, intent: turn < 2 ? "new_request" : "status_query",
-          targetWorkItemId: turn === 3 ? input.candidates.find((candidate: { title: string }) => candidate.title.includes("登录")).id : null,
+        return { version: 1, sourceEventId: input.sourceEventId, intent: turn < 2 ? "new_request" : turn === 4 ? "contribution" : "status_query",
+          targetWorkItemId: turn >= 3 ? input.candidates.find((candidate: { title: string }) => candidate.title.includes("登录")).id : null,
           replySourceEventId: null, quote: input.text, confidence: "high" };
       }
+      if (input.event.sourceEventId.endsWith(":4")) return { version: 1, sourceEventId: input.event.sourceEventId, baseRevision: input.snapshot.revision,
+        goal: { text: input.event.text, quote: input.event.text, confirmed: true },
+        acceptance: [{ description: input.event.text, observation: input.event.text, quote: input.event.text }],
+        answers: [{ questionId: "natural-message", quote: input.event.text }], questions: [] };
       return { version: 1, sourceEventId: input.event.sourceEventId, baseRevision: input.snapshot.revision,
-        goal: null, acceptance: [], answers: [], questions: [] };
+        goal: null, acceptance: [], answers: [], questions: [{ id: "message", question: "失败时希望显示什么提示？", reason: "确认效果", role: "requester", respondent: null }] };
     } };
     const result = await runConversationEvaluation({ model, scenarios: [scenario] }); directories.push(result.directory);
     expect(result.report.status).toBe("checks_passed");
     expect(result.report.turns[2].checks.topicHints).toBe(true);
     expect(result.report.turns[3].checks.pendingKind).toBe(true);
+    expect(result.report.turns[3].checks.currentQuestionReminder).toBe(true);
+    expect(result.report.turns[5].checks.unchangedRequirements).toBe(true);
+    expect(result.report.turns[5].replies.join(" ")).not.toContain("失败时希望显示什么提示");
   });
 
   it("stops after three model failures instead of retrying or inventing a successful result", async () => {
