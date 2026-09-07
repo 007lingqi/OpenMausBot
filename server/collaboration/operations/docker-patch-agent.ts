@@ -374,6 +374,10 @@ export class CodexReadOnlyPatchProvider implements ReadOnlyPatchProvider {
         "-c", `model_providers.omb_opencodex.base_url=${JSON.stringify(this.openCodexBaseUrl)}`,
         "-c", 'model_providers.omb_opencodex.wire_api="responses"',
         "-c", "model_providers.omb_opencodex.requires_openai_auth=false",
+        // The CLI otherwise advertises cached web search by default. This
+        // provider is read-only/offline; the host model gateway must not grant
+        // built-in server-side tools on behalf of an untrusted work item.
+        "-c", 'web_search="disabled"',
       ] : []),
     ];
     try {

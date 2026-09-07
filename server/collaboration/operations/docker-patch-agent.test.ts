@@ -73,6 +73,7 @@ describe("Docker patch Agent", () => {
     expect(value.args).toContain('model_provider="omb_opencodex"');
     expect(value.args).toContain('model_providers.omb_opencodex.base_url="http://127.0.0.1:10100/v1"');
     expect(value.args).toContain('model_providers.omb_opencodex.requires_openai_auth=false');
+    expect(value.args).toContain('web_search="disabled"');
     expect(value.args[value.args.indexOf('--sandbox')+1]).toBe('read-only');
     expect(value.home).toContain(join(directory,'exchange'));
     expect(existsSync(value.home)).toBe(false);

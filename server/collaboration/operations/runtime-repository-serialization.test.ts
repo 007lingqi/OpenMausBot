@@ -676,7 +676,9 @@ describe("runtime repository single-writer scheduling", () => {
         () => harness.agent.startedWorkItems.includes(second.workItemId),
         "different repository was incorrectly serialized",
       );
-      expect(harness.agent.startedWorkItems).toEqual([first.workItemId, second.workItemId]);
+      // Different repositories prepare concurrently; neither start order is
+      // guaranteed. Both must start exactly once before either is released.
+      expect([...harness.agent.startedWorkItems].sort()).toEqual([first.workItemId, second.workItemId].sort());
       harness.agent.resolve(first.workItemId, "complete");
       harness.agent.resolve(second.workItemId, "complete");
     } finally {

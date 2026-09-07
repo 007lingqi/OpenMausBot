@@ -1,5 +1,14 @@
 # Meta 协作实施进度
 
+## 最新接续：私有容器模型通道已实际验证，尚未切换旧服务（2026-09-07）
+
+- 基线9bb2966。新增opencodex-local-gateway及21项边界/生命周期测试；开发Provider显式关闭CLI默认web_search。真实诊断747f73证实400来自工具限制，非网络不可达；保持网关限制，未加联网工具权限。41217/cfab9e为新增断言预期红灯。
+- 20382/28d82e exit0：35项定向回归、typecheck/diff、宿主网关真实自然模型和CLI合成修改建议均通过，CLI原文件未改。56240/0dcf68历史失败为自然模型通过但CLI带web_search被拒；修复后的20382替代该未通过状态。
+- 84932/c6a841 exit0：临时无网络非root只读容器，通过既有Colima SSH master反向Unix socket调用宿主网关，生产自然解释适配器验证Astra/medium完成元数据/合成JSON及其他模型拒绝；临时容器、forward、socket目录与网关清理均通过。脚本/tmp/openmausbot-unix-channel-probe.mjs与/tmp/openmausbot-unix-model-client.ts（先esbuild到同名.mjs）。不把fetch Unix适配探测当作容器回环relay已实现。
+- 架构改用保留原Colima账本/Owner/工作区，仅加私有模型通道，替代下方优先迁移宿主控制面；ae9d2a只读核对master运行/旧容器healthy，无无关容器变更。原Owner/凭据不读取不迁移，未启动第二个Stream、未发群消息。
+- 完整回归92435/28c45a exit1：3055通过/1失败/18跳过；唯一失败为不同仓库并发用例错误要求固定启动顺序，两个事项实际均已启动、仅顺序相反。已只把该用例改为无序精确相等，保留两个事项在任一释放前各启动一次和同仓库串行断言，不改生产调度。77051/906cb3 exit0：22项调度定向、完整pnpm test、typecheck、独立编译及diff全链通过，含普通和headless无node_modules打包启动/SIGTERM。运行期间业务代码/测试固定，所有会话已终态，不再轮询。本批五个代码/测试文件和五份说明保存本地提交，实际提交以Git为准；用户AGENTS.md/outputs不动，不push。
+- 待完成：常驻网关入口及受控生命周期、SSH私有通道恢复、容器回环relay/装配和唯一旧服务切换；随后文档解析镜像/真实正文、六场景、独立supervisor/主机恢复及Owner签字。Goal active，不重复索要已授权本机模型能力，不宣称全产品完成。
+
 ## 最新接续：开发Provider本机路由已验证（2026-09-07）
 
 - 上轮progress，本轮progress；基线8845dea。新增CodexReadOnlyPatchProvider.openCodexEndpoint及headless显式环境配置，私有临时CODEX_HOME、忽略用户配置、固定本机Responses provider；既有隔离路径不变。不是OpenCode，不改用户全局配置。9个本任务文件验证后本地提交，不push，实际提交以Git为准。

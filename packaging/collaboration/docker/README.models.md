@@ -1,5 +1,15 @@
 # 非生产模型配置（显式启用）
 
+## 2026-09-07：保留原服务，私有模型通道已验证但尚未常驻装配
+
+此节替代下方“优先宿主控制面”的实施方向：原账本和工作区在Colima虚拟机内，继续保留唯一原Owner/服务/路径，通过既有SSH master的私有Unix socket调用宿主回环网关，不迁移账本或新建第二个Stream。
+
+新增`startLocalOpenCodexGateway`是显式启动的库入口，尚无自动启动/容器relay/Compose接线。它只绑定127.0.0.1，默认动态端口，上游固定宿主HTTP回环`/v1/responses`。仅接受Astra/medium、无会话续接、不存储的SSE请求，输入1MiB/输出8MiB/并发4/默认60秒；不转发调用者头、不执行工具、不记录正文，拒绝Origin、认证、Cookie以及web_search/MCP/服务端shell等内建工具。客户端function/custom/单层namespace定义可通过，由原受限CLI执行；开发Provider已显式关闭CLI默认web_search，不能以放开网关工具来解决400。
+
+临时真实验证已完成：宿主生产自然模型、宿主CLI只读建议，以及无网络/非root/只读临时容器经Unix socket的自然模型请求。容器仅挂本次私有socket目录，不挂账本、凭据或Docker socket；SSH转发仅复用已有master，缺失时失败；结束已撤销并清理。Unix socket所有者501、权限600、父目录0700；此权限是探测试点事实，不是可跨主机硬编码的通用身份。旧服务root缺少DAC_OVERRIDE，不能假定可访问该socket，后续relay需明确身份与生命周期。
+
+SSE完成事件、模型元数据及业务结果仍由消费适配器验证，网关本身不判定业务完成。尚需实现常驻进程、SSH断线恢复、容器本机回环relay及打包接线，再验证唯一旧服务切换。临时探测不是线上启用，127.0.0.1依然只代表进程所在网络空间。保持候选代码/附件隔离，不因模型网络诊断取消隔离；六类真实群场景、文档正文、独立supervisor和Owner验收不变。
+
 ## 开发Provider的本机OpenCodex路由
 
 开发阶段使用Codex CLI执行只读检查，但模型服务可以显式选择本机OpenCodex；这不是OpenCode。宿主控制面可设置：

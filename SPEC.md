@@ -1,5 +1,7 @@
 # 内部研发助手 Meta 协作规范
 
+本机模型私有通道（2026-09-07，优先于下方“优先迁移宿主控制面”）：保留Colima内原账本、Owner和服务路径，通过宿主回环网关与既有SSH master的私有Unix socket提供模型请求能力。网关仅POST /v1/responses，固定gpt-6-astra/medium、stream=true、store=false，无会话续接；拒绝Origin/认证/Cookie头及服务端内建工具，仅允许客户端function/custom/单层namespace定义。只向固定本机上游发送新建Content-Type，不透传调用者请求头、不执行工具、不记录正文。输入1MiB、输出8MiB、并发4、默认60秒可取消；超限或不完整输出不能当作完整成功。开发CLI显式web_search=disabled，避免其默认cached搜索能力。网关不是身份认证服务器，私有目录/socket访问控制与指定容器挂载仍必须由装配层保证，不得开放到网络。宿主自然解释、CLI建议和无网络临时容器私有通道分别真实验证；常驻进程、容器回环relay、旧服务接线及重启恢复仍未实现，不能宣称群服务已切换。
+
 开发模型路由（2026-09-07）：headless新增显式OMB_CODEX_OPENCODEX_ENDPOINT，将现有CodexReadOnlyPatchProvider指向本机OpenCodex Responses；必须配置模型，推理默认medium。仅HTTP字面回环和精确/v1/responses，无URL凭据/查询/片段；错误在创建Provider目录前拒绝。CLI每次使用私有临时CODEX_HOME及--ignore-user-config，固定Provider覆盖、不继承原模型密钥环境变量；结束后清理。本机常规只读模式和已有独立UID权限模式不变，不增加绕过隔离的开关。真实合成建议通过不等于实际代码应用或群服务已切换；旧路径未配置时保持兼容。
 
 本机执行授权更新（2026-09-07，优先于下方历史待授权状态）：Owner允许受限本机通道调用宿主OpenCodex，网络问题时直接在宿主执行诊断/模型请求。首选宿主控制面回环调用Astra/medium，Docker保持不可信候选代码与附件的隔离边界，不以无沙箱模型HTTP请求扩展为代码任意执行。生产模型适配器直连及宿主Docker取消smoke分别已验证；现有钉钉服务尚未迁移，开发Provider模型路由、共享路径、VM代次/既有containment引用和单账本租约需先验证。完整目标及六类真实验收不变。

@@ -1,5 +1,13 @@
 # Meta 协作验证记录
 
+## 2026-09-07 本机网关和私有容器通道
+
+- 84586/dc93f4 exit0：前轮网关12项/typecheck/diff取得终态。扩展测试首次c31aca因默认沙箱loopback EPERM失败，非网关行为失败；授权宿主63631/c1d5c9 exit0：21项及typecheck/diff通过。覆盖四并发、断开释放、挂起fetch超时及迟到body取消、挂起流/close、输出8MiB限制、chunked输入限制、非SSE拒绝和客户端工具白名单。
+- 首次真实宿主探测cell299审核超时，未启动；唯一重试56240/0dcf68 exit1：自然解释成功，开发CLI拒绝。747f73合成请求字段诊断发现CLI0.146.0默认web_search，网关400；仅输出字段名、工具类型及模型参数，未输出请求正文/凭据。41217/cfab9e新增web_search=disabled断言预期失败；实现后20382/28d82e exit0，35项/typecheck/diff及/tmp/openmausbot-gateway-host-probe.mjs全部通过。真实自然解释验证完成元数据，真实开发建议准确且原合成文件不变；未独立核验CLI返回的模型元数据。
+- 84932/c6a841 exit0：/tmp/openmausbot-unix-channel-probe.mjs复用已存在SSH master，VM私有socket实测501:600，指定缓存镜像临时容器network=none/read-only/UID501/cap-drop ALL/no-new-privileges。通过生产自然模型适配器的Unix fetch传输返回合成JSON，SSE核验模型gpt-6-astra/medium；其他模型400拒绝。随后撤销forward、删除本次socket目录、关闭网关，临时容器--rm退出，清理断言通过。不含容器回环relay、开发CLI容器执行、持久服务/重启或任何真实群任务。
+- 完整验证92435/28c45a exit1：3055通过/1失败/18跳过，279文件。唯一失败runtime-repository-serialization.test.ts:679，两个不同仓库均在释放前启动，数组顺序相反；用例不应要求跨仓库固定启动顺序。仅改为排序副本精确相等，仍检查完整成员数与各一次启动，未放宽同仓库串行、未改生产调度。
+- 77051/906cb3 exit0：`pnpm vitest run server/collaboration/operations/runtime-repository-serialization.test.ts && pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-local-gateway-typecheck && git diff --check`全链终态通过。定向22项通过；完整含主集、broker、桌面与普通/headless打包无node_modules启动、健康JSON及SIGTERM。运行期间业务代码/测试固定；完整中间输出截断，不补造统计。所有句柄已终态，不再轮询。仅本批10文件本地提交，不push；常驻接线及真实群/文档/六场景仍未验收。
+
 ## 2026-09-07 开发Provider OpenCodex路由验证
 
 - 83962/480adf exit1：新增4项预期失败，CLI未收到路由覆盖/临时配置选项，非法端点仍走目录创建而非提前配置拒绝。实现后90272/c76344 exit0：2文件21项/typecheck/diff通过；增加空/片段/错误路径、显式模型、推理及清理覆盖后79034/aaeeb8 exit0：2文件25项/typecheck/diff通过。
