@@ -49,6 +49,37 @@ describe("explicit local OpenCodex streaming model", () => {
   it("handles split UTF-8/CRLF and an empty completed.output using matching streamed text evidence", async () => {
     expect(await model().complete(input())).toEqual({ result: "中文" });
   });
+  it("accepts bounded JSON when small token events exceed the old transport ceiling", async () => {
+    const value = { result: "验收依据".repeat(800) }, text = JSON.stringify(value);
+    const rows = events(text);
+    const delta = rows[4];
+    if (typeof delta.delta !== "string") throw new Error("expected delta fixture");
+    rows.splice(4, 1, ...Array.from(text).map(char => ({ ...delta, delta: char })));
+    expect(Buffer.byteLength(text)).toBeLessThan(256 * 1024);
+    expect(Buffer.byteLength(wire(rows))).toBeGreaterThan(256 * 1024);
+    const client = new ResponsesNaturalIntakeModel({ ...options, fetch: async () => response(rows, 4093) });
+    expect(await client.complete(input())).toEqual(value);
+  });
+  it("bounds decoded text separately from protocol bytes and cancels oversized output", async () => {
+    const cancelled = vi.fn();
+    const rows = events(JSON.stringify({ result: "中".repeat(90_000) }));
+    const data = Buffer.from(wire(rows));
+    expect(data.byteLength).toBeLessThan(8 * 1024 * 1024);
+    const client = new ResponsesNaturalIntakeModel({ ...options, fetch: async () => new Response(new ReadableStream({
+      start(c) { c.enqueue(data); }, cancel: cancelled,
+    }), { headers: { "content-type": "text/event-stream" } }) });
+    await expect(client.complete(input())).rejects.toThrow("natural_model_output_limit");
+    expect(cancelled).toHaveBeenCalled();
+  });
+  it("bounds total wire traffic even when it contains only ignored heartbeat comments", async () => {
+    const data = ": heartbeat\n".repeat(700_000), cancelled = vi.fn();
+    expect(Buffer.byteLength(data)).toBeGreaterThan(8 * 1024 * 1024);
+    const client = new ResponsesNaturalIntakeModel({ ...options, fetch: async () => new Response(new ReadableStream({
+      start(c) { c.enqueue(Buffer.from(data)); }, cancel: cancelled,
+    }), { headers: { "content-type": "text/event-stream" } }) });
+    await expect(client.complete(input())).rejects.toThrow("natural_model_output_limit");
+    expect(cancelled).toHaveBeenCalled();
+  });
   it.each(["http://remote.invalid/v1/responses", "https://remote.invalid/v1/responses", "http://localhost.evil/v1/responses", "http://user:secret@127.0.0.1/v1/responses", "http://127.0.0.1/v1/responses?key=secret", "http://127.0.0.1/other"])("rejects credential-free non-loopback or ambiguous endpoint %s", endpoint => {
     expect(() => new ResponsesNaturalIntakeModel({ ...options, endpoint })).toThrow("natural_model_endpoint_invalid");
   });
@@ -78,7 +109,7 @@ describe("explicit local OpenCodex streaming model", () => {
     for (const r of [new Response("data: nope\n\n", {headers:{"content-type":"text/event-stream"}}), new Response(wire(events()))]) {
       await expect(new ResponsesNaturalIntakeModel({ ...options, fetch: async () => r }).complete(input())).rejects.toThrow("natural_model_response_invalid");
     }
-    await expect(new ResponsesNaturalIntakeModel({ ...options, fetch: async () => new Response("x".repeat(262145), {headers:{"content-type":"text/event-stream"}}) }).complete(input())).rejects.toThrow("natural_model_output_limit");
+    await expect(new ResponsesNaturalIntakeModel({ ...options, fetch: async () => new Response("x".repeat(8 * 1024 * 1024 + 1), {headers:{"content-type":"text/event-stream"}}) }).complete(input())).rejects.toThrow("natural_model_output_limit");
     await expect(new ResponsesNaturalIntakeModel({ ...options, fetch: async () => new Response("secret-provider-error", {status:401}) }).complete(input())).rejects.toThrow(/^natural_model_http_401$/);
   });
   it("cancels a hung body even if a transport ignores the signal", async () => {

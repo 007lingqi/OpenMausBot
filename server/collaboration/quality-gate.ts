@@ -112,7 +112,7 @@ export function validateTargetCommandSpec(commandId: string, spec: TargetCommand
     if (spec.assertionReporter !== "node-test-v1" || !Array.isArray(files) || files.length > 16 ||
       new Set(files).size !== files.length) throw new Error("acceptance_source_files_invalid");
     for (const file of files) {
-      if (typeof file !== "string" || /[\x00-\x1f\x7f*?\[\]{}]/u.test(file) || !/\.(?:[cm]?js|ts)$/u.test(file))
+      if (typeof file !== "string" || /[\x00-\x1f\x7f*?\[\]{}]/u.test(file) || !/\.(?:[cm]?js|ts|[jt]sx)$/u.test(file))
         throw new Error("acceptance_source_files_invalid");
       nodeTestAssertionId(file, "validation");
     }

@@ -1,5 +1,11 @@
 # 非生产模型配置（显式启用）
 
+2026-09-07最新证据：已授权第4次固定候选双阶段真实映射通过，并核对全部绑定断言在两个独立Docker报告中通过，更新下文“映射失败待诊断”的历史状态。恢复只供受信任本机入口一次性使用，普通流程仍三次，不能从环境变量/群消息启用。v30仅追加恢复表，不改旧三次记录；尚未迁移原群账本，切换前必须准备匹配schema版本的备份/回滚。真实文档/六类群业务及OS恢复仍待验收。
+
+本地OpenCodex流式适配器分别限制传输8MiB和最终正文256KiB，避免逐token协议开销提前耗尽正文额度；超限仍失败并取消，60秒请求时限和全部完成证据校验不变。这是业务客户端修复，不要求覆盖已安装的固定宿主网关副本。
+
+2026-09-07开发中更新：验收实现上下文支持显式.tsx/.jsx（下方旧清单仅列.js/.mjs/.cjs/.ts的描述由此扩展），与原固定候选/范围/脱敏限制相同。测试执行参数仍不支持TSX/JSX。当前新增试点行为测试为tests/board-behavior.test.mjs，复核需同时提供app/release-board-state.ts及app/release-board.tsx；原源码规则测试仍保留。此配置尚未应用于VM原仓库；真实模型映射探测失败待诊断，不据此切换或声称业务完成。
+
 ## 宿主用户级常驻通道（2026-09-07已安装，群服务未切换）
 
 当前宿主已安装专用`com.openmausbot.opencodex-pilot-channel`用户LaunchAgent，固定版本f294357；18101连接既有Colima master，VM目录`/tmp/omb-model-channel-18101`。私有安装根目录为`/Users/mac/Library/Application Support/OpenMausBot/ModelChannel`，installation.json保存版本/发布目录/摘要，state/channel.json为稳定预算；不得清空或改路径重试。已用隔离临时容器通过常驻通道真实调用Astra/medium，原钉钉服务尚未切换。

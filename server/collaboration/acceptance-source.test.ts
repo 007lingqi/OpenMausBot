@@ -16,6 +16,8 @@ function fixture(source = "test('保存',()=>{assert.equal(save(),'after');});\n
   writeFileSync(join(root, "case.test.mjs"), source);
   mkdirSync(join(root, "src"));
   writeFileSync(join(root, "src/save.mjs"), 'export const save = () => "after";\n');
+  writeFileSync(join(root, "src/panel.tsx"), 'export const Panel = () => <button password="fixture-value">保存成功</button>;\n');
+  writeFileSync(join(root, "src/panel.jsx"), 'export const Panel = () => <button>保存成功</button>;\n');
   writeFileSync(join(root, "src/.env.mjs"), 'const password = "fixture-private";');
   writeFileSync(join(root, "long.test.mjs"), "x".repeat(33000));
   symlinkSync("/private/secret", join(root, "link.test.mjs"));
@@ -61,6 +63,18 @@ it("collects explicitly allowed implementation context from the same fixed candi
   expect(request.sources).toHaveLength(2);
   expect(request.sources[1]).toMatchObject({ commandId: "cases", file: "src/save.mjs", role: "implementation", text: 'export const save = () => "after";\n' });
   expect(request.sources[1].blobSha).toMatch(/^[a-f0-9]{40}$/);
+});
+it.each(["tsx", "jsx"])("reads fixed %s implementation only as bounded redacted context", extension => {
+  const { root, input } = fixture(); const file = `src/panel.${extension}`;
+  input.commands.cases.acceptanceSourceFiles = [file];
+  writeFileSync(join(root, file), 'throw new Error("mutable source must not execute");');
+  const request = collectAcceptanceMappingRequest(input);
+  expect(request.sources[1]).toMatchObject({ file, role: "implementation" });
+  expect(request.sources[1].text).toContain("保存成功");
+  expect(request.sources[1].text).not.toContain("fixture-value");
+  expect(() => collectAcceptanceMappingRequest({ ...input, denyScope: ["src"] })).toThrow("acceptance_source_scope_denied");
+  input.commands.cases.argv = ["node", "--test", file]; input.commands.cases.acceptanceSourceFiles = [];
+  expect(() => collectAcceptanceMappingRequest(input)).toThrow();
 });
 it.each(["src/save.mjs", "case.test.mjs"])("enforces plan read and deny scopes for every selected source: %s", file => {
   const { input } = fixture();

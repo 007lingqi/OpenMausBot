@@ -32,12 +32,12 @@ function models(options: { reject?: boolean; malformed?: boolean } = {}) {
 function ledger() { const root = mkdtempSync(join(tmpdir(), "omb-mapping-")); roots.push(root); const store = openCollaborationLedger(root); store.close(); const database = new DatabaseSync(store.filePath); database.exec("PRAGMA foreign_keys=ON"); resources.push(database); return { database, filePath: store.filePath }; }
 
 describe("source-grounded acceptance mapping", () => {
-  it("allows implementation context in both model views but cannot bind it as a reported test", async () => {
+  it.each(["mjs", "tsx", "jsx"])("cannot bind %s implementation context as a reported test", async extension => {
     const input: MappingRequest = { ...request, sources: [...request.sources, { ...request.sources[0],
-      file: "src/save.mjs", role: "implementation", text: 'export const save = () => "after";' }] };
+      file: `src/save.${extension}`, role: "implementation", text: extension === "mjs" ? 'export const save = () => "after";' : 'export const save = () => <button>after</button>;' }] };
     const model = models();
     model.proposer.complete = async () => ({ ...proposal(input), bindings: [{ ...proposal(input).bindings[0],
-      file: "src/save.mjs", testName: "save", quote: input.sources[1].text }] });
+      file: `src/save.${extension}`, testName: "save", quote: input.sources[1].text }] });
     const result = await new AcceptanceMappingCoordinator(ledger().database, model).map(input, 1000);
     expect(result.status).toBe("failed");
     expect(result.contracts).toBeUndefined();
@@ -210,6 +210,61 @@ describe("source-grounded acceptance mapping", () => {
     for (let i=0;i<4;i++) await new AcceptanceMappingCoordinator(store.database, model).map(request, 1000+i*200000);
     expect(model.calls).toHaveLength(3);
     expect(() => store.database.exec("DELETE FROM collaboration_acceptance_mapping_attempts")).toThrow("immutable");
+  });
+  const recovery = () => ({ requestHash: mappingRequestHash(request), policyId: "fixture-v1",
+    afterAttempt: 3 as const, referenceHash: "f".repeat(64) });
+  async function exhausted() {
+    const store = ledger();
+    for (let i = 0; i < 3; i++) await new AcceptanceMappingCoordinator(store.database, models({ malformed: true })).map(request, 1000 + i * 200000);
+    return store;
+  }
+  it("records a trusted one-time fourth-attempt authorization before I/O without changing historical receipts", async () => {
+    const store = await exhausted(), model = models();
+    const history = () => store.database.prepare("SELECT a.*,r.receipt_json FROM collaboration_acceptance_mapping_attempts a LEFT JOIN collaboration_acceptance_mapping_results r USING(request_key,attempt) WHERE a.attempt<=3 ORDER BY a.attempt").all();
+    const before = history(), complete = model.proposer.complete.bind(model.proposer);
+    model.proposer.complete = async input => {
+      const row = store.database.prepare("SELECT request_json FROM collaboration_mapping_recovery_attempts WHERE attempt=4").get() as { request_json: string };
+      expect(JSON.parse(row.request_json).ownerAuthorizedRecovery).toEqual(recovery());
+      return complete(input);
+    };
+    const result = await new AcceptanceMappingCoordinator(store.database, model).map(request, 700000, undefined, recovery());
+    expect(result.status).toBe("approved"); expect(history()).toEqual(before);
+    expect(readApprovedAcceptanceMapping(store.database, { ...recovery(), candidateSha: request.candidateSha,
+      specHash: request.specHash, conditions: request.conditions })).toEqual(result.contracts);
+    expect(await new AcceptanceMappingCoordinator(store.database, model).map(request, 800000)).toEqual(result);
+    expect(model.calls).toHaveLength(2);
+  });
+  it("never grants a fifth attempt, including with a new authorization reference after restart", async () => {
+    const store = await exhausted(), model = models({ malformed: true });
+    expect((await new AcceptanceMappingCoordinator(store.database, model).map(request, 700000, undefined, recovery())).status).toBe("failed");
+    expect((await new AcceptanceMappingCoordinator(store.database, model).map(request, 900000, undefined,
+      { ...recovery(), referenceHash: "e".repeat(64) })).status).toBe("limit");
+    expect((await new AcceptanceMappingCoordinator(store.database, model).map(request, 900001)).status).toBe("limit");
+    expect(model.calls).toHaveLength(1);
+  });
+  it.each([ { policyId: "other" }, { requestHash: "0".repeat(64) }, { referenceHash: "not-a-digest" },
+    { afterAttempt: 4 }, { extra: "untrusted" } ])("rejects mismatched or malformed recovery before any model call: %j", async change => {
+    const store = await exhausted(), model = models();
+    await expect(new AcceptanceMappingCoordinator(store.database, model).map(request, 700000, undefined,
+      { ...recovery(), ...change } as ReturnType<typeof recovery>)).rejects.toThrow("acceptance_mapping_recovery_invalid");
+    expect(model.calls).toHaveLength(0);
+    expect(store.database.prepare("SELECT count(*) AS n FROM collaboration_acceptance_mapping_attempts").get()).toEqual({ n: 3 });
+  });
+  it("does not accept recovery inside untrusted request data or before the three attempts are spent", async () => {
+    const store = ledger(), model = models(), coordinator = new AcceptanceMappingCoordinator(store.database, model);
+    await expect(coordinator.map(request, 1000, undefined, recovery())).rejects.toThrow("acceptance_mapping_recovery_invalid");
+    await expect(coordinator.map({ ...request, ownerAuthorizedRecovery: recovery() } as MappingRequest, 1000)).rejects.toThrow();
+    expect(model.calls).toHaveLength(0);
+  });
+  it("consumes a cancelled fourth reservation and cannot refund it after lease expiry", async () => {
+    const store = await exhausted(), model = models(), controller = new AbortController();
+    let release!: () => void;
+    model.proposer.complete = () => new Promise(resolve => { release = () => resolve(proposal()); });
+    const pending = new AcceptanceMappingCoordinator(store.database, model).map(request, 700000, controller.signal, recovery());
+    expect((await new AcceptanceMappingCoordinator(store.database, models()).map(request, 700001, undefined, recovery())).status).toBe("pending");
+    controller.abort(); await expect(pending).rejects.toThrow("acceptance_mapping_cancelled"); release();
+    expect((await new AcceptanceMappingCoordinator(store.database, models()).map(request, 900000, undefined, recovery())).status).toBe("limit");
+    expect(store.database.prepare("SELECT count(*) AS n FROM collaboration_acceptance_mapping_results").get()).toEqual({ n: 3 });
   });
   it("does not reuse a mapping after the Spec or candidate changes", async () => {
     const store = ledger(); const model = models();

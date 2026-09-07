@@ -89,14 +89,14 @@ describe("secure collaboration headless CLI", () => {
       expect(database.prepare("SELECT COUNT(*) AS count FROM collaboration_owner_bindings").get()).toEqual({ count: 0 });
     } finally { database.close(); ledger.close(); }
   });
-  it("preserves trusted assertion reporter configuration and rejects unknown modes", async () => {
+  it.each(["mjs", "tsx", "jsx"])("preserves trusted %s implementation context and rejects unknown reporter modes", async extension => {
     const root = temporaryDirectory();
     const key = join(root, "key");
     const generation = join(root, "generation");
     writeFileSync(key, Buffer.alloc(32, 1), { mode: 0o600 });
     writeFileSync(generation, "fixture-boot-generation");
     const command = { argv: ["node", "--test", "case.test.mjs"], timeoutMs: 1000, maxOutputBytes: 32000,
-      acceptanceSourceFiles: ["src/save.mjs"],
+      acceptanceSourceFiles: [`src/save.${extension}`],
       assertionReporter: "node-test-v1", assertionContract: { format: "omb-assertions-v1", bindings: [{ conditionHash: "a".repeat(64), assertionIds: ["case"] }] } };
     const environment = { OMB_DINGTALK_ENABLED: "0", OMB_EXECUTION_ENABLED: "1", OMB_EXECUTION_BACKEND: "docker",
       OMB_EXECUTION_REPOSITORY: root, OMB_EXECUTION_WORKTREE_ROOT: join(root, "worktrees"), OMB_EXECUTION_EXCHANGE_ROOT: join(root, "exchange"),

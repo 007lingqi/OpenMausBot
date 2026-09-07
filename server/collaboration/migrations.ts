@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { OPENMAUSBOT_SOURCE_BASELINE } from "./config.ts";
 
-export const COLLABORATION_SCHEMA_VERSION = 29;
+export const COLLABORATION_SCHEMA_VERSION = 30;
 
 interface Migration {
   version: number;
@@ -1365,6 +1365,39 @@ const migrations: readonly Migration[] = [
           BEGIN SELECT RAISE(ABORT,'runtime verification policy is immutable'); END;
         CREATE TRIGGER verification_runtime_policies_no_delete BEFORE DELETE ON collaboration_verification_runtime_policies
           BEGIN SELECT RAISE(ABORT,'runtime verification policy cannot be deleted'); END;
+      `);
+    },
+  },
+  {
+    version: 30, name: "one-time-owner-mapping-recovery", checksum: "v30:separate-immutable-fourth-mapping-attempt",
+    apply(database) {
+      database.exec(`
+        CREATE TABLE collaboration_mapping_recovery_attempts (
+          request_key TEXT NOT NULL, attempt INTEGER NOT NULL CHECK(attempt=4),
+          request_json TEXT NOT NULL CHECK(json_valid(request_json)
+            AND json_type(request_json,'$.ownerAuthorizedRecovery') IS 'object'
+            AND json_extract(request_json,'$.ownerAuthorizedRecovery.afterAttempt') IS 3
+            AND json_type(request_json,'$.ownerAuthorizedRecovery.referenceHash') IS 'text'
+            AND length(json_extract(request_json,'$.ownerAuthorizedRecovery.referenceHash'))=64),
+          created_at INTEGER NOT NULL, prior_attempt INTEGER NOT NULL DEFAULT 3 CHECK(prior_attempt=3),
+          PRIMARY KEY(request_key,attempt),
+          FOREIGN KEY(request_key,prior_attempt) REFERENCES collaboration_acceptance_mapping_attempts(request_key,attempt)
+        ) STRICT;
+        CREATE TABLE collaboration_mapping_recovery_results (
+          request_key TEXT NOT NULL, attempt INTEGER NOT NULL CHECK(attempt=4), receipt_json TEXT NOT NULL, created_at INTEGER NOT NULL,
+          PRIMARY KEY(request_key,attempt),
+          FOREIGN KEY(request_key,attempt) REFERENCES collaboration_mapping_recovery_attempts(request_key,attempt)
+        ) STRICT;
+        CREATE TRIGGER mapping_recovery_attempt_no_update BEFORE UPDATE ON collaboration_mapping_recovery_attempts BEGIN SELECT RAISE(ABORT,'mapping recovery is immutable'); END;
+        CREATE TRIGGER mapping_recovery_attempt_no_delete BEFORE DELETE ON collaboration_mapping_recovery_attempts BEGIN SELECT RAISE(ABORT,'mapping recovery is immutable'); END;
+        CREATE TRIGGER mapping_recovery_result_no_update BEFORE UPDATE ON collaboration_mapping_recovery_results BEGIN SELECT RAISE(ABORT,'mapping recovery is immutable'); END;
+        CREATE TRIGGER mapping_recovery_result_no_delete BEFORE DELETE ON collaboration_mapping_recovery_results BEGIN SELECT RAISE(ABORT,'mapping recovery is immutable'); END;
+        CREATE VIEW collaboration_mapping_all_attempts AS
+          SELECT request_key,attempt,request_json,created_at FROM collaboration_acceptance_mapping_attempts UNION ALL
+          SELECT request_key,attempt,request_json,created_at FROM collaboration_mapping_recovery_attempts;
+        CREATE VIEW collaboration_mapping_all_results AS
+          SELECT request_key,attempt,receipt_json,created_at FROM collaboration_acceptance_mapping_results UNION ALL
+          SELECT request_key,attempt,receipt_json,created_at FROM collaboration_mapping_recovery_results;
       `);
     },
   },

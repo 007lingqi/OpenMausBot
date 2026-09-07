@@ -31,6 +31,13 @@ type Proposal = z.infer<typeof proposalSchema>;
 type Review = z.infer<typeof reviewSchema>;
 export interface MappingResult { status: "approved" | "rejected" | "failed" | "pending" | "limit"; requestHash: string; contracts?: Record<string, AssertionContract> }
 export interface AcceptanceMappingModels { proposer: NaturalIntakeModelPort; verifier: NaturalIntakeModelPort; policyId: string }
+const recoverySchema = z.object({ requestHash: digest, policyId: z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/u),
+  afterAttempt: z.literal(3), referenceHash: digest }).strict();
+/** Trusted host/operator input, never a model/chat field or environment switch.
+ * The caller must first verify the unique Owner's explicit one-time authorization
+ * and retain its evidence addressed by referenceHash. This is a binding/audit
+ * record, not an authentication token or a substitute for that authority check. */
+export type MappingRecoveryAuthorization = z.infer<typeof recoverySchema>;
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 function safeRequest(input: MappingRequest): MappingRequest {
   const parsed = requestSchema.parse(input);
@@ -91,7 +98,7 @@ export function readApprovedAcceptanceMapping(db: DatabaseSync, expected: {
     assertLedgerArmed(db);
     if (!digest.safeParse(expected.requestHash).success || !/^[A-Za-z0-9._:-]{1,128}$/u.test(expected.policyId)) return undefined;
     const key=hash({requestHash:expected.requestHash,policyId:expected.policyId,version:1});
-    const row=db.prepare("SELECT a.request_json,r.receipt_json FROM collaboration_acceptance_mapping_attempts a LEFT JOIN collaboration_acceptance_mapping_results r USING(request_key,attempt) WHERE a.request_key=? ORDER BY a.attempt DESC LIMIT 1")
+    const row=db.prepare("SELECT a.request_json,r.receipt_json FROM collaboration_mapping_all_attempts a LEFT JOIN collaboration_mapping_all_results r USING(request_key,attempt) WHERE a.request_key=? ORDER BY a.attempt DESC LIMIT 1")
       .get(key) as {request_json:string;receipt_json:string|null}|undefined;
     if(!row?.receipt_json) return undefined;
     const saved=JSON.parse(row.request_json) as {policyId:unknown;request:MappingRequest};
@@ -115,12 +122,17 @@ export class AcceptanceMappingCoordinator {
     if (models.proposer === models.verifier) throw new Error("acceptance_mapping_independent_context_required");
     if (!/^[A-Za-z0-9._:-]{1,128}$/u.test(models.policyId)) throw new Error("acceptance_mapping_policy_id_required");
   }
-  async map(input: MappingRequest, now = Date.now(), signal?: AbortSignal): Promise<MappingResult> {
+  async map(input: MappingRequest, now = Date.now(), signal?: AbortSignal,
+    ownerAuthorizedRecovery?: MappingRecoveryAuthorization): Promise<MappingResult> {
     const assertNotCancelled = () => { if (signal?.aborted) throw new Error("acceptance_mapping_cancelled"); };
     assertNotCancelled();
     assertLedgerArmed(this.db);
     const request = safeRequest(input);
     const requestHash = mappingRequestHash(request);
+    const parsedRecovery = ownerAuthorizedRecovery === undefined ? undefined : recoverySchema.safeParse(ownerAuthorizedRecovery);
+    if (parsedRecovery && (!parsedRecovery.success || parsedRecovery.data.requestHash !== requestHash ||
+      parsedRecovery.data.policyId !== this.models.policyId)) throw new Error("acceptance_mapping_recovery_invalid");
+    const recovery = parsedRecovery?.success ? parsedRecovery.data : undefined;
     // Models select identities supplied by the host; they must never calculate
     // cryptographic hashes from natural language. Keep the canonical request
     // unchanged so receipts and fixed-candidate validation still use its hash.
@@ -129,8 +141,9 @@ export class AcceptanceMappingCoordinator {
     })) };
     const key = hash({ requestHash, policyId: this.models.policyId, version: 1 });
     const started = Date.now();
-    const latest = this.db.prepare("SELECT a.attempt,a.created_at,r.receipt_json FROM collaboration_acceptance_mapping_attempts a LEFT JOIN collaboration_acceptance_mapping_results r USING(request_key,attempt) WHERE a.request_key=? ORDER BY a.attempt DESC LIMIT 1")
+    const latest = this.db.prepare("SELECT a.attempt,a.created_at,r.receipt_json FROM collaboration_mapping_all_attempts a LEFT JOIN collaboration_mapping_all_results r USING(request_key,attempt) WHERE a.request_key=? ORDER BY a.attempt DESC LIMIT 1")
       .get(key) as { attempt: number; created_at: number; receipt_json: string | null } | undefined;
+    if (recovery && (latest?.attempt ?? 0) < 3) throw new Error("acceptance_mapping_recovery_invalid");
     if (latest?.receipt_json) {
       const saved = JSON.parse(latest.receipt_json) as { proposal?: unknown; review?: unknown };
       if (saved.proposal && saved.review) {
@@ -140,10 +153,11 @@ export class AcceptanceMappingCoordinator {
       }
     }
     if (latest && !latest.receipt_json && latest.created_at + 120000 > now) return { status: "pending", requestHash };
-    if ((latest?.attempt ?? 0) >= 3) return { status: "limit", requestHash };
+    if ((latest?.attempt ?? 0) >= 3 && !(recovery && latest?.attempt === 3)) return { status: "limit", requestHash };
     const attempt = (latest?.attempt ?? 0) + 1;
-    this.db.prepare("INSERT INTO collaboration_acceptance_mapping_attempts(request_key,attempt,request_json,created_at) VALUES(?,?,?,?)")
-      .run(key, attempt, JSON.stringify({ policyId: this.models.policyId, request }), now);
+    this.db.prepare(`INSERT INTO ${attempt === 4 ? "collaboration_mapping_recovery_attempts" : "collaboration_acceptance_mapping_attempts"}(request_key,attempt,request_json,created_at) VALUES(?,?,?,?)`)
+      .run(key, attempt, JSON.stringify({ policyId: this.models.policyId, request,
+        ...(recovery ? { ownerAuthorizedRecovery: recovery } : {}) }), now);
     const controller = new AbortController();
     let cancel: (() => void) | undefined;
     const cancelled = new Promise<never>((_, reject) => {
@@ -170,9 +184,9 @@ export class AcceptanceMappingCoordinator {
     // Cancellation leaves the durable reservation intact but never writes a result after its runtime stopped.
     assertNotCancelled();
     assertLedgerArmed(this.db);
-    const current = this.db.prepare("SELECT max(attempt) AS attempt FROM collaboration_acceptance_mapping_attempts WHERE request_key=?").get(key) as {attempt: number};
+    const current = this.db.prepare("SELECT max(attempt) AS attempt FROM collaboration_mapping_all_attempts WHERE request_key=?").get(key) as {attempt: number};
     if (current.attempt !== attempt || now + Date.now()-started >= now + 120000) return { status: "pending", requestHash };
-    this.db.prepare("INSERT INTO collaboration_acceptance_mapping_results(request_key,attempt,receipt_json,created_at) VALUES(?,?,?,?)")
+    this.db.prepare(`INSERT INTO ${attempt === 4 ? "collaboration_mapping_recovery_results" : "collaboration_acceptance_mapping_results"}(request_key,attempt,receipt_json,created_at) VALUES(?,?,?,?)`)
       .run(key, attempt, JSON.stringify(receipt), now + Date.now()-started);
     return { status, requestHash, ...(status === "approved" ? { contracts: contracts(receipt.proposal!) } : {}) };
   }

@@ -1,5 +1,38 @@
 # Meta 协作验证记录
 
+## 2026-09-07 已授权第4次映射真实通过
+
+- f05d56：新增9项一次性恢复TDD红灯。8ee40e：3项仍被旧表CHECK约束拦截，因而采取v30独立追加恢复表而不放宽旧表；408d13核心29项通过。de4bcf十文件220项通过/1项旧迁移计数期望失败；修正期望后53533的41项db/mapping、pnpm typecheck及diff全部通过。
+- 53533/68d4de exit0：同一candidate/Spec/policy/ledger真实第4次调用，两角色独立上下文、Astra/medium完成元数据校验均通过，三项覆盖确认；生产readApprovedAcceptanceMapping重建相同contracts，全部assertionIds匹配两份原隔离容器passed报告；旧三次逐行不变。授权摘要已在第4次任何模型调用前写入独立不可变表，授权明文记录只位于私有本机探测目录，不入Git。
+- 9754/d9a563 exit0：完整pnpm test/typecheck/diff通过；主集3178项通过/18跳过（3196登记）、286文件通过/1跳过，broker、桌面及普通/headless打包启动退出通过。业务源码与测试固定，包含v30恢复；所有测试和模型句柄终态，无需继续轮询。本地回归和固定合成候选映射不等于六类真实群场景完成。
+
+## 2026-09-07 当前版本完整回归最终通过
+
+- 53609/7b7a64 exit0：完整pnpm test && pnpm typecheck && git diff --check通过。主集286文件通过/1跳过、3168测试通过/18跳过（3186登记）；broker7项以及updater/desktop-viewer/package-link/save-file、普通包无node_modules启动、9代理路径和模型通道/headless启动退出均通过。此次覆盖当前stream限额修复；运行期间代码/测试固定，不用旧版本全量替代。
+- 53609及其所有观察句柄终态，无仍在等待的测试/模型。不得重复启动或把旧“运行中”记录作为存活证据。
+- 此通过仅为软件回归，不覆盖已失败的真实第三次独立模型复核或任何未完成群/文档/OS试点。保持原三次失败记录，等待Owner明确额外尝试授权；不能因此提交为完整交付或将Goal标complete。
+
+## 2026-09-07 复核502根因与当前连通性
+
+- c8035a、5ab3dc、eb1078：只读宿主OpenCodex本次时间窗口的权威usage.jsonl，复核1788755266812、单次上游发送、13946ms、HTTP502，静态安全错误getaddrinfo ETIMEOUT chatgpt.com；对应账本第三次总耗时55443ms，与前阶段41418ms成功及阶段顺序吻合。未输出日志原请求、身份、凭据或完整记录。
+- 74169/5c17bf：dscacheutil查询chatgpt.com成功；无凭据curl HEAD完成DNS/TCP/TLS、HTTP403。只读连通性证据，不是模型调用或新的映射验收；未作第四次请求。service.log早于本次故障，不能作为其因果证据。
+- 53609当前运行完整pnpm test/typecheck/diff，9f5634仍运行并返回通过项；尚未有终态，不提前称全量通过。functions cell512只承载一次轮询且已结束，应继续原exec session 53609。
+
+## 2026-09-07 流式限额修复与第三次真实映射终态
+
+- 88061/08c689：真实第二次proposer失败natural_model_output_limit。144c90：新增协议开销回归按相同错误红灯，正文远小于256KiB但SSE传输大于256KiB。
+- 53615/f16ec0：五文件120项通过，类型检查失败于新测试联合类型。补显式delta类型收窄后57129/56cfb9→d754ed顺序执行120项、pnpm typecheck、git diff --check均通过，才启动第三次真实映射。未重跑新增stream版本的完整pnpm test，不引用上一批全量冒充本次全量。
+- 57129/d754ed：proposer真实传输386106字节、返回JSON4010字节，三条binding来源/条件/精确引文均通过，说明原256KiB传输限额确会拒绝正常小正文。随后verifier返回natural_model_http_502，整个probe仍exit1；没有复核通过、完整contract与双报告比对或群业务完成证据。
+- 同一固定候选实际三次已耗尽，保留ledger、两套原Docker报告、evidence.json、retry-evidence.json及retry-evidence-3.json，不重发、不重置、不部署、不自动commit。所有句柄已终态。
+
+## 2026-09-07 TSX实现证据、JSX脱敏及试点行为测试
+
+- 6e0396新增4项红灯，分别拒绝扩展名及JSX敏感值漏脱敏；修复后0c3664定向91项/typecheck/diff通过。新增覆盖属性字面值/表达式/命名空间、JSX正文及换行/幂等、固定候选源读取、禁止目录、测试命令不放开JSX、模型不能绑定implementation为测试。
+- e25684试点缺状态helper红灯；20419前半6项原生业务/源码通过。6031/219b2e页面独立严格类型+原npm test源码/构建/SSR全链exit0。额外全试点tsc的3个Cloudflare声明错误由31779/a916ef对比HEAD原页面与当前版本确认完全一致，无新增诊断；不是已修复。
+- 29787/28da38完整主项目pnpm test、typecheck、diff exit0，包含打包回归，受测代码固定。统计截断不补造；所有验证句柄终态。
+- 59629/857ba7：两个独立隔离容器各4个Node业务断言通过，但固定合成候选真实模型映射failed，整个探测exit1，不等于六群场景或Meta验收通过。/private/tmp/omb-tsx-acceptance-HM5xui保留候选、两个报告及单次失败账本；b70efc通用失败收据不能证明网络、模型字段或引文中哪一项出错。后续仍需具体诊断，不能用自动测试绿灯抹去真实失败。
+- cell476执行审核超时未执行；e77b44语法检查因诊断文件不存在结束，未发模型请求。后续第二次与第三次真实执行结果见顶部；不能将工具失败混算为模型尝试。
+
 ## 2026-09-07 常驻安装与隔离容器真实模型验证
 
 - 11697/ad3185 exit0：独立离线候选镜像opencodex-f294357构建完成，sha256:5a5ffa5fab271cef19678e7e2f76e545fc318ee0edb6e746d61aa7ba0e405dce，临时标签/目录清理成功。该镜像尚未部署到原服务，也未单独做固定镜像业务验收，不用构建成功替代运行测试。所有构建/测试句柄终态。

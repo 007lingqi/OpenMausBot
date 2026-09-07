@@ -1,20 +1,8 @@
 "use client";
 
 import { FormEvent, useMemo, useState } from "react";
-
-type CheckStatus = "ready" | "review" | "blocked";
-type Filter = "all" | CheckStatus;
-
-interface ReleaseCheck {
-  id: string;
-  title: string;
-  detail: string;
-  owner: string;
-  area: string;
-  due: string;
-  priority: "P0" | "P1" | "P2";
-  status: CheckStatus;
-}
+import { appendCheck, checkCounts, toggleCheckReady, visibleChecks as selectVisibleChecks,
+  type CheckStatus, type Filter, type ReleaseCheck } from "./release-board-state";
 
 const initialChecks: ReleaseCheck[] = [
   { id: "contract", title: "接口契约已冻结", detail: "订单查询 v2 字段与错误码已经完成双端确认", owner: "梁知夏", area: "后端", due: "今天 16:00", priority: "P0", status: "ready" },
@@ -38,43 +26,20 @@ export function ReleaseBoard() {
   const [showComposer, setShowComposer] = useState(false);
   const [newTitle, setNewTitle] = useState("");
 
-  const counts = useMemo(() => ({
-    ready: checks.filter((item) => item.status === "ready").length,
-    review: checks.filter((item) => item.status === "review").length,
-    blocked: checks.filter((item) => item.status === "blocked").length,
-  }), [checks]);
+  const counts = useMemo(() => checkCounts(checks), [checks]);
   const readiness = Math.round((counts.ready / checks.length) * 100);
 
-  const visibleChecks = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    return checks.filter((item) => {
-      const inFilter = filter === "all" || item.status === filter;
-      const inQuery = !needle || [item.title, item.detail, item.owner, item.area]
-        .some((value) => value.toLowerCase().includes(needle));
-      return inFilter && inQuery;
-    });
-  }, [checks, filter, query]);
+  const visibleChecks = useMemo(() => selectVisibleChecks(checks, filter, query), [checks, filter, query]);
 
   function toggleReady(id: string) {
-    setChecks((current) => current.map((item) => item.id === id
-      ? { ...item, status: item.status === "ready" ? "review" : "ready" }
-      : item));
+    setChecks((current) => toggleCheckReady(current, id));
   }
 
   function addCheck(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const title = newTitle.trim();
     if (!title) return;
-    setChecks((current) => [...current, {
-      id: `check-${current.length + 1}`,
-      title,
-      detail: "新检查项，等待补充验收证据",
-      owner: "待指派",
-      area: "未分类",
-      due: "未设置",
-      priority: "P1",
-      status: "review",
-    }]);
+    setChecks((current) => appendCheck(current, title));
     setNewTitle("");
     setShowComposer(false);
   }

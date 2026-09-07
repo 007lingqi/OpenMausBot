@@ -1,4 +1,7 @@
 /** A bounded, tool-free Responses stream. No partial text is a completed proposal. */
+// SSE includes per-token envelopes and repeated done snapshots. Bound that wire
+// separately while retaining the original ceiling for actual proposal text.
+const WIRE_LIMIT = 8 * 1024 * 1024, TEXT_LIMIT = 256 * 1024;
 type RecordValue = Record<string, any>;
 function object(value: unknown): RecordValue {
   if (!value || typeof value !== "object" || Array.isArray(value)) invalid();
@@ -21,7 +24,7 @@ export async function readOpenCodexStream(response: Response, model: string, eff
     void response.body?.cancel().catch(() => undefined); invalid();
   }
   const reader = response.body.getReader(), decoder = new TextDecoder("utf-8", { fatal: true });
-  let size = 0, pending = "", data: string[] = [], eventName = "", responseId = "", complete = false;
+  let size = 0, textBytes = 0, pending = "", data: string[] = [], eventName = "", responseId = "", complete = false;
   type Part = { text: string; textDone: boolean; partDone: boolean };
   type Item = { id: string; type: string; done: boolean; parts: Map<number, Part> };
   const items = new Map<number, Item>();
@@ -75,7 +78,10 @@ export async function readOpenCodexStream(response: Response, model: string, eff
       const item = itemFor(e), part = item.parts.get(index(e.content_index));
       if (item.type !== "message" || !part || part.partDone) invalid();
       if (e.type === "response.output_text.delta") {
-        if (part.textDone || typeof e.delta !== "string") invalid(); part.text += e.delta;
+        if (part.textDone || typeof e.delta !== "string") invalid();
+        textBytes += Buffer.byteLength(e.delta, "utf8");
+        if (textBytes > TEXT_LIMIT) throw new Error("natural_model_output_limit");
+        part.text += e.delta;
       } else if (e.type === "response.output_text.done") {
         if (part.textDone || typeof e.text !== "string" || e.text !== part.text) invalid(); part.textDone = true;
       } else {
@@ -118,7 +124,7 @@ export async function readOpenCodexStream(response: Response, model: string, eff
       const chunk = await abortable(reader.read(), signal);
       if (chunk.done) break;
       size += chunk.value.byteLength;
-      if (size > 256 * 1024) throw new Error("natural_model_output_limit");
+      if (size > WIRE_LIMIT) throw new Error("natural_model_output_limit");
       pending += decoder.decode(chunk.value, { stream: true });
       let pos: number;
       while ((pos = pending.indexOf("\n")) >= 0) { line(pending.slice(0, pos)); pending = pending.slice(pos + 1); }

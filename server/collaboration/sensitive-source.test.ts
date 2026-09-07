@@ -9,6 +9,24 @@ function parses(source: string) {
 }
 
 describe("syntax-preserving source redaction", () => {
+  it.each(["tsx", "jsx"])("redacts JSX credentials while preserving ordinary UI evidence in %s", extension => {
+    const source = 'const ui = <Panel password="fixture-value" apiToken={"fixture-value"} label="保存">\n' +
+      '<p>password: fixture-value</p><button aria-label="保存">保存成功</button>\n</Panel>;';
+    const file = `panel.${extension}`, result = redactSensitiveSource(source, file);
+    expect(result).not.toContain("fixture-value");
+    expect(result).toContain('label="保存"');
+    expect(result).toContain('<button aria-label="保存">保存成功</button>');
+    expect(result.split("\n")).toHaveLength(source.split("\n").length);
+    expect((ts.createSourceFile(file, result, ts.ScriptTarget.Latest, true) as ts.SourceFile & { parseDiagnostics: unknown[] }).parseDiagnostics).toEqual([]);
+    expect(redactSensitiveSource(result, file)).toBe(result);
+  });
+  it("keeps namespaced JSX attributes and multiline redaction parseable", () => {
+    const source = 'const view = <Panel auth:token="fixture-value" password={123456}><p>password: fixture-value\r\nnext line</p></Panel>;';
+    const result = redactSensitiveSource(source, "view.tsx");
+    expect(result).not.toContain("fixture-value"); expect(result).not.toContain("123456");
+    expect(result.match(/\r\n|[\r\n]/g)).toEqual(source.match(/\r\n|[\r\n]/g));
+    expect(redactSensitiveSource(result, "view.tsx")).toBe(result);
+  });
   it.each([
     'function compare(password: string, input: string) { return password === input; }',
     'const ok = token !== expectedToken && password === "";',

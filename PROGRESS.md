@@ -1,5 +1,55 @@
 # Meta 协作实施进度
 
+## 当前检查点：授权后的真实双阶段映射及完整回归通过（2026-09-07）
+
+- 53533/68d4de exit0：41项db/mapping专项、主项目typecheck/diff通过后，执行唯一授权的第4次真实Astra/medium映射。proposer传输379425字节/JSON3980字节，独立verifier传输173688字节/JSON1644字节，三项finding均covered；readApprovedAcceptanceMapping重算通过，所有绑定断言都在developer/verifier两套原Docker报告中passed，原3次记录逐行不变。原DNS/流式截断阻碍已在本次限定场景解除，不再重复索要相同授权。
+- /private/tmp/omb-tsx-acceptance-HM5xui/owner-authorized-recovery-4.json为独占写入授权证据，retry-evidence-4.json为本次结果；原ledger在同路径加v30恢复表，三次旧表记录仍保留。授权已消耗，不重跑/private/tmp/openmausbot-tsx-authorized-recovery.mjs。53533已终态，不再轮询。
+- 9754/d9a563已exit0：完整pnpm test && pnpm typecheck && git diff --check通过，主集3178 passed / 18 skipped（3196登记）、286文件通过/1跳过，broker、桌面及普通/headless打包启动退出通过。受测业务代码/测试固定，包含v30一次性恢复；没有运行中测试/模型句柄，不再轮询或重复启动。保存25个本任务文件，用户AGENTS.md/outputs不动、不push。
+- 真实固定候选映射不等于真实群六场景或生产完成。原群容器仍未切换、原群账本未迁移v30。下一步取得9754终态并提交，再更新/private/tmp/openmausbot-build-opencodex-pilot.mjs的固定新版本标签（当前仍硬编码f294357，不能原样运行）、在回归打包完成后重建独立镜像；准备业务测试策略、旧账本备份和schema匹配回滚、systemd overlay后才切换唯一非生产服务。
+- 本轮get_goal已确认原生目标active；以下历史blocked记录不再代表当前状态。完整目标未完成，后续文档正文/六真实场景/独立supervisor/VM和主机恢复/Owner最终签字全部保留。
+
+## 最新授权接续：仅恢复一次固定候选验收（2026-09-07）
+
+- Owner在本任务回复“授权相关权限处理”，承接上条额外一次完整验收申请；按相同候选/Spec/policy、保留三次失败、仅第4次解释，不扩展为生产部署、身份/凭据或无限重试。首次get_goal仍显示blocked；现已按新授权执行，不能据旧状态重复索要同一授权，也不调用不支持的active状态更新。
+- f05d56九项TDD红灯后新增受信任本机第四参数ownerAuthorizedRecovery；逐字段验证requestHash/policy/afterAttempt3/referenceHash，不接收群消息字段或环境开关。调用者必须先确认Owner并保存referenceHash对应授权证据；摘要本身不是鉴权token。恢复授权和第4次占位在任何模型调用前写入，取消/崩溃不退款，第5次拒绝，成功重放只读旧收据。
+- 87955/8ee40e暴露旧表CHECK attempt<=3；未放宽或重建旧表，新增v30独立recovery attempts/results表及只读合并视图，原3次不改，恢复表仅允许attempt4、引用原attempt3并不可更新/删除。408d13核心29项通过。79474/de4bcf十文件220项通过/1失败，唯一是旧迁移计数期望29，已随v30精确更新；旧schema模拟夹具只清理新增表/视图、保留原历史验收断言。
+- 53533顺序执行db/mapping定向、typecheck、diff，全部通过才运行/private/tmp/openmausbot-tsx-authorized-recovery.mjs。该一次性入口只作用于原独立候选ledger：独占创建owner-authorized-recovery-4.json，并把其SHA256写入恢复记录；原三次逐行不变、完整收据重算及两套原Docker断言匹配均必须验证。不得重复运行；真实终态以该句柄为准。
+- 当前新增v30未迁移原群服务，7f6c85只读确认指定context原试点healthy；未停止其他容器、未增Owner/Stream。后续仍须当前完整回归、真实恢复结果、候选镜像和原账本备份/回滚准备后再切换唯一非生产服务。完整目标不变。
+
+## 当前收束：完整回归通过，真实验收等待Owner额外尝试授权（2026-09-07）
+
+- 上轮progress（定位DNS故障并启动全量），本轮接续取得53609/7b7a64终态exit0，未重新启动。完整pnpm test、pnpm typecheck、git diff --check通过；主集286文件通过/1跳过、3168项通过/18跳过（3186登记），后续broker、桌面、普通和headless打包运行/退出检查通过。业务源码与测试在全量期间固定。此前关于53609运行中的描述已失效，所有执行句柄均终态，不再轮询。
+- 真实映射仍只到第三次proposer成功，verifier因宿主DNS超时失败；DNS/HTTPS后续恢复不是模型成功证据。未发第四次、未改变候选/Spec/policy/账本或安装配置，无部署或新的Stream。当前16个本任务文件保留未提交；按仓库规则，真实验收仍失败时不自动提交，用户AGENTS.md/outputs不动。
+- 额外尝试授权尚未收到；自动Goal续跑不是Owner批准例外。第三次失败收束、DNS诊断收束、本次全量终态收束三轮持续存在同一模型预算耗尽阻碍；安全诊断和当前完整回归已完成，下一步真实验收无法在现有授权内执行。按原生Goal规则标blocked而不是complete，实际状态以工具为准。
+- 恢复入口：Owner明确允许额外一次固定候选完整验收后，再设计有审计记录的有界恢复；必须保留/private/tmp/omb-tsx-acceptance-HM5xui中的原三次不可变记录及两个Docker报告，不用删除账本/换policy/重建候选暗中刷新预算。批准前不重发。其后仍需当前镜像/原账本备份回滚和唯一非生产服务切换、真实文档/六场景、独立supervisor与VM/主机恢复、Owner本人最终验收，不能缩减原目标。
+
+## 最新接续：502已定位为宿主上游DNS超时，完整回归正在运行（2026-09-07）
+
+- 上轮progress，本轮诊断得到新证据；未发第四次模型请求、未改候选/policy/账本。c8035a读取宿主OpenCodex权威usage.jsonl的本次时间窗口，proposer于1788755225349开始、41418ms成功；verifier于1788755266812开始、13946ms返回502。5ab3dc确认该复核只有一次上游发送，无恢复重试；eb1078精确错误为Provider unreachable: getaddrinfo ETIMEOUT chatgpt.com。结合已安装OpenCodex错误生成源码，原因定位为宿主上游DNS解析超时，不是本地90秒验收超时、模型名/密钥缺失或Schema拒绝。未读认证配置或输出身份/令牌。
+- 2035e8当前宿主10100监听存在；service.log最后修改12:05，早于本次复核，不能将旧upstream-retry行归因于当前失败。只读usage时间关联才是本次依据。
+- 74169/5c17bf exit0：当前chatgpt.com能解析到公网地址，HTTPS完成DNS/TCP/TLS并返回403；仅证明当时网络连通，403不能当模型API成功，也不能证明间歇问题永久恢复。未修改DNS/代理/OpenCodex配置或重启服务。
+- 53609为唯一运行中完整验证：pnpm test && pnpm typecheck && git diff --check；最后9f5634仍返回运行中与通过项（包含candidate-verification、runtime-verification-retry、backup、index等），尚无完整终态。functions cell512已结束，不再wait它；下一轮直接write_stdin 53609，不重复启动。保持业务源码/测试固定；本轮仅更新说明。
+- 原三次预算继续耗尽，完整验收仍失败；后续真实模型恢复须Owner明确授权，保留原三次记录和固定候选，不通过改policy/清空账本变相重试。原群服务不切换；Goal active，真实文档/六场景/隔离与恢复/人工验收均保留。
+- 本批20工具轮收束；查询74169已终态，只有53609测试仍在运行，无模型调用在途。询问Owner是否允许保留历史后额外一次完整验收，目前尚无新授权；在答复前可继续接收完整回归终态，但不调用模型、不部署或自动提交仍有真实验收失败的本批代码。
+
+## 当前检查点：流式截断已修复，第三次真实映射在独立复核返回502（2026-09-07）
+
+- 接续88061/08c689 exit1：第二次真实映射proposer返回natural_model_output_limit，未进入内容校验。检查确认原流式适配器把逐token封装/重复快照全部计入256KiB；144c90 TDD用约10KiB正文和大于256KiB传输复现同一错误。
+- opencodex-stream.ts改为传输8MiB、跨正文片段累计256KiB，超限取消；不改变固定模型/完成快照/超时/无工具或验收引用规则。新增三项测试覆盖协议开销、正文UTF-8超限取消、纯heartbeat传输上限。53615/f16ec0的120项通过，但类型检查暴露新增测试夹具联合类型错误；已补类型收窄。57129/56cfb9→d754ed链路证明120项、主项目typecheck、diff通过后才进入第三次真实请求。
+- 57129/d754ed exit1：同一candidate/Spec/policy/ledger第三次映射，proposer传输386106字节、JSON正文4010字节，requestHash和全部三条精确引文/来源/条件通过；已进入独立verifier，但其请求返回natural_model_http_502，无有效复核结果。上游失败具体原因未知，不能称网络问题或验收内容不合格。证据/private/tmp/omb-tsx-acceptance-HM5xui/retry-evidence-3.json；第二次retry-evidence.json保留。
+- 三次映射预算已耗尽，停止同一候选重发；不得换policy、候选或账本重置预算。后续先用已有宿主OpenCodex诊断/静态日志定位502，未获受控恢复不能做第四次请求。原群服务仍未切换，没有新Owner/Stream或其他容器操作。
+- 当前16个本任务文件未提交（前批14个加stream源码/测试）；用户AGENTS.md和outputs不动。由于真实独立复核仍失败，不自动commit；上批完整回归不覆盖新增stream变更，本批仅120项及typecheck通过，不能称新版本全量绿色。全部执行句柄终态，无后台测试/模型等待。Goal active，真实文档、六群场景、独立supervisor、VM/主机恢复及Owner人工验收仍未完成。
+
+## 前序：TSX上下文和业务测试（2026-09-07，以下为历史）
+
+- 上轮progress，本轮progress；起始ff30773、仅用户AGENTS.md/outputs未跟踪。6e0396 TDD复现TSX/JSX被上下文入口拒绝及JSX属性/正文敏感值漏脱敏；修复quality-gate只读实现扩展名和sensitive-source JSX处理，保留固定Git对象/范围/大小/不执行约束，Node测试命令仍拒绝tsx/jsx，不能把实现文件当测试绑定。
+- e25684新增试点业务用例缺helper红灯后，在app内提取页面实际使用的release-board-state.ts，保持原行为，新增tests/board-behavior.test.mjs：筛选/搜索、新增默认值/空白、状态切换/计数/不变性、空清单。无依赖/manifest变更。当前9个代码/测试/试点文件改动尚未提交，用户文件不动。
+- 81232/0c3664：4文件91项及主项目typecheck/diff通过；20419前半6项原生测试通过。6031/219b2e exit0：改动页面独立严格类型检查、试点npm test（原源码断言、Vite构建、两项真实服务端渲染）通过。额外全试点tsc因原Cloudflare声明缺失报3项，31779/a916ef用HEAD原页面与当前页面的编译诊断精确比较相同；未修无关worker/db声明，不称全试点tsc绿色。
+- 29787/28da38已exit0：完整pnpm test→pnpm typecheck→diff通过，包含broker/桌面/普通及headless打包；受测业务和测试在全量期间固定，中间输出截断不补造总数。此句柄终态，不再轮询。
+- 59629/857ba7 exit1：/private/tmp/openmausbot-tsx-acceptance-probe.mjs复制三份明确试点文件为独立固定Git候选；两个指定context无网络/只读/非root/无cap容器各4项真实Node业务断言通过且清理。随后真实Astra/medium两阶段映射返回failed，未认可为业务完成。证据保留/private/tmp/omb-tsx-acceptance-HM5xui/evidence.json及ledger；b70efc只读收据只含通用error，未保留有效proposal/review，具体原因仍未知。只消耗该候选第一次真实映射，不重建候选换预算。
+- cell476自动执行权限审核超时，整个组合调用未执行，诊断脚本也未创建；允许的一次执行重试e77b44在node --check发现文件缺失，未调用模型。后来独立apply_patch补建/private/tmp/openmausbot-tsx-mapping-retry.mjs；第二次88061和第三次57129现均已终态，结果以上方最新检查点为准，不再运行该脚本。
+- 本批收束：所有执行句柄终态，无在途测试/模型/审批；真实映射失败未解决，不自动commit本批，不部署。下一步诊断第二次真实映射，若需要修改生产源码补TDD并重跑受影响回归；之后重建候选镜像、更新试点测试策略/备份及唯一服务切换。真实文档/六群场景/独立supervisor/主机恢复/Owner签字仍待验收，Goal active，未达到blocked阈值。
+
 ## 当前接续：宿主常驻已安装，真实隔离模型调用通过（2026-09-07）
 
 - a685b9 exit0：f294357已本地提交启动器7文件，不push；随后单次安装成功，专用用户LaunchAgent已加载，宿主18101已connected，持久checkpoint attempts=0，空请求拒绝协议正确。安装固定bundle摘要c1b0866634e027e15108d1665d4f1977e5591d77924876e02aaf8782ffa2acdc；状态和安装清单位于/Users/mac/Library/Application Support/OpenMausBot/ModelChannel，plist位于该用户Library/LaunchAgents。不得盲目再次运行只允许首次安装的脚本。

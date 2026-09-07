@@ -57,6 +57,19 @@ export function redactSensitiveSource(source: string, file = "source.ts"): strin
         node.templateSpans.some(span => literalNeedsMask(span.literal.text));
     };
     const visit = (node: ts.Node, sensitive = false): void => {
+      if (ts.isJsxAttribute(node)) {
+        if (node.initializer) visit(node.initializer, sensitive || credentialName(node.name.getText(tree)));
+        return;
+      }
+      if (ts.isJsxText(node)) {
+        if (sensitive || literalNeedsMask(node.text)) {
+          // JSX text is not a JS expression: preserve line breaks as text,
+          // without inserting quotes or executable expression delimiters.
+          const raw = source.slice(node.pos, node.end);
+          spans.push({ start: node.pos, end: node.end, text: HIDDEN + (raw.match(/\r\n|[\r\n\u2028\u2029]/gu)?.join("") ?? "") });
+        }
+        return;
+      }
       if (ts.isTaggedTemplateExpression(node) && (sensitive || sensitiveName(node.tag) || templateSensitive(node.template))) {
         hide(node); return;
       }
