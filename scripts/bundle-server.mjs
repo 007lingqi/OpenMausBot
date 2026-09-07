@@ -44,6 +44,7 @@ const ENTRY_POINTS = [
   "collaboration-headless.ts",
   "collaboration-docker.ts",
   "collaboration/operations/docker-apply-patch.ts",
+  "collaboration/operations/contained-patch-worker.ts",
   "collaboration/operations/opencodex-model-channel.ts",
   // The packaged smoke probe imports this manifest directly. Importing the
   // shared avatar contract widens TypeScript's inferred emit root to the repo,

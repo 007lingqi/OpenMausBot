@@ -1,5 +1,22 @@
 # Meta 协作实施进度
 
+## 最新检查点：正式Astra任务容器及完整回归通过（2026-09-07）
+
+- 上一轮有真实代码/合成Docker进展，本轮补齐正式worker验证。6a7557原env-path单测1次通过、773ms；静态代码明确后台探测允许5秒但测试默认只等1秒。d44191添加1.2秒合规慢启动后原断言稳定红灯；只将初次异步探测等待改为6秒，刷新后的旧PATH仍必须同步立即存在，产品实现未改。原事故未记录shell完成时间，不额外断言操作系统延迟根因。
+- ec7300：82696完整顺序链终态exit0，env-path文件13通过/7平台跳过、typecheck、build、完整pnpm test、再次typecheck及diff全部通过。前批40785的失败仍保留，不能改写成原链成功。原组件业务代码/测试在全量期间固定；追加的真实模型烟测另经c4a963类型检查和实际运行验证。所有测试/模型句柄已终态，不再轮询。
+- a2958b正式生产worker一次性真实Astra/medium验证exit0：新建独立greeting拼写夹具，模型前容器proof登记，实际改为hello，developer及independent-verifier两个只读容器分别断言通过。使用现有宿主OpenCodex私有通道，无新凭据，无群消息，未重试历史WI-EA2FD321158E。07e723从只读证据卷再次核对登记identity=实际Provider容器、两套检查hash=当前候选hash。
+- 恢复入口（专用VM）：/var/lib/docker/volumes/omb-contained-real-worker-v1/_data/attempt-1，含唯一attempt/registration/provider-result/两套检查/result；真实组件镜像sha256:a4cab8c8660cc50997e6ff31327a3728f0a43a1a053420fc3fe0a98e536e4cd4。控制容器95d926f7719a…、Provider e7a48e052c9f…和两个检查均Exited0；卷、镜像、容器保留作为证据。scripts/smoke-contained-opencodex.mjs已消费，重复运行会拒绝已有固定卷，不新建根重置预算。
+- 证据明确engineMetaAcceptance=false、realGroupMessages=0；这是正式模型组件而非完整引擎Spec/Meta/群回复验收。headless尚未接线、持久create对账/旧协调器Git停止、在线文档/六真实群场景、Mac重启及Owner本人验收仍未完成。Goal active；保存本批已验证修改为本地commit，不push；AGENTS.md/outputs保持用户原状。
+
+## 当前批次：同容器Provider与受控写入（2026-09-07，全量发现失败，未接线）
+
+- 新增DockerContainedPatchAgent、受限请求/建议协议、无副作用worker-core及生产worker打包入口。整个真实容器proof先登记，然后才建立只读视图、开放模型gate；建议复核通过后才开放写入gate，失败/取消等待整个容器停止。未切换真实试点，e84df4确认3c05339唯一服务仍healthy。
+- 新请求不传宿主环境/路径/真实binding；模型不能覆盖私有控制文件。协议拒绝deny祖先、非规范/重复路径、敏感目录、超限及脱敏文件整段覆盖。父控制器验证固定来源及视图外既有文件；worker复核目标hash/链接和全部祖先后写入固定候选挂载，不接受payload的root/scopes扩大权限。
+- 354349/e5cfe3缺模块TDD已解决；36f5da临时路径别名、02e443测试Mock类型、5bd0dd未使用import均修正。505032终态exit0：7文件106项定向回归、typecheck、服务端构建通过；182294后置烟测类型检查通过。
+- 046808缺tsx、895318 CJS顶层await、9ba4f9 macOS tar扩展属性是烟测启动问题，已改用本机Node、显式async入口和无xattrs归档。79b61b真实Linux烟测exit0：success/provider-failure/register-failure/cancel-registration/cancel-provider五场景通过；UID10001受限、detached后代随容器停止、失败无写入、退出后清理通过。modelCalls0/groupMessages0，独占测试镜像和临时卷核对归属后清理，无真实凭据或业务数据。
+- 40785现已终态exit1；server/env-path.test.ts的keeps the last login-shell PATH available during a rescan失败，完整链未通过，不能自动commit。业务代码/测试自57d1f2启动后固定，仅更新文档；新增容器定向与Linux烟测通过不能抵消全量失败。全部本批改动未提交，用户AGENTS.md/outputs不动，没有其他运行测试/模型/构建。
+- 接续先依据40785终态证据定位env-path的单项失败，不盲目再跑全仓、不直接标时序抖动。按需定向修复/复测后再补完整链及commit。随后验证生产worker实际relay/CLI（Docker烟测为可信测试Provider）、headless装配、持久create对账和旧协调器Git停止边界。六真实群场景/在线文档材料、Mac主机重启和Owner本人验收仍未完成；不重试历史无proof事项、不换账本/候选重置次数。
+
 ## 当前实现批次：独立任务容器的只读来源组件（2026-09-07，已验证，未接线）
 
 - 已选择同一个独立任务容器覆盖Provider与固定受控写入的方向，保留模型前真实凭据入账，避免空applier凭据代替Provider。具体装配及恢复门禁见packaging/collaboration/contained-provider-design.md；当前尚未实现启动器或改变运行Provider拓扑。

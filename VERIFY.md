@@ -1,5 +1,20 @@
 # Meta 协作验证记录
 
+## 2026-09-07 正式worker真实模型与当前全仓终态
+
+- env-path调查：6a7557原单项773ms通过；d44191使用1.2秒慢启动忠实复现初次等待1秒误报。仅修正该启动等待窗口，保留刷新后同步可见断言。802fdc定向13通过/7平台跳过；219bfb全量中的相同慢启动用例1579ms通过。不宣称有限复测证明所有平台时序缺陷已消除，也不修改产品PATH逻辑。
+- ec7300/82696全部exit0：env-path定向→typecheck→build→完整pnpm test→typecheck→diff检查；主集、broker、桌面及打包/headless/channel启动退出均通过。前批40785原始失败独立保留。
+- a2958b/66654已exit0：固定正式worker和已授权私有socket调用真实gpt-6-astra/medium；新合成仓库greeting返回值helo→hello，模型前登记真实e7a48e052c9f…容器身份，两套只读检查1212113020d0…/7bac87d35bfd…均通过。07e723只读复核三份候选hash一致、登记identity一致。它不是历史失败任务重试，不创建真实群事件或引擎Meta验收收据。
+- 唯一尝试与检查证据保留于专用VM固定卷omb-contained-real-worker-v1/attempt-1，镜像a4cab8c8660c…；控制/模型/检查容器均退出，现有试点仍healthy。脚本重复运行拒绝既有卷，不自动刷新尝试次数。新增真实烟测源码经c4a963类型检查，生产组件源码与完整回归受测版本一致。当前所有句柄终态。
+
+## 2026-09-07 独立任务容器与两阶段worker
+
+- 协议/父控制器模块缺失TDD后实现；worker-core的e5cfe3缺模块红灯后实现。25项新增单测覆盖proof先于gate、失败保留proof、来源漂移、取消/迟到gate、未知create保留占用、输出形状/deny祖先/脱敏路径及worker分阶段放行/失联/申请内容不符。
+- 505032已exit0：7文件106项、pnpm typecheck、pnpm build:server通过；182294烟测源码类型检查通过。未修改运行服务或增加真实模型调用。
+- 79b61b已exit0：scripts/smoke-contained-patch.mjs，指定colima-openmausbot-pilot和固定base70087328c759…，真实五场景合成验证通过。测试镜像3b60cff7088b…中可信合成Provider降至UID10001且无有效cap，不能读写原候选/私有资料/控制文件，不能改变视图；实际创建detached后代，正常退出及取消后整个容器exited/Pid0。失败四场景无候选写入；仅可信测试controller持有Docker socket，任务容器不挂载。独占卷/测试镜像已清理，modelCalls0、realGroupMessages0。
+- 烟测前tsx缺失、CJS顶层await和tar provenance失败均发生于测试夹具构建/启动，已修复。不能把合成Provider算作实际Astra/medium、模型通道或真实群验收。生产worker入口目前仅typecheck/构建通过，未实际使用真实模型。
+- 40785现已终态exit1；server/env-path.test.ts的keeps the last login-shell PATH available during a rescan失败，完整链未通过，不能自动commit。新增容器测试在全量中通过；未定位该失败原因前不称偶发、不自动commit。没有其他运行模型/构建；未接线组件不能用于宣称完整目标完成。
+
 ## 2026-09-07 Provider只读来源组件
 
 - 0ecd12缺模块红灯；d2d3e3首次14项7失败，明确为Markdown误用代码语法解析器。修复分流后d61eed15项/typecheck通过；9fbdce17项/typecheck及真实Linux权限烟测通过。JSON字段和普通配置 quoted key 也脱敏，文件标记不可自动整段替换；没有放宽现有32KiB语法解析器上限。

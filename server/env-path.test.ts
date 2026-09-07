@@ -81,7 +81,9 @@ describe("augmentedPath", () => {
   posixIt("keeps the last login-shell PATH available during a rescan", async () => {
     const shell = join(homedir(), "fake-login-shell");
     const rcOnlyBin = join(homedir(), "rc-only", "bin");
-    writeFileSync(shell, `#!/bin/sh\nprintf '__OMB_PATH__%s' '${rcOnlyBin}'\n`);
+    // A successful background probe may take longer than waitFor's default
+    // one second; production allows up to five seconds for shell startup.
+    writeFileSync(shell, `#!/bin/sh\n/bin/sleep 1.2\nprintf '__OMB_PATH__%s' '${rcOnlyBin}'\n`);
     chmodSync(shell, 0o755);
 
     const previousShell = process.env.SHELL;
@@ -92,7 +94,10 @@ describe("augmentedPath", () => {
       resetPathCacheForTests();
 
       augmentedPath();
-      await vi.waitFor(() => expect(augmentedPath().split(delimiter)).toContain(rcOnlyBin));
+      // Wait only for the initial asynchronous probe under its real 5s bound.
+      // The rescan assertion below remains synchronous: cached rc paths must
+      // never disappear while the next probe is still starting.
+      await vi.waitFor(() => expect(augmentedPath().split(delimiter)).toContain(rcOnlyBin), { timeout: 6000 });
 
       resetPathCache();
       expect(augmentedPath().split(delimiter)).toContain(rcOnlyBin);

@@ -29,6 +29,7 @@ COPY --from=build /src/dist-server/collaboration-headless.js /opt/openmausbot/co
 COPY --from=build /src/dist-server/collaboration-docker.js /opt/openmausbot/collaboration-docker.js
 COPY --from=build /src/dist-server/collaboration/operations/opencodex-model-channel.js /opt/openmausbot/collaboration/operations/opencodex-model-channel.js
 COPY --from=build /src/dist-server/collaboration/operations/docker-apply-patch.js /opt/openmausbot/docker-apply-patch.js
+COPY --from=build /src/dist-server/collaboration/operations/contained-patch-worker.js /opt/openmausbot/contained-patch-worker.js
 
 WORKDIR /opt/openmausbot
 ENV NODE_ENV=production

@@ -1,6 +1,6 @@
 # 内部研发助手 Meta 协作规范
 
-独立Provider实施方向（2026-09-07）：拟使用同一专用任务容器覆盖模型与受控写入，并在模型调用前登记整个容器的真实凭据。新增只读Git来源视图组件已通过局部和Linux UID权限验证，但尚无运行时调用方，不改变当前Provider拓扑。新视图按作用域、commit/blob、完整性及脱敏哈希绑定；脱敏文件的自动替换禁令必须在后续可信写入器中落实。完整装配、create未知回执及无finalization的协调器恢复仍待实现，具体门禁见packaging/collaboration/contained-provider-design.md；不补造旧proof，也不以视图本身冒充独立隔离。
+独立Provider实施方向（2026-09-07）：新增同容器模型/受控写入启动器及worker，模型前登记真实容器凭据，之后分别放行建议与写入。只读视图绑定作用域、commit/blob及脱敏哈希，拒绝脱敏文件及视图外既有文件整段覆盖，worker再次校验目标来源。完整回归、真实Linux合成隔离及正式worker的Astra/medium新夹具修改/双检查通过；headless接线、create未知回执和无finalization的协调器恢复未验收，当前试点拓扑不变。具体门禁见packaging/collaboration/contained-provider-design.md；不补造旧proof，不将组件检查冒充引擎Meta或群聊闭环。
 
 当前部署更新（2026-09-07）：3c05339写入取消/清理和严格Docker状态判断已部署唯一非生产服务（779586bc572e…），新服务healthy、systemd active+enabled，七历史表不变、schema30。原命令镜像/验收policy/Owner/凭据/仓库不变，恢复入口见PROGRESS顶部。本更新覆盖下方“本批尚未部署”，不扩大独立Provider/完整在途恢复或真实群验收的结论。
 
