@@ -1,5 +1,17 @@
 # Meta 协作验证记录
 
+## 2026-09-07 常驻启动器完整验证终态
+
+- 97440/375b64 exit0：6项定向、完整pnpm test、typecheck、git diff --check通过，普通包/独立模型通道/原headless及Docker wrapper启动退出均通过。输出截断不补造总数；源码/测试固定，97440终态不再轮询。
+- edb0fe确认最终通道bundle sha256=c1b0866634e027e15108d1665d4f1977e5591d77924876e02aaf8782ffa2acdc。6dc8cb安装前路径/端口无冲突，原群服务healthy；单次安装脚本语法检查通过。此处尚非永久安装回执。
+
+## 2026-09-07 宿主LaunchAgent独立启动器
+
+- a7f4e20基线：持久预算全量84244/967c3b、真实Docker89940/019bd7和类型编译55193/34d141均终态通过。本批新增启动器和模板，不修改这些业务模块。
+- TDD：初次路径未纳入默认vitest，迁移server目录后030a6e缺模块/模板红灯；e81bcc 4项通过，52053/16d268类型/plutil/diff通过；857b5c扩展6项通过。97440仍运行（最新af096e），命令为6项定向→完整pnpm test→typecheck→diff；源码/测试保持固定，不重复启动。
+- 61428/96a84e真实launchd首次启动已到connected，探测夹具响应校验失败且全部清理；修正JSON请求头及error.code后复测。74200/c70108 exit0：临时launchd首次启动、SIGKILL后新PID和再次connected、前后拒绝协议探测及checkpoint清零、bootout/远端空目录/本地资源清理均通过。
+- 以上均临时服务、合成空请求，不调用模型或钉钉、不挂原账本。即使SIGKILL恢复通过，也只证明该临时用户LaunchAgent进程恢复，不替代永久安装、登录/主机/VM重启或Linux systemd验收。
+
 ## 当前完整验证状态：持久预算全链通过（2026-09-07）
 
 - 84244/967c3b最终exit0：完整pnpm test（主集、broker、桌面、普通/headless打包链）通过；包含独立通道及wrapper，源码/测试运行期间固定。输出截断不补造统计。结合89940/019bd7和55193/34d141，本批完整验证已齐，所有句柄终态；以下“运行中”为中间观察记录。

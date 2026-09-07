@@ -1,5 +1,11 @@
 # 非生产模型配置（显式启用）
 
+## 宿主用户级常驻模板（尚未正式安装）
+
+专用`com.openmausbot.opencodex-pilot-channel.plist`与`opencodex-launch-agent.mjs`配套：安装时把已验证通道bundle复制为同目录`opencodex-model-channel.mjs`，替换HOME/NODE/ROOT/RELEASE占位符并校验plist；发布目录固定，不能使用构建中的dist-server。ROOT/state须当前用户/0700，稳定channel.json不得清空换预算；默认固定宿主18101，VM socket随该端口固定。安装前检查runtime、端口和既有服务，不能覆盖未知配置。
+
+最小环境启动；正常停止不自动拉起，异常死亡由launchd恢复（30秒节流/停止）。启动器捕获配置/导入/通道异常后静态报错并驻留停止尝试，需操作者检查；launchd显示running不能当健康。Node缺失等JS启动前错误不受驻留机制保护。用户级RunAtLoad不代替Linux systemd和无人登录主机恢复，原群服务切换仍须先核对账本/租约/在途任务及回滚。
+
 ## 已有Colima SSH master的守护桥接（代码已接线，尚未部署）
 
 通道入口新增`bridge`模式，它包含宿主网关和SSH转发守护，替代手工维护临时forward。只支持此次授权的`colima-openmausbot-pilot`，例如：

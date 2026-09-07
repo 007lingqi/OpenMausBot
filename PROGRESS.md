@@ -1,5 +1,19 @@
 # Meta 协作实施进度
 
+## 当前检查点：常驻启动器完整验证通过，准备安装（2026-09-07）
+
+- 上轮progress，本轮接续97440/375b64已终态exit0：6项定向、完整pnpm test、typecheck、diff全链通过，包含打包/独立通道/wrapper烟测。代码与测试在运行期间固定，全部验证句柄终态；74200/c70108临时launchd真实SIGKILL恢复和清理此前已通过。
+- 6dc8cb只读：唯一原群服务healthy；宿主ModelChannel目录、专用plist均不存在，18101无监听；OpenMausBot/LaunchAgents父目录私有。将只提交本批7文件，不push，随后安装已验证固定bundle/稳定stateFile的用户级模型通道。原群服务、账本、Owner不改。
+- 单次安装入口/private/tmp/openmausbot-install-model-channel.mjs：所有目标先确认不存在、bundle摘要匹配；新建私有目录/只读固定发布副本/安装清单，校验plist后bootstrap并检查connected和拒绝协议。若安装中途失败，保留状态，不盲目bootstrap重试或清理预算。永久安装结果尚待真实回执。
+
+## 当前接续：持久预算已提交，宿主常驻启动器验证中（2026-09-07）
+
+- 本轮progress：84244/967c3b完整回归终态通过，a7f4e20已本地提交持久预算14文件，不push、不包含用户AGENTS.md/outputs。旧84244等句柄终态，不再轮询。
+- 新增独立opencodex-launch-agent.mjs、专用plist和6项测试；固定bundle副本、稳定stateFile、env -i最小环境、30秒launchd节流/停止。已捕获配置/导入/启动/清理错误时仅静态报错并驻留停止尝试，不能把launchd的running当通道成功。SIGTERM正常退出不重启；异常死亡由launchd恢复，SSH预算仍持久。Node可执行文件缺失等发生在JS之前的错误不在驻留机制内，安装必须检查固定runtime，不能宣称任意配置错误均不重启。
+- 435291测试初放packaging未被默认vitest发现，已移入server测试路径；030a6e四项缺文件红灯。e81bcc定向4通过，52053/16d268 typecheck/plutil/diff通过；扩展6项857b5c通过。97440仍运行（最新af096e），命令为6项定向→完整pnpm test→typecheck→diff；源码/测试保持固定，不重复启动。
+- 临时launchd真实探测首次61428/96a84e exit1：成功启动至connected，但夹具缺JSON请求头且读错error.code，未进入SIGKILL；所有资源已清理。仅修正/private/tmp/openmausbot-launchd-channel-probe.mjs，不改生产安全校验。74200/c70108 exit0：临时launchd首次启动、SIGKILL后新PID和再次connected、前后拒绝协议探测及checkpoint清零、bootout/远端空目录/本地资源清理均通过。
+- 本批按20工具轮收束。新启动器3文件及状态说明尚未提交，下一轮先取得在途测试/探测终态，再按证据提交；未安装永久LaunchAgent，未切换原群容器/账本/Owner。下一步固定bundle正式装配和恢复、唯一试点切换、真实文档/六群场景/独立supervisor/主机恢复/Owner签字仍保留，Goal active。
+
 ## 当前检查点：持久预算完整回归通过（2026-09-07）
 
 - 84244/967c3b已终态exit0，完整pnpm test及后续broker、桌面、普通/headless打包链通过，包含独立通道和Docker wrapper启动退出。中间输出截断，不补造总数。当前代码/测试在验证期间固定，结合89940/019bd7真实五类Docker及55193/34d141类型/独立编译，满足本批本地提交条件；不代表常驻安装或真实六业务场景完成。
