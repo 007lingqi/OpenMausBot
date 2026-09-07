@@ -6,8 +6,27 @@ import { evaluateOwnerPolicy } from "./policy.ts";
 import { assertLedgerArmed } from "./restore-guard.ts";
 import { appendControlAudit } from "./audit.ts";
 import { enqueueInboundCard } from "./outbox.ts";
+import { materialInterpretationSourceCurrent, materialIntakeFailureEventId } from "./natural-material-intake.ts";
 
 const digest = (text: string) => createHash("sha256").update(text).digest("hex");
+/** Called only inside the current Owner's guarded recovery transaction. */
+function recoverMaterialInputs(db: DatabaseSync, input: { workItemId: string; requestId: string; actorId: string; ownerGeneration: number; now: number }): number {
+  const jobs = db.prepare("SELECT j.id,j.receipt_hash,j.recovery_generation,r.normalized_hash FROM collaboration_natural_material_jobs j " +
+    "JOIN collaboration_online_read_jobs r ON r.id=j.id WHERE j.work_item_id=? AND j.status='failed' AND j.attempts=3 AND j.error_code='natural_intake_unavailable' ORDER BY j.created_at,j.id")
+    .all(input.workItemId) as Array<{ id: string; receipt_hash: string; recovery_generation: number; normalized_hash: string }>;
+  let recovered = 0;
+  for (const job of jobs) {
+    if (!materialInterpretationSourceCurrent(db, input.workItemId, job.id)) continue;
+    const generation = job.recovery_generation + 1;
+    db.prepare("INSERT INTO collaboration_natural_material_recoveries(id,request_source_event_id,material_job_id,work_item_id,generation,prior_attempts,prior_error_code,input_hash,receipt_hash,actor_principal_id,owner_generation,created_at) VALUES(?,?,?,?,?,3,'natural_intake_unavailable',?,?,?,?,?)")
+      .run(randomUUID(), input.requestId, job.id, input.workItemId, generation, job.normalized_hash, job.receipt_hash, input.actorId, input.ownerGeneration, input.now);
+    const changed = db.prepare("UPDATE collaboration_natural_material_jobs SET status='pending',attempts=0,recovery_generation=?,error_code=NULL,claim_token=NULL,lease_until=NULL " +
+      "WHERE id=? AND status='failed' AND attempts=3 AND recovery_generation=?").run(generation, job.id, job.recovery_generation);
+    if (changed.changes !== 1) throw new Error("natural_intake_recovery_claim_changed");
+    recovered++;
+  }
+  return recovered;
+}
 export function recoverNaturalIntake(db: DatabaseSync, message: DingTalkInboundMessage, now: number, assertActive: () => void): DingTalkRequirementRecoveryOutcome {
   if (!parseDingTalkRequirementRecoveryRequest(message)) throw new Error("natural_intake_recovery_request_invalid");
   const payloadHash = digest(JSON.stringify({ conversationId: message.conversationId, reply: message.replyToSourceEventId ?? null,
@@ -32,8 +51,8 @@ export function recoverNaturalIntake(db: DatabaseSync, message: DingTalkInboundM
         "WHERE w.conversation_id=(SELECT conversation_id FROM collaboration_conversation_aliases WHERE source='dingtalk' AND external_id=?) " +
         "AND w.control_state='active' AND w.status NOT IN ('accepted','cancelled') " +
         "AND (? IS NULL OR EXISTS(SELECT 1 FROM collaboration_external_events e WHERE e.source='dingtalk' AND e.source_event_id=? AND e.work_item_id=w.id AND e.conversation_id=w.conversation_id)) " +
-        "AND EXISTS(SELECT 1 FROM collaboration_natural_intake_jobs j WHERE j.work_item_id=w.id AND j.status='failed' AND j.attempts=3 AND j.error_code='natural_intake_unavailable') " +
-        "AND NOT EXISTS(SELECT 1 FROM collaboration_natural_intake_jobs j WHERE j.work_item_id=w.id AND j.status='running' AND j.lease_until>?) LIMIT 2")
+        "AND EXISTS(SELECT 1 FROM collaboration_natural_all_jobs j WHERE j.work_item_id=w.id AND j.status='failed' AND j.attempts=3 AND j.error_code='natural_intake_unavailable') " +
+        "AND NOT EXISTS(SELECT 1 FROM collaboration_natural_all_jobs j WHERE j.work_item_id=w.id AND j.status='running' AND j.lease_until>?) LIMIT 2")
         .all(message.conversationId, message.replyToSourceEventId ?? null, message.replyToSourceEventId ?? null, now) as Array<{ id: string; version: number }>;
       if (candidates.length === 1) {
         const target = candidates[0]; version = target.version;
@@ -48,9 +67,15 @@ export function recoverNaturalIntake(db: DatabaseSync, message: DingTalkInboundM
             .run(job.source_event_id);
           if (changed.changes !== 1) throw new Error("natural_intake_recovery_claim_changed");
         }
-        if (!failed.length) throw new Error("natural_intake_recovery_source_missing");
-        outcome = { conversationId: message.conversationId, allowed: true, duplicate: false, workItemId: target.id, reason: "natural_intake_recovered", recoveredInputs: failed.length };
-        summary = `已允许继续整理这个事项中尚未成功的 ${failed.length} 条补充。原消息和失败记录均保留；需要确认的内容仍会追问，这不代表代码修改已完成。`;
+        const recoveredInputs = failed.length + recoverMaterialInputs(db, { workItemId: target.id, requestId: message.sourceEventId,
+          actorId: policy.principalId!, ownerGeneration: policy.ownerGeneration!, now });
+        if (recoveredInputs) {
+          outcome = { conversationId: message.conversationId, allowed: true, duplicate: false, workItemId: target.id, reason: "natural_intake_recovered", recoveredInputs };
+          summary = `已允许继续整理这个事项中尚未成功的 ${recoveredInputs} 条内容。原消息、正文和失败记录均保留；未核实的材料不会跳过检查，这不代表代码修改已完成。`;
+        } else {
+          outcome.reason = "natural_intake_not_recoverable";
+          summary = "材料来源或正文已无法核实，暂时不能恢复。原记录已保留，请先核对材料；不会自动重试或开始修改。";
+        }
       } else {
         outcome.reason = candidates.length ? "natural_intake_recovery_ambiguous" : "natural_intake_not_recoverable";
         summary = candidates.length ? "有多个事项需要继续整理。请回复要处理的原需求或补充消息，说“继续整理需求”，我会只恢复那个事项。"
@@ -74,11 +99,14 @@ export function naturalIntakeFailureEventId(db: DatabaseSync, sourceEventId: str
 }
 
 export function isCurrentNaturalIntakeFailureNotice(db: DatabaseSync, row: { source_event_id: string; aggregate_id: string; aggregate_version: number }): boolean {
-  if (row.source_event_id.startsWith("material-intake-failed:")) return !!db.prepare(
+  if (row.source_event_id.startsWith("material-intake-failed:")) {
+    const id = row.source_event_id.slice("material-intake-failed:".length).split(":", 1)[0];
+    return row.source_event_id === materialIntakeFailureEventId(db, id, row.aggregate_version) && !!db.prepare(
     "SELECT 1 FROM collaboration_natural_material_jobs j JOIN collaboration_work_items w ON w.id=j.work_item_id " +
     "WHERE j.id=? AND j.work_item_id=? AND j.status='failed' AND w.control_state='active' AND w.status NOT IN ('accepted','cancelled') " +
     "AND ?=(SELECT max(revision) FROM collaboration_work_item_snapshots WHERE work_item_id=w.id)")
-    .get(row.source_event_id.slice("material-intake-failed:".length), row.aggregate_id, row.aggregate_version);
+    .get(id, row.aggregate_id, row.aggregate_version);
+  }
   if (!row.source_event_id.startsWith("natural-intake-failed:")) return true;
   const jobs = db.prepare("SELECT j.source_event_id FROM collaboration_natural_intake_jobs j JOIN collaboration_work_items w ON w.id=j.work_item_id " +
     "WHERE j.work_item_id=? AND j.status='failed' AND w.control_state='active' AND w.status NOT IN ('accepted','cancelled') " +

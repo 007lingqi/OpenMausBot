@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { OPENMAUSBOT_SOURCE_BASELINE } from "./config.ts";
 
-export const COLLABORATION_SCHEMA_VERSION = 33;
+export const COLLABORATION_SCHEMA_VERSION = 34;
 
 interface Migration {
   version: number;
@@ -1483,6 +1483,43 @@ const migrations: readonly Migration[] = [
         CREATE VIEW collaboration_natural_all_jobs AS
           SELECT source_event_id AS job_key,'event' AS job_kind,source_event_id,work_item_id,status,attempts,claim_token,lease_until,base_revision,result_revision,proposal_json,error_code,created_at FROM collaboration_natural_intake_jobs
           UNION ALL SELECT id AS job_key,'material' AS job_kind,source_event_id,work_item_id,status,attempts,claim_token,lease_until,base_revision,result_revision,proposal_json,error_code,created_at FROM collaboration_natural_material_jobs;
+      `);
+    },
+  },
+  {
+    version: 34, name: "owner-material-intake-recovery", checksum: "v34:single-use-owner-material-recovery-generation",
+    apply(database) {
+      database.exec(`
+        ALTER TABLE collaboration_natural_material_jobs ADD COLUMN recovery_generation INTEGER NOT NULL DEFAULT 0 CHECK(recovery_generation>=0);
+        CREATE TABLE collaboration_natural_material_recoveries (
+          id TEXT PRIMARY KEY, request_source_event_id TEXT NOT NULL REFERENCES collaboration_natural_intake_recovery_requests(source_event_id) DEFERRABLE INITIALLY DEFERRED,
+          material_job_id TEXT NOT NULL REFERENCES collaboration_natural_material_jobs(id),
+          work_item_id TEXT NOT NULL REFERENCES collaboration_work_items(id), generation INTEGER NOT NULL CHECK(generation>0),
+          prior_attempts INTEGER NOT NULL CHECK(prior_attempts=3), prior_error_code TEXT NOT NULL CHECK(prior_error_code='natural_intake_unavailable'),
+          input_hash TEXT NOT NULL, receipt_hash TEXT NOT NULL, actor_principal_id TEXT NOT NULL REFERENCES collaboration_principals(id),
+          owner_generation INTEGER NOT NULL CHECK(owner_generation>0), created_at INTEGER NOT NULL,
+          UNIQUE(material_job_id,generation), UNIQUE(request_source_event_id,material_job_id)
+        ) STRICT;
+        CREATE TRIGGER natural_material_recovery_source BEFORE INSERT ON collaboration_natural_material_recoveries
+          WHEN NOT EXISTS(SELECT 1 FROM collaboration_natural_material_jobs j JOIN collaboration_online_read_jobs r ON r.id=j.id
+            WHERE j.id=NEW.material_job_id AND j.work_item_id=NEW.work_item_id AND j.status='failed' AND j.attempts=3
+              AND j.error_code=NEW.prior_error_code AND j.recovery_generation+1=NEW.generation
+              AND j.receipt_hash=NEW.receipt_hash AND r.normalized_hash=NEW.input_hash)
+          BEGIN SELECT RAISE(ABORT,'material recovery source mismatch'); END;
+        CREATE TRIGGER natural_material_recovery_no_update BEFORE UPDATE ON collaboration_natural_material_recoveries
+          BEGIN SELECT RAISE(ABORT,'material recovery is immutable'); END;
+        CREATE TRIGGER natural_material_recovery_no_delete BEFORE DELETE ON collaboration_natural_material_recoveries
+          BEGIN SELECT RAISE(ABORT,'material recovery is immutable'); END;
+        DROP TRIGGER natural_material_immutable;
+        CREATE TRIGGER natural_material_immutable BEFORE UPDATE ON collaboration_natural_material_jobs
+          WHEN OLD.status='applied' OR NEW.id<>OLD.id OR NEW.source_event_id<>OLD.source_event_id OR NEW.work_item_id<>OLD.work_item_id
+            OR NEW.receipt_hash<>OLD.receipt_hash OR NEW.base_revision<>OLD.base_revision OR NEW.created_at<>OLD.created_at
+            OR ((NEW.attempts<OLD.attempts OR NEW.recovery_generation<>OLD.recovery_generation) AND NOT (
+              OLD.status='failed' AND OLD.attempts=3 AND OLD.error_code='natural_intake_unavailable'
+              AND NEW.status='pending' AND NEW.attempts=0 AND NEW.recovery_generation=OLD.recovery_generation+1
+              AND EXISTS(SELECT 1 FROM collaboration_natural_material_recoveries r WHERE r.material_job_id=OLD.id
+                AND r.generation=NEW.recovery_generation AND r.receipt_hash=OLD.receipt_hash)))
+          BEGIN SELECT RAISE(ABORT,'material interpretation history is immutable'); END;
       `);
     },
   },

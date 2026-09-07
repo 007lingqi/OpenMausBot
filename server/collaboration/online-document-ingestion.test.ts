@@ -55,10 +55,10 @@ describe("durable online document ingestion", () => {
       expect(readLatestWorkItemSnapshot(h.db, h.id)!.acceptanceConditions).toEqual([]);
       h.service.close();
       // Reconstruct v32 without touching the original successful input or its Spec.
-      h.db.exec("DROP VIEW collaboration_natural_all_jobs; DROP TABLE collaboration_natural_material_jobs; DELETE FROM collaboration_schema_migrations WHERE version=33; PRAGMA user_version=32");
+      h.db.exec("DROP TABLE collaboration_natural_material_recoveries; DROP VIEW collaboration_natural_all_jobs; DROP TABLE collaboration_natural_material_jobs; DELETE FROM collaboration_schema_migrations WHERE version>=33; PRAGMA user_version=32");
       const restarted = startCollaborationService(h.options);
       try {
-        expect(h.db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 33 });
+        expect(h.db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 34 });
         expect(h.db.prepare("SELECT * FROM collaboration_natural_intake_jobs WHERE source_event_id='source'").get()).toEqual(original);
         expect(await restarted.processOnlineDocuments(h.now())).toBe(h.id);
         await restarted.processNaturalIntake(h.now());

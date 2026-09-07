@@ -12,7 +12,7 @@ import { readNaturalAttachmentContext, attachmentReceipt } from "./attachment-co
 import type { AttachmentEvidenceNotification } from "./attachment-ingestion.ts";
 import { readNaturalIntakeContext } from "./natural-intake-context.ts";
 import { naturalIntakeFailureEventId } from "./natural-intake-recovery.ts";
-import { naturalJobStorage, materialInterpretationSourceCurrent, type NaturalJob } from "./natural-material-intake.ts";
+import { naturalJobStorage, materialInterpretationSourceCurrent, materialIntakeFailureEventId, type NaturalJob } from "./natural-material-intake.ts";
 
 export interface NaturalIntakeEvent { sourceEventId: string; principalId: string; text: string }
 export interface NaturalIntakeRequest {
@@ -268,16 +268,18 @@ export class NaturalIntakeCoordinator {
       assertLedgerArmed(this.db);
       const materialJobs = this.db.prepare("SELECT j.id,j.work_item_id FROM collaboration_natural_material_jobs j " +
         "JOIN collaboration_work_items w ON w.id=j.work_item_id WHERE j.status='failed' AND w.control_state='active' AND w.status NOT IN ('cancelled','accepted') " +
-        "AND NOT EXISTS(SELECT 1 FROM collaboration_outbox o WHERE o.source_event_id='material-intake-failed:'||j.id) ORDER BY j.created_at LIMIT 20")
+        "AND NOT EXISTS(SELECT 1 FROM collaboration_outbox o WHERE o.source_event_id='material-intake-failed:'||j.id|| " +
+        "CASE WHEN j.recovery_generation>0 THEN ':recovery:'||j.recovery_generation ELSE '' END||':snapshot:'|| " +
+        "(SELECT max(revision) FROM collaboration_work_item_snapshots WHERE work_item_id=j.work_item_id)) ORDER BY j.created_at LIMIT 20")
         .all() as Array<{ id: string; work_item_id: string }>;
       for (const job of materialJobs) {
         const snapshot = readLatestWorkItemSnapshot(this.db, job.work_item_id); if (!snapshot) continue;
-        enqueueInboundCard(this.db, { sourceEventId: `material-intake-failed:${job.id}`, aggregateType: "plan", aggregateId: job.work_item_id,
+        enqueueInboundCard(this.db, { sourceEventId: materialIntakeFailureEventId(this.db, job.id, snapshot.revision), aggregateType: "plan", aggregateId: job.work_item_id,
           aggregateVersion: snapshot.revision, supersessionKey: `work-item:${job.work_item_id}:planning-status`, now,
           card: renderClarificationCard({ workItemId: job.work_item_id, snapshotRevision: snapshot.revision,
             contextSummary: "正文已读取，但尚未能可靠地核对新增要求，已停止自动重试，还没有开始修改。",
             questions: [{ id: "material-intake", title: "需要处理", question: "请负责人检查这次正文核对的问题后再继续。",
-              recommendedAnswer: "原消息、正文和此前整理结果都已保留；不需要重复上传材料。" }] }) });
+              recommendedAnswer: "负责人检查后可回复原需求消息说“继续整理需求”。原消息和正文都已保留，不需要重复上传材料。" }] }) });
       }
       const jobs = this.db.prepare("SELECT j.source_event_id,j.work_item_id FROM collaboration_natural_intake_jobs j " +
         "JOIN collaboration_work_items w ON w.id=j.work_item_id WHERE j.status='failed' AND w.status NOT IN ('cancelled','accepted') " +

@@ -3,6 +3,10 @@ import type { BlockingAmbiguity } from "./snapshot.ts";
 import { durableOnlineSources, readOnlineBody, onlineHash } from "./online-document-evidence.ts";
 
 export const MATERIAL_INTAKE_GATE = "online-document-interpretation-pending";
+export function materialIntakeFailureEventId(db: DatabaseSync, jobId: string, snapshotRevision: number): string {
+  const row = db.prepare("SELECT recovery_generation FROM collaboration_natural_material_jobs WHERE id=?").get(jobId) as { recovery_generation: number } | undefined;
+  return `material-intake-failed:${jobId}${row?.recovery_generation ? `:recovery:${row.recovery_generation}` : ""}:snapshot:${snapshotRevision}`;
+}
 export interface NaturalJob {
   job_key: string; job_kind: "event" | "material"; source_event_id: string;
   work_item_id: string; attempts: number; base_revision: number;
