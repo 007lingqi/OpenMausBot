@@ -1,5 +1,7 @@
 # Meta 协作验证记录
 
+- 固定3140fea镜像构建及健康探测62376终态exit0：sha256:954bfc5f7685244b7b4ae671c21f27f1a416803354dd13d40ae2c9f670baa477。显式headless --health、仅/tmp临时data、禁群禁执行、无网络；schema30/status healthy。基于已通过14079/4a48c9的当前dist，不是业务执行、群连接或模型复查通过；镜像未部署，所有验证句柄终态。
+
 ## 2026-09-07 跨UID停止TDD和当前完整回归
 
 - 74926/f6e42f：先行2项红灯（已取消仍启动、interrupt未等待退出）；47f75b真实Linux同cap-drop下也未等待退出。修复后dff692及3137e7证明同UID固定工具的TERM等待、KILL、abort与私有清理通过，外部软链接哨兵不变、modelCalls0。

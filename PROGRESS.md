@@ -1,5 +1,10 @@
 # Meta 协作实施进度
 
+## 固定镜像接续入口（2026-09-07）
+
+- 已本地提交3140fea（9个本任务文件），完整14079/4a48c9终态通过，不push。基于当前已验证dist-server离线构建openmausbot-collaboration-pilot:opencodex-3140fea，摘要sha256:954bfc5f7685244b7b4ae671c21f27f1a416803354dd13d40ae2c9f670baa477；62376构建及显式headless临时data健康探测exit0/schema30，未部署。/private/tmp/omb-build-pilot-3140fea.mjs已消费，不原样重复。
+- 当前无运行中测试/模型/构建。原群仍def5f17，旧cecb31c及所有诊断容器/原证据保留。下一批从当前固定镜像准备同一原事项的第3次有界只读复查；第1次引擎、第2次只读复查证据不删除、不重置，原缺proof仍禁止直接执行重试。完整目标未完成，Goal active。
+
 ## 当前检查点：跨UID停止修复与完整回归通过，等待真实复查（2026-09-07）
 
 - 上轮是实质进展：保存cecb31c并确认真实复查超时/EPERM。本轮新增同UID固定信号工具；并发interrupt共用停止并等close，失败传播并保留私有状态，提前取消不启动、迟到exit0不成功。未增加容器能力，未解锁旧无proof会话。
