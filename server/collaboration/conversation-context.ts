@@ -56,7 +56,13 @@ function pendingQuestion(db: DatabaseSync, job: ConversationJob, sent: SentReply
         };
       }
     } else if (card.type === "plan_status_card" && card.status === "candidate_ready" && row.work_item_id && candidates.includes(row.work_item_id)) {
-      const owner = db.prepare("SELECT 1 FROM collaboration_owner_bindings WHERE principal_id=?").get(job.principal_id);
+      // This is only conversational addressing, never control authorization.
+      // Owner bindings store stable corp/staff identity, not a principal_id column.
+      const owner = db.prepare("SELECT 1 FROM collaboration_owner_bindings o " +
+        "JOIN collaboration_principal_aliases a ON a.source='dingtalk' AND a.alias_kind='corp_staff' " +
+        "AND a.scope_id=o.sender_corp_id AND a.external_id=o.sender_staff_id " +
+        "JOIN collaboration_principals p ON p.id=a.principal_id AND p.resolution='resolved' " +
+        "WHERE o.active=1 AND a.principal_id=?").get(job.principal_id);
       if (owner) { kind = "approval"; text = "是否批准当前改动？需要核对动作、影响和风险。"; }
     }
     if (kind && text) pending.push({ kind, sourceEventId: `outbox:${row.id}`, workItemIds: row.work_item_id ? [row.work_item_id] : [], text: redactSensitiveText(text).slice(0, 500) });

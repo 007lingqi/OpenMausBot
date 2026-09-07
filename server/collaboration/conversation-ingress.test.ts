@@ -15,6 +15,8 @@ import { classifyConversationIntent } from "./conversation-intent.ts";
 import { conversationSourceHash, conversationStatus, readConversationContext, type ConversationJob } from "./conversation-context.ts";
 import { applyCollaborationMigrations } from "./migrations.ts";
 import { readPlanMaterialReadiness } from "./plan-material-readiness.ts";
+import { LocalOwnerRegistry } from "./owner.ts";
+import { enqueueInboundCard } from "./outbox.ts";
 
 const paths: string[] = [];
 afterEach(() => { for (const path of paths.splice(0)) rmSync(path, { force: true, recursive: true }); });
@@ -67,6 +69,47 @@ function job(db: DatabaseSync, source: string): ConversationJob {
 }
 
 describe("durable conversational ingress before Work Item mutation", () => {
+  it.each(["owner", "member", "former-owner", "unconfigured", "same-staff-other-corp"])("keeps conversation working after an approval notice for %s, including replay and restart", async person => {
+    const h = setup(async input => input.sourceEventId === "new" ? decision(input, "new_request") : decision(input, "status_query", input.candidates[0].id));
+    try {
+      const owners = new LocalOwnerRegistry(join(h.options.dataDirectory, "collaboration", "collaboration.sqlite"));
+      try {
+        if (person !== "unconfigured") owners.bootstrap({ senderCorpId: "corp", senderStaffId: "product", now: Date.now() });
+        if (person === "former-owner") owners.recover({ expectedGeneration: 1, senderCorpId: "corp", senderStaffId: "replacement", now: Date.now() });
+      } finally { owners.close(); }
+      h.service.ingestDingTalkMessage(message("new", "登录提示友好一点。")); await h.service.processNaturalIntake();
+      // Keep this fixture focused on a delivered legacy notice, not other pending questions.
+      h.db.prepare("UPDATE collaboration_outbox SET delivery_state='superseded',superseded_at=? WHERE sent_at IS NULL").run(Date.now());
+      const target = item(h.db, "new")!;
+      const card = enqueueInboundCard(h.db, { sourceEventId: "candidate-notice", aggregateType: "plan", aggregateId: target, aggregateVersion: 1,
+        now: Date.now(), card: { type: "plan_status_card", status: "candidate_ready", headline: "修改完成，需要负责人确认", workItemId: target,
+          approvalRequired: true, summary: "登录提示有调整，需要负责人核对。" } });
+      // Historical delivery fixture: its old candidate need not still be executable
+      // for the next incoming message to safely read the delivered conversation.
+      h.db.prepare("UPDATE collaboration_outbox SET delivery_state='sent',sent_at=?,delivery_sequence=1 WHERE id=?").run(Date.now(), card.id);
+      h.service.close();
+      const restarted = startCollaborationService(h.options);
+      try {
+        const input = message("query", "现在到哪了？", "group", person === "member" ? "tester" : "product");
+        if (person === "same-staff-other-corp") input.sender.senderCorpId = "another-corp";
+        const before = taskState(h.db);
+        restarted.ingestDingTalkMessage(input);
+        const context = readConversationContext(h.db, job(h.db, "query"));
+        expect(context.pendingQuestion?.kind ?? null).toBe(person === "owner" ? "approval" : null);
+        await restarted.processNaturalIntake(); await deliver(h.db);
+        expect(job(h.db, "query").status).toBe("applied");
+        expect(reply(h.db, "query")).toContain("登录提示友好一点");
+        expect(reply(h.db, "query")).toContain("还需要补充信息");
+        expect(reply(h.db, "query")).not.toMatch(/修改完成|WI-|candidate_ready|principal_id/u);
+        expect(item(h.db, "query")).toBeNull(); expect(taskState(h.db)).toEqual(before);
+        const receipts = h.db.prepare("SELECT count(*) n FROM collaboration_outbox").get();
+        restarted.ingestDingTalkMessage(input); await restarted.processNaturalIntake();
+        expect(h.db.prepare("SELECT count(*) n FROM collaboration_outbox").get()).toEqual(receipts);
+        expect(h.db.prepare("SELECT count(*) n FROM collaboration_control_events").get()).toEqual({ n: 0 });
+        expect(h.db.prepare("SELECT count(*) n FROM collaboration_action_tokens").get()).toEqual({ n: 0 });
+      } finally { restarted.close(); }
+    } finally { h.service.close(); h.db.close(); }
+  });
   it("names the unresolved same-group topics instead of asking a context-free question", async () => {
     const h = setup(async input => input.sourceEventId === "answer"
       ? decision(input, "contribution", input.candidates[0].id) : decision(input, "new_request"));
