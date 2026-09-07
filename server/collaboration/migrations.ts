@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { OPENMAUSBOT_SOURCE_BASELINE } from "./config.ts";
 
-export const COLLABORATION_SCHEMA_VERSION = 34;
+export const COLLABORATION_SCHEMA_VERSION = 35;
 
 interface Migration {
   version: number;
@@ -1520,6 +1520,48 @@ const migrations: readonly Migration[] = [
               AND EXISTS(SELECT 1 FROM collaboration_natural_material_recoveries r WHERE r.material_job_id=OLD.id
                 AND r.generation=NEW.recovery_generation AND r.receipt_hash=OLD.receipt_hash)))
           BEGIN SELECT RAISE(ABORT,'material interpretation history is immutable'); END;
+      `);
+    },
+  },
+  {
+    version: 35, name: 'owner-online-read-recovery', checksum: 'v35:source-and-grant-bound-single-use-read-recovery',
+    apply(database) {
+      database.exec(`
+        ALTER TABLE collaboration_online_read_jobs ADD COLUMN recovery_generation INTEGER NOT NULL DEFAULT 0 CHECK(recovery_generation>=0);
+        CREATE TABLE collaboration_online_read_recoveries (
+          id TEXT PRIMARY KEY, request_source_event_id TEXT NOT NULL REFERENCES collaboration_natural_intake_recovery_requests(source_event_id) DEFERRABLE INITIALLY DEFERRED,
+          job_id TEXT NOT NULL REFERENCES collaboration_online_read_jobs(id), work_item_id TEXT NOT NULL REFERENCES collaboration_work_items(id),
+          generation INTEGER NOT NULL CHECK(generation>0), prior_attempts INTEGER NOT NULL CHECK(prior_attempts BETWEEN 0 AND 3),
+          prior_error_code TEXT NOT NULL CHECK(prior_error_code IN ('online_document_not_authorized','online_document_read_unverified','online_document_source_or_grant_changed')),
+          input_hash TEXT NOT NULL, reference_hash TEXT NOT NULL, prior_grant_fingerprint TEXT NOT NULL, grant_fingerprint TEXT NOT NULL CHECK(length(grant_fingerprint)=64),
+          actor_principal_id TEXT NOT NULL REFERENCES collaboration_principals(id), owner_generation INTEGER NOT NULL CHECK(owner_generation>0), created_at INTEGER NOT NULL,
+          UNIQUE(job_id,generation), UNIQUE(request_source_event_id,job_id)
+        ) STRICT;
+        CREATE TRIGGER online_read_recovery_source BEFORE INSERT ON collaboration_online_read_recoveries
+          WHEN NOT EXISTS(SELECT 1 FROM collaboration_online_read_jobs j WHERE j.id=NEW.job_id AND j.work_item_id=NEW.work_item_id
+            AND j.status='failed' AND j.attempts=NEW.prior_attempts AND j.error_code=NEW.prior_error_code
+            AND ((j.error_code='online_document_not_authorized' AND j.attempts=0) OR (j.error_code='online_document_read_unverified' AND j.attempts=3)
+              OR j.error_code='online_document_source_or_grant_changed')
+            AND j.recovery_generation+1=NEW.generation AND j.normalized_hash=NEW.input_hash AND j.reference_hash=NEW.reference_hash
+            AND j.grant_fingerprint=NEW.prior_grant_fingerprint AND NOT EXISTS(SELECT 1 FROM collaboration_online_read_receipts r WHERE r.job_id=j.id))
+          BEGIN SELECT RAISE(ABORT,'online read recovery source mismatch'); END;
+        CREATE TRIGGER online_read_recovery_no_update BEFORE UPDATE ON collaboration_online_read_recoveries
+          BEGIN SELECT RAISE(ABORT,'online read recovery is immutable'); END;
+        CREATE TRIGGER online_read_recovery_no_delete BEFORE DELETE ON collaboration_online_read_recoveries
+          BEGIN SELECT RAISE(ABORT,'online read recovery is immutable'); END;
+        DROP TRIGGER online_read_jobs_binding;
+        CREATE TRIGGER online_read_jobs_binding BEFORE UPDATE ON collaboration_online_read_jobs
+          WHEN NEW.id<>OLD.id OR NEW.work_item_id<>OLD.work_item_id OR NEW.source_event_id<>OLD.source_event_id
+            OR NEW.normalized_hash<>OLD.normalized_hash OR NEW.reference_hash<>OLD.reference_hash OR NEW.created_at<>OLD.created_at
+            OR NEW.projection_attempts<OLD.projection_attempts
+            OR ((NEW.grant_fingerprint<>OLD.grant_fingerprint OR NEW.attempts<OLD.attempts OR NEW.recovery_generation<>OLD.recovery_generation
+              OR (OLD.status='failed' AND NEW.status<>'failed')) AND NOT (
+              OLD.status='failed' AND NEW.status='pending' AND NEW.attempts=0 AND NEW.recovery_generation=OLD.recovery_generation+1
+              AND NOT EXISTS(SELECT 1 FROM collaboration_online_read_receipts b WHERE b.job_id=OLD.id)
+              AND EXISTS(SELECT 1 FROM collaboration_online_read_recoveries r WHERE r.job_id=OLD.id AND r.generation=NEW.recovery_generation
+                AND r.input_hash=OLD.normalized_hash AND r.reference_hash=OLD.reference_hash AND r.prior_attempts=OLD.attempts
+                AND r.prior_error_code=OLD.error_code AND r.prior_grant_fingerprint=OLD.grant_fingerprint AND r.grant_fingerprint=NEW.grant_fingerprint)))
+          BEGIN SELECT RAISE(ABORT,'online source and budget are immutable'); END;
       `);
     },
   },

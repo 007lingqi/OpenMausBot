@@ -8,6 +8,7 @@ import { durableOnlineSources, onlineHash, onlineReadSource, type DurableOnlineS
 import { enqueueInboundCard } from "./outbox.ts";
 import { renderClarificationCard } from "./message-renderer.ts";
 import { readLatestWorkItemSnapshot } from "./snapshot.ts";
+import { onlineReadFailureEventId } from './online-document-recovery.ts';
 
 export interface OnlineDocumentIngestionOptions {
   reader: OnlineDocumentReader;
@@ -129,16 +130,21 @@ export class OnlineDocumentIngestion {
     this.db.prepare("UPDATE collaboration_online_read_jobs SET status='failed',error_code=?,claim_token=NULL WHERE id=?").run(code, id);
   }
   private failureNotices(now: number): void {
-    const rows = this.db.prepare("SELECT j.id,j.work_item_id FROM collaboration_online_read_jobs j JOIN collaboration_work_items w ON w.id=j.work_item_id " +
-      "WHERE j.status='failed' AND w.status NOT IN ('cancelled','accepted') AND NOT EXISTS(SELECT 1 FROM collaboration_outbox o WHERE o.source_event_id='online-read-failed:'||j.id)").all() as unknown as Array<{ id: string; work_item_id: string }>;
+    const rows = this.db.prepare("SELECT j.id,j.work_item_id,j.recovery_generation,j.error_code FROM collaboration_online_read_jobs j JOIN collaboration_work_items w ON w.id=j.work_item_id " +
+      "WHERE j.status='failed' AND w.control_state='active' AND w.status NOT IN ('cancelled','accepted')").all() as unknown as Array<{ id: string; work_item_id: string; recovery_generation: number; error_code: string }>;
     for (const row of rows) {
       const snapshot = readLatestWorkItemSnapshot(this.db, row.work_item_id); if (!snapshot) continue;
-      enqueueInboundCard(this.db, { sourceEventId: `online-read-failed:${row.id}`, aggregateType: "plan", aggregateId: row.work_item_id,
+      const sourceEventId = onlineReadFailureEventId(row.id, row.recovery_generation, snapshot.revision);
+      if (this.db.prepare('SELECT 1 FROM collaboration_outbox WHERE source_event_id=? OR (source_event_id=? AND aggregate_version=? AND ?=0)')
+        .get(sourceEventId, `online-read-failed:${row.id}`, snapshot.revision, row.recovery_generation)) continue;
+      const recoverable = ['online_document_not_authorized','online_document_read_unverified','online_document_source_or_grant_changed'].includes(row.error_code);
+      enqueueInboundCard(this.db, { sourceEventId, aggregateType: "plan", aggregateId: row.work_item_id,
         aggregateVersion: snapshot.revision, now,
         card: renderClarificationCard({ workItemId: row.work_item_id, snapshotRevision: snapshot.revision,
           contextSummary: "这份在线材料未能可靠读取，已停止自动尝试，尚未开始修改。",
           questions: [{ id: "online-material", title: "需要处理", question: "请负责人检查这份材料的读取授权和可读性。",
-            recommendedAnswer: "原消息已保留；重复发送不会跳过检查，也不会重新开始尝试。" }] }) });
+            recommendedAnswer: recoverable ? "负责人核对并修复读取授权或可读性后，可回复原需求消息说“继续整理需求”。只会恢复已确认可安全继续的部分；不需要重复发送材料。"
+              : "上次读取或后续核对尚未安全收束，原记录已保留；重复发送不会重新开始尝试，请负责人先检查。" }] }) });
     }
   }
   close(): void { if (this.stopped) return; this.stopped = true; this.abort.abort(); if (!this.busy) this.db.close(); }

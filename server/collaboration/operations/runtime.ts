@@ -956,7 +956,7 @@ export class CollaborationHeadlessRuntime {
     return recoverNaturalIntake(database, message, this.clock.now(), () => {
       this.assertOperational();
       assertCurrentInstanceLease(database, lease, this.clock.now());
-    });
+    }, this.options.onlineDocuments);
   }
 
   reviewDingTalkDeliveries(message: DingTalkInboundMessage): ReturnType<typeof requestDeliveryReview> {

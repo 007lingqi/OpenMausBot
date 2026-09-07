@@ -7,6 +7,8 @@ import { assertLedgerArmed } from "./restore-guard.ts";
 import { appendControlAudit } from "./audit.ts";
 import { enqueueInboundCard } from "./outbox.ts";
 import { materialInterpretationSourceCurrent, materialIntakeFailureEventId } from "./natural-material-intake.ts";
+import type { OnlineDocumentReader } from './operations/dws-online-reader.ts';
+import { recoverOnlineReads, RECOVERABLE_ONLINE_READ_SQL, isCurrentOnlineReadFailureNotice } from './online-document-recovery.ts';
 
 const digest = (text: string) => createHash("sha256").update(text).digest("hex");
 /** Called only inside the current Owner's guarded recovery transaction. */
@@ -27,7 +29,7 @@ function recoverMaterialInputs(db: DatabaseSync, input: { workItemId: string; re
   }
   return recovered;
 }
-export function recoverNaturalIntake(db: DatabaseSync, message: DingTalkInboundMessage, now: number, assertActive: () => void): DingTalkRequirementRecoveryOutcome {
+export function recoverNaturalIntake(db: DatabaseSync, message: DingTalkInboundMessage, now: number, assertActive: () => void, onlineReader?: OnlineDocumentReader): DingTalkRequirementRecoveryOutcome {
   if (!parseDingTalkRequirementRecoveryRequest(message)) throw new Error("natural_intake_recovery_request_invalid");
   const payloadHash = digest(JSON.stringify({ conversationId: message.conversationId, reply: message.replyToSourceEventId ?? null,
     text: message.text.trim(), corp: message.sender.senderCorpId?.trim() ?? null, staff: message.sender.senderStaffId?.trim() ?? null, senderId: message.sender.senderId }));
@@ -51,9 +53,11 @@ export function recoverNaturalIntake(db: DatabaseSync, message: DingTalkInboundM
         "WHERE w.conversation_id=(SELECT conversation_id FROM collaboration_conversation_aliases WHERE source='dingtalk' AND external_id=?) " +
         "AND w.control_state='active' AND w.status NOT IN ('accepted','cancelled') " +
         "AND (? IS NULL OR EXISTS(SELECT 1 FROM collaboration_external_events e WHERE e.source='dingtalk' AND e.source_event_id=? AND e.work_item_id=w.id AND e.conversation_id=w.conversation_id)) " +
-        "AND EXISTS(SELECT 1 FROM collaboration_natural_all_jobs j WHERE j.work_item_id=w.id AND j.status='failed' AND j.attempts=3 AND j.error_code='natural_intake_unavailable') " +
+        "AND (EXISTS(SELECT 1 FROM collaboration_natural_all_jobs j WHERE j.work_item_id=w.id AND j.status='failed' AND j.attempts=3 AND j.error_code='natural_intake_unavailable') " +
+        "OR (? AND EXISTS(SELECT 1 FROM collaboration_online_read_jobs j WHERE j.work_item_id=w.id AND " + RECOVERABLE_ONLINE_READ_SQL + "))) " +
+        "AND NOT EXISTS(SELECT 1 FROM collaboration_online_read_jobs j WHERE j.work_item_id=w.id AND j.status='running') " +
         "AND NOT EXISTS(SELECT 1 FROM collaboration_natural_all_jobs j WHERE j.work_item_id=w.id AND j.status='running' AND j.lease_until>?) LIMIT 2")
-        .all(message.conversationId, message.replyToSourceEventId ?? null, message.replyToSourceEventId ?? null, now) as Array<{ id: string; version: number }>;
+        .all(message.conversationId, message.replyToSourceEventId ?? null, message.replyToSourceEventId ?? null, onlineReader ? 1 : 0, now) as Array<{ id: string; version: number }>;
       if (candidates.length === 1) {
         const target = candidates[0]; version = target.version;
         const failed = db.prepare("SELECT j.source_event_id,j.attempts,e.normalized_json,coalesce((SELECT max(generation) FROM collaboration_natural_intake_recoveries r WHERE r.input_source_event_id=j.source_event_id),0)+1 AS generation " +
@@ -68,7 +72,8 @@ export function recoverNaturalIntake(db: DatabaseSync, message: DingTalkInboundM
           if (changed.changes !== 1) throw new Error("natural_intake_recovery_claim_changed");
         }
         const recoveredInputs = failed.length + recoverMaterialInputs(db, { workItemId: target.id, requestId: message.sourceEventId,
-          actorId: policy.principalId!, ownerGeneration: policy.ownerGeneration!, now });
+          actorId: policy.principalId!, ownerGeneration: policy.ownerGeneration!, now }) + recoverOnlineReads(db, { workItemId: target.id,
+          requestId: message.sourceEventId, actorId: policy.principalId!, ownerGeneration: policy.ownerGeneration!, now }, onlineReader);
         if (recoveredInputs) {
           outcome = { conversationId: message.conversationId, allowed: true, duplicate: false, workItemId: target.id, reason: "natural_intake_recovered", recoveredInputs };
           summary = `已允许继续整理这个事项中尚未成功的 ${recoveredInputs} 条内容。原消息、正文和失败记录均保留；未核实的材料不会跳过检查，这不代表代码修改已完成。`;
@@ -99,6 +104,7 @@ export function naturalIntakeFailureEventId(db: DatabaseSync, sourceEventId: str
 }
 
 export function isCurrentNaturalIntakeFailureNotice(db: DatabaseSync, row: { source_event_id: string; aggregate_id: string; aggregate_version: number }): boolean {
+  if (!isCurrentOnlineReadFailureNotice(db, row)) return false;
   if (row.source_event_id.startsWith("material-intake-failed:")) {
     const id = row.source_event_id.slice("material-intake-failed:".length).split(":", 1)[0];
     return row.source_event_id === materialIntakeFailureEventId(db, id, row.aggregate_version) && !!db.prepare(

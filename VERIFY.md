@@ -1,5 +1,16 @@
 # Meta 协作验证记录
 
+## 2026-09-07 在线读取授权修复与Owner恢复（完整验证通过/未部署）
+
+- 22d27c确认84a9dd/session94056 exit0：26文件344项定向、pnpm typecheck、完整pnpm test及git diff --check通过。完整主集309文件通过/1跳过、3578项通过/18跳过；broker7项与桌面15+5+2+10项通过；打包、无node_modules启动、9代理路径、headless及合成模型/文档host/relay启动退出通过。该链启动后业务源码没有修改。
+- a6b806确认791e9e/session35935 exit0：`pnpm exec vitest run server/collaboration/online-document-recovery.test.ts && pnpm typecheck && git diff --check`通过，专项17项。完整链之后仅增加6项测试，覆盖reader/租约缺失、请求冲突重放、running/ready/已有正文投影失败拒绝重读，以及两代失败通知和三次预算；不将这些新增用例算入3578统计。所有验证会话均已终态。
+- 9002ab只读核实试点healthy/restarts0、schema31、onlineDocumentsConfigured=false、gpt-6-astra/medium，无running run；417bfd再次确认healthy/restarts0与原固定镜像1f53b346…。本批未部署、未配置真实文档账号、未读取材料、未发群消息或调用模型。真实文档成功包装与正文入Spec、宿主装配恢复、六群场景及Owner本人验收仍待完成。
+
+- 3beed1先行红灯：原失败读取attempts0/未授权，在可信授权修复后，“继续整理需求”仍返回allowed=false/recoveredInputs0。没有真实账号/文档或模型调用。
+- c28383：新恢复9项通过，4文件总55通过/3旧库夹具失败；0a1f0c：8文件137通过/6旧版本号断言失败。旧库fixture已补完整还原schema35表/列/触发器并更新当前35断言；不改业务旧迁移checksum，不移除原数据保留/权限/proof断言。
+- 原11项含runtime群sink→Ledger→Outbox通俗回复与schema34保留；完整链与追加专项的实际终态见本节顶部。网络替身不等同于真实钉钉群验收。
+- d1fae2/a4ce4e：只读当前DWS精确leaf Schema。sheet结果含data_schema/outcomes，doc +fetch无result字段；后者的真实成功包装仍未验收，不把接口说明当作真实正文读取。
+
 ## 2026-09-07 Docker文档中继与跨UID验证（未部署）
 
 - 最终9d389b确认d20e6c/session2007 exit0：74项定向、typecheck、完整pnpm test、打包及diff全部通过。主集308文件通过/1跳过、3567项通过/18跳过；broker7项通过，桌面各子集通过。打包服务无node_modules启动、9代理路径、headless健康/退出、合成模型通道与文档host/relay启动/退出通过。没有运行中的验证/发布/真实模型调用。
