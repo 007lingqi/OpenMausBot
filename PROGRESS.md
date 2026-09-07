@@ -1,5 +1,14 @@
 # Meta 协作实施进度
 
+## 最新交接：v2持久启动身份与只读对账通过（2026-09-07，未部署）
+
+- 新contained启动在create前持久写入用途隔离签名v2 launch记录，文件/任务目录/父目录fsync；完整create ID也fsync后才start。名称算法不变，旧v1不倒签。新增只读inspectPendingLaunch，可由新Agent按原记录核对唯一完整ID、精确名称、固定镜像、原binding、launch标签及代次，保留查不到/多个/不一致为unknown。它不修改账本、proof、attempt、占用或目录，不自动start/kill/rm；不是自动恢复器。
+- c71723缺模块TDD后实现；6a4185三文件67项/typecheck通过；d3c3b2五文件128项/typecheck与真实Docker强杀丢回执烟测通过。后续补齐有界文件读取、fsync顺序/失败、跨Agent不重跑及无finalization执行门禁；6d449f最终定向五文件130项/typecheck与真实五类contained烟测通过，失败无写入、模型前登记、detached后代退出，modelCalls0/groupMessages0，独占测试资源清理。
+- 92689完整顺序链已于e5ceae终态exit0：定向→typecheck→五类真实Docker烟测→完整pnpm test→typecheck→diff全部通过。5d54f9主集295文件通过/1跳过、3332项通过/18跳过（3350登记）；broker7及桌面、打包/9代理路径/headless/channel启动退出全部通过。代码/测试在此链启动后冻结，当前无运行中的全仓测试或模型。本批仅明确归属文件保存本地commit、不push，用户AGENTS.md/outputs保持原状。
+- 真实故障烟测scripts/smoke-docker-launch-recovery.mjs：独立Node调用方create成功后丢弃ID、未落回执即SIGKILL；新实例读取持久记录找回created容器（不能签执行proof），合成active/exited查询正确；旧代次与删除后缺失仍unknown，原记录逐字节不变。无业务挂载/模型/群消息，不能冒充旧headless/Git停止或引擎Meta验收。5类烟测新镜像90d11d4feeab…只是临时合成Provider，已清理，不是新controller部署镜像。
+- 接续优先：独立协调器启动代次/实例fence的持久证据，覆盖headless、原生Git及所有后代；处理迟到daemon请求后才考虑新v2任务的收束协议与runtime只读账本关联。现有controller restart unless-stopped，单次exited或租约过期都不够，不能从任务容器观察倒签proof/解锁。无finalization及旧无proof事项继续保留原锁/失败预算。
+- 3554f6再次确认唯一运行服务仍3c05339/779586bc572e…且healthy，未改Owner/凭据/仓库/原账本，没有新增群消息或真实模型调用。此前固定ad123605dc75…controller仍未部署，也不包含本批v2代码。原正式Astra一次性证据与历史第3次诊断不重跑。真实六场景、在线文档/表格正文、完整引擎在途恢复、Mac主机重启及Owner本人最终验收仍待完成；Goal保持active。
+
 ## 最新交接：新controller镜像已验证，运行试点尚未切换（2026-09-07）
 
 - 本轮完成两批本地提交：9d74833为真实Astra同容器组件及测试修正，578f36c为headless显式装配；均未push。ec7300/82696和c2c2b9/31901两条完整回归链均exit0，所有旧测试句柄终态。当前唯一在线仍openmausbot-collaboration-pilot的3c05339，8d36fb确认healthy。

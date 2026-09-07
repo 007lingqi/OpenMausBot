@@ -73,6 +73,20 @@ async function verificationFixture() {
 }
 
 describe("passive lifecycle recovery", () => {
+  it.each([0, 1])("does not release %i execution commands without proof that coordinator work ended", async count => {
+    const f = fixture();
+    try {
+      if (count) { f.command(); f.recordProof(); }
+      f.empty(); const lease = f.takeover();
+      const unchanged = () => ["commands", "proofs", "finalization_intents", "settlements"].map(suffix =>
+        f.db.prepare(`SELECT * FROM collaboration_execution_${suffix}`).all());
+      const before = unchanged();
+      expect(await recoverLifecycleSession(f.db, { kind: "execution", sessionId: f.sessionId, instance: lease, now: Date.now, containment: f.containment }))
+        .toMatchObject({ state: "blocked", reason: "coordinator_work_not_confirmed_finished" });
+      expect(hasUnsettledExecution(f.db, f.root)).toBe(true);
+      expect(unchanged()).toEqual(before);
+    } finally { f.db.close(); }
+  });
   it.each(["execution", "verification"] as const)("keeps %s occupied on incomplete Docker observations and recovers only on explicit stopped evidence", async kind => {
     const f = kind === "execution" ? fixture() : await verificationFixture();
     try {

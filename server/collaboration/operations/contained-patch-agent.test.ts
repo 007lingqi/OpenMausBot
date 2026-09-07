@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { AgentRunRequest } from "../provider-runner.ts";
 import { DockerContainedPatchAgent } from "./contained-patch-agent.ts";
-import type { DockerCommandPort } from "./docker-containment.ts";
+import { DockerCliContainmentSupervisor, type DockerCommandPort } from "./docker-containment.ts";
+import { readDockerLaunch } from "./docker-launch.ts";
 
 function fixture(mode: "success" | "provider-failure" | "register-failure" | "source-drift" | "cleanup-unknown" | "hang-exit" = "success") {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "contained-agent-"))), cwd = join(root, "candidate"), exchange = join(root, "exchange"), channel = join(root, "channel");
@@ -17,13 +18,16 @@ function fixture(mode: "success" | "provider-failure" | "register-failure" | "so
   function result(stdout = "", exitCode = 0) { return { stdout: Buffer.from(stdout), stderr: Buffer.alloc(0), exitCode }; }
   const docker: DockerCommandPort = { run: vi.fn<DockerCommandPort["run"]>(async (args, options) => {
     (calls as string[][]).push([...args]);
-    if (args[0] === "create") { control = args[args.indexOf("--mount") + 1].split(",")[1].slice(4); return result(id); }
+    if (args[0] === "create") { control = args[args.indexOf("--mount") + 1].split(",")[1].slice(4);
+      expect(readDockerLaunch(control).launch).toMatchObject({ version: 2, name: args[args.indexOf("--name") + 1] }); return result(id); }
     if (args[0] === "start") { running = true; return result(id); }
     if (args[0] === "wait") return await new Promise(resolve => { finishWait = resolve; options?.signal?.addEventListener("abort", () => resolve(result("137")), { once: true }); });
     return result();
   }) };
   const proof = { identity: { backend: "docker_cgroup_v2", opaqueId: id, hostGeneration: "boot", verifierVersion: "v1" }, receipt: "receipt" };
+  const authority = new DockerCliContainmentSupervisor({ docker, hostGeneration: "boot", verifierKey: Buffer.alloc(32, 7) });
   const containment = {
+    prepareLaunch: authority.prepareLaunch.bind(authority), launchLabels: authority.launchLabels.bind(authority), reconcileLaunch: authority.reconcileLaunch.bind(authority),
     labels: vi.fn(() => []), issueProof: vi.fn(async () => proof), inspect: vi.fn(async () => ({ state: running ? "active" : "empty" })),
     terminateBoundContainer: vi.fn(async () => { if (mode === "cleanup-unknown") return { state: "unknown" }; running = false; finishWait?.(result("137")); return { state: "empty" }; }),
   };
@@ -56,6 +60,32 @@ function fixture(mode: "success" | "provider-failure" | "register-failure" | "so
 }
 
 describe("independent contained patch Agent", () => {
+  it("reconciles a lost create reply from a fresh agent without starting, releasing or backfilling proof", async () => {
+    const f = fixture(), original = f.docker.run; let createdArgs: readonly string[] = [];
+    f.docker.run = vi.fn(async args => {
+      if (args[0] === "create") { createdArgs = args; await original(args); throw Error("lost reply"); }
+      const stdout = args[0] === "ps" ? "a".repeat(64) : JSON.stringify([{ Id: "a".repeat(64),
+        Name: "/" + createdArgs[createdArgs.indexOf("--name") + 1], Image: "sha256:" + "b".repeat(64),
+        Config: { Image: "sha256:" + "b".repeat(64), Labels: Object.fromEntries(createdArgs.flatMap((value, i) => value === "--label" ? [createdArgs[i + 1].split("=")] : [])) },
+        HostConfig: { RestartPolicy: { Name: "no" } }, State: { Running: false, Status: "created", Pid: 0, Paused: false, Restarting: false } }]);
+      return { stdout: Buffer.from(stdout), stderr: Buffer.alloc(0), exitCode: 0 };
+    });
+    try {
+      await expect(f.agent.run(f.request)).rejects.toHaveProperty("name", "CommandCleanupError");
+      const pendingName = readdirSync(f.exchange)[0], before = readFileSync(join(f.control(), "launch.json"), "utf8");
+      const authority = new DockerCliContainmentSupervisor({ docker: f.docker, hostGeneration: "boot", verifierKey: Buffer.alloc(32, 7) });
+      const fresh = new DockerContainedPatchAgent({ docker: f.docker, containment: authority, image: "sha256:" + "b".repeat(64),
+        exchangeRoot: f.exchange, modelSocketDirectory: join(f.root, "channel"), relayUid: 501, relayGid: 1000 });
+      expect(await fresh.inspectPendingLaunch(pendingName, f.request.containmentBinding)).toEqual({ state: "observed", status: "created", containerId: "a".repeat(64) });
+      expect(await fresh.inspectPendingLaunch("../escape", f.request.containmentBinding)).toMatchObject({ state: "unknown" });
+      await expect(fresh.run(f.request)).rejects.toThrow();
+      expect(readFileSync(join(f.control(), "launch.json"), "utf8")).toBe(before);
+      expect(existsSync(join(f.control(), "proposal.start"))).toBe(false);
+      expect(f.request.registerContainment).not.toHaveBeenCalled();
+      expect(vi.mocked(f.docker.run).mock.calls.map(([args]) => args[0])).toEqual(["create", "ps", "inspect"]);
+      expect(readFileSync(join(f.cwd, "src/main.ts"), "utf8")).toContain("P1");
+    } finally { f.stop(); }
+  });
   it("registers the real task containment before model gate and returns the same proof after writing", async () => {
     const f = fixture(); try {
       const result = await f.agent.run(f.request);

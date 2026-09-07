@@ -1,5 +1,12 @@
 # Meta 协作决策记录
 
+## D-115 — 持久启动身份对账与生命周期释放分离
+
+- v2启动记录使用现有签名密钥、独立用途域和规范binding哈希；记录、任务目录、父目录均fsync后才create，完整ID收据fsync后才start。沿用旧名称算法，但对账不依赖调用者对象键顺序。没有新Secret/身份，旧v1记录不签名升级。
+- 按绑定列出而不是只按名字查询，拒绝多个匹配。核对完整ID、精确名称、固定实际镜像和创建镜像、launch摘要/原标签、host代次以及明确运行状态。HMAC不进Docker标签，对外只返回固定原因码。查询异常不输出daemon原始内容。
+- 查询结果刻意使用observed created/active/exited而非ContainmentProof/empty；它不修改账本、占用、attempt或目录。新Agent可读取旧记录，但不能凭查到容器就重试，已有ID还需防替换；查不到也不能证明没有尚在daemon完成的create。
+- 本批保持无finalization恢复门禁。当前controller用restart unless-stopped，不能把当前容器ID的一次exited、PID、超时或租约失效视为旧协调器永久停止证明。下一阶段需要独立于headless的、绑定启动代次和实例fence的协调器生命周期证据，覆盖原生Git/所有后代及迟到Docker请求；不得直接把任务容器身份复用作协调器身份。
+
 ## D-114 — headless显式装配，任务镜像与命令镜像分离
 
 - 新模式通过可信启动环境显式选择，任务镜像必须固定摘要；模型/强度/UID/relay和固定执行程序校验不通过直接拒绝，不偷偷回退。旧模式仅用于现有服务尚未切换时保留当前运行状态，不替代最终独立任务容器目标。

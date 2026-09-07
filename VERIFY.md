@@ -1,5 +1,13 @@
 # Meta 协作验证记录
 
+## 2026-09-07 v2持久启动身份与被动对账
+
+- c71723先行缺模块红灯；6a4185三文件67项/typecheck通过。d3c3b2五文件128项、typecheck、真实Docker故障烟测及diff通过；补齐有界读取、fsync顺序/失败、跨Agent不重试与无finalization门禁后，6d449f最终五文件130项/typecheck通过。
+- scripts/smoke-docker-launch-recovery.mjs在专用colima-openmausbot-pilot使用固定缓存70087328c759…：创建容器后主动丢弃回执，SIGKILL独立Node调用方，新实例从原v2记录核对真实完整ID；created不签execution proof，active/exited可观察，旧代次/缺失仍unknown，原记录不变。没有模型、群消息、业务挂载或lifecycle settlement，专属资源确认归属后清理。该故障边界不能代替旧headless及容器外Git停止证明。
+- 6d449f真实五类contained烟测通过：success/provider-failure/register-failure/cancel-registration/cancel-provider，新v2启动器与合成worker共同验证；模型前proof登记、私有候选拒读、脱离进程组后代停止、失败零写入。临时镜像90d11d4feeab…与独占卷已清理，modelCalls0/groupMessages0，不增加真实Astra调用。
+- 92689顺序完整链在e5ceae终态exit0。5d54f9主集295文件通过/1跳过、3332通过/18跳过（3350登记），broker7、桌面测试、打包启动/9代理路径、headless/channel启动退出、最终typecheck/diff均通过。所有已确认句柄终态，不重复轮询。旧服务仍healthy，未部署本批；代码与测试在完整链期间未修改。
+- 4e0483对包含最后有界读取实现的当前源码再次运行零模型强杀丢回执烟测，exit0；全部断言通过，临时调用方/容器/目录清理。没有重跑历史模型事项或创建真实业务事件；当前没有运行中测试/模型/构建。
+
 ## 2026-09-07 578f36c固定controller镜像隔离检查
 
 - 427229/38240 exit0：固定base a4cab8c8660c…离线构建新image ad123605dc75…，标签contained-578f36c，revision 578f36ca02af211b7720f851f9e8ccc85ff21581。worker/channel与原真实Astra组件受测文件逐字节相同；没有额外模型调用。

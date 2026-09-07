@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
 
 import {
@@ -10,11 +10,13 @@ import {
   runtimeIdentityFingerprint,
   type RuntimeIdentity,
 } from "../containment.ts";
+import { dockerLaunchPayload, dockerLaunchSchema, type DockerLaunchObservation, type DockerLaunchRecord } from "./docker-launch.ts";
 
 const BACKEND = "docker_cgroup_v2";
 const MANAGED_LABEL = "com.openmausbot.collaboration.managed";
 const BINDING_LABEL = "com.openmausbot.collaboration.binding";
 const GENERATION_LABEL = "com.openmausbot.collaboration.host-generation";
+const LAUNCH_LABEL = "com.openmausbot.collaboration.launch";
 
 export interface DockerCommandResult {
   exitCode: number;
@@ -133,7 +135,9 @@ export class NodeDockerCommandPort implements DockerCommandPort {
 
 interface DockerInspection {
   Id?: unknown;
-  Config?: { Labels?: Record<string, string> | null };
+  Name?: unknown;
+  Image?: unknown;
+  Config?: { Image?: unknown; Labels?: Record<string, string> | null };
   HostConfig?: { RestartPolicy?: { Name?: unknown } };
   State?: { Running?: unknown; Status?: unknown; Pid?: unknown; Paused?: unknown; Restarting?: unknown };
 }
@@ -199,6 +203,55 @@ export class DockerCliContainmentSupervisor implements ContainmentPort {
       `${BINDING_LABEL}=${containmentBindingHash(binding)}`,
       `${GENERATION_LABEL}=${this.hostGeneration}`,
     ];
+  }
+
+  prepareLaunch(input: Pick<DockerLaunchRecord, "name" | "image" | "binding">): DockerLaunchRecord {
+    const checked = dockerLaunchSchema.parse({ ...input, version: 2, hostGeneration: this.hostGeneration,
+      verifierVersion: this.verifierVersion, receipt: "x".repeat(43) });
+    return { ...checked, receipt: this.launchReceipt(checked) };
+  }
+
+  launchLabels(launch: DockerLaunchRecord): string[] {
+    if (!this.validLaunch(launch)) throw Error("launch_record_untrusted");
+    return [...this.labels(launch.binding), `${LAUNCH_LABEL}=${createHash("sha256").update(dockerLaunchPayload(launch)).digest("hex")}`];
+  }
+
+  /** Read-only identity reconciliation, NOT an execution proof or release authorization.
+   * Absence is unknown: a previously submitted create may still complete later. */
+  async reconcileLaunch(record: unknown, expectedBinding: ContainmentBinding, expectedId?: string): Promise<DockerLaunchObservation> {
+    const parsed = dockerLaunchSchema.safeParse(record);
+    if (!parsed.success || !this.validLaunch(parsed.data)) return { state: "unknown", reason: "launch_record_untrusted" };
+    const launch = parsed.data;
+    if (containmentBindingHash(launch.binding) !== containmentBindingHash(expectedBinding) ||
+      (expectedId !== undefined && !/^[a-f0-9]{64}$/u.test(expectedId))) return { state: "unknown", reason: "launch_binding_mismatch" };
+    try {
+      // List by binding, not just name: conflicting duplicates must remain ambiguous.
+      const listed = await this.docker.run(["ps", "-aq", "--no-trunc", ...this.labels(launch.binding).flatMap(label => ["--filter", `label=${label}`])],
+        { timeoutMs: 5_000, maxOutputBytes: 16 * 1024 });
+      if (listed.exitCode !== 0 || listed.stdout.length > 16 * 1024) return { state: "unknown", reason: "launch_daemon_unavailable" };
+      const ids = listed.stdout.toString("utf8").trim().split(/\r?\n/u);
+      if (ids.length !== 1 || !/^[a-f0-9]{64}$/u.test(ids[0])) return { state: "unknown", reason: "launch_identity_unconfirmed" };
+      const id = ids[0];
+      if (expectedId !== undefined && id !== expectedId) return { state: "unknown", reason: "launch_identity_mismatch" };
+      const inspected = await this.inspection(id);
+      const labels = inspected?.Config?.Labels ?? {};
+      if (!inspected || inspected.Name !== `/${launch.name}` || inspected.Image !== launch.image || inspected.Config?.Image !== launch.image ||
+        !this.launchLabels(launch).every(label => { const i = label.indexOf("="); return labels[label.slice(0, i)] === label.slice(i + 1); }))
+        return { state: "unknown", reason: "launch_identity_mismatch" };
+      const state = observedState(inspected, true);
+      if (state === "unknown") return { state, reason: "launch_state_unconfirmed" };
+      return { state: "observed", status: state === "active" ? "active" : inspected.State?.Status === "created" ? "created" : "exited", containerId: id };
+    } catch { return { state: "unknown", reason: "launch_daemon_unavailable" }; }
+  }
+
+  private launchReceipt(launch: DockerLaunchRecord): string {
+    return createHmac("sha256", this.verifierKey).update(dockerLaunchPayload(launch)).digest("base64url");
+  }
+
+  private validLaunch(launch: DockerLaunchRecord): boolean {
+    if (launch.hostGeneration !== this.hostGeneration || launch.verifierVersion !== this.verifierVersion) return false;
+    const expected = Buffer.from(this.launchReceipt(launch)), actual = Buffer.from(launch.receipt);
+    return expected.length === actual.length && timingSafeEqual(expected, actual);
   }
 
   async issueProof(containerId: string, binding: ContainmentBinding): Promise<ContainmentProof> {

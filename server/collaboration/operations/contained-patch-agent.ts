@@ -5,8 +5,10 @@ import { isAbsolute, join, relative, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { CommandCleanupError, isolatedExecutionEnvironment } from "../execution-limits.ts";
 import type { AgentRunPort, AgentRunRequest, AgentRunResult } from "../provider-runner.ts";
+import type { ContainmentBinding } from "../containment.ts";
 import { CONTAINED_CANDIDATE_ROOT, containedProviderRequest, validateContainedProposal } from "./contained-patch-protocol.ts";
 import { DockerCliContainmentSupervisor, type DockerCommandPort } from "./docker-containment.ts";
+import { readDockerLaunch, writeDockerContainerReceipt, writeDockerLaunch, type DockerLaunchObservation } from "./docker-launch.ts";
 import { assertProviderReadViewCurrent, createProviderReadView, disposeProviderReadView, type ProviderReadView } from "./provider-read-view.ts";
 
 interface Options {
@@ -61,8 +63,8 @@ async function unlessCancelled<T>(signal: AbortSignal, operation: () => Promise<
   } finally { signal.removeEventListener("abort", abort); }
 }
 
-/** Experimental, not wired to headless until the fixed worker image and
- * independent crash/recovery checks pass. One real container covers BOTH
+/** Explicit headless opt-in, not deployed until independent crash/recovery
+ * checks pass. One real container covers BOTH
  * the provider and trusted applier, including detached provider descendants. */
 export class DockerContainedPatchAgent implements AgentRunPort {
   private readonly active = new Map<string, ActiveRun>();
@@ -112,7 +114,8 @@ export class DockerContainedPatchAgent implements AgentRunPort {
     const key = createHash("sha256").update(JSON.stringify(request.containmentBinding)).digest("hex"), name = `omb-task-${key.slice(0, 48)}`;
     const directory = join(exchangeRoot, name);
     mkdirSync(directory, { mode: 0o711 }); chmodSync(directory, 0o711);
-    writeControl(directory, "launch.json", { version: 1, name, image, binding: request.containmentBinding });
+    const launch = containment.prepareLaunch({ name, image, binding: request.containmentBinding });
+    writeDockerLaunch(directory, launch);
     let sequence = 0, heartbeatError = false;
     const pulse = () => {
       try {
@@ -136,13 +139,13 @@ export class DockerContainedPatchAgent implements AgentRunPort {
         "--mount", `type=bind,src=${source},dst=${CONTAINED_CANDIDATE_ROOT}`,
         "--mount", `type=bind,src=${modelSocketDirectory},dst=/run/omb-channel,readonly`,
         "--env", `OMB_OPENCODEX_RELAY_UID=${this.options.relayUid}`, "--env", `OMB_OPENCODEX_RELAY_GID=${this.options.relayGid}`,
-        ...containment.labels(request.containmentBinding).flatMap(label => ["--label", label]),
+        ...containment.launchLabels(launch).flatMap(label => ["--label", label]),
         "--workdir", "/", "--entrypoint", "node", image, "/opt/openmausbot/contained-patch-worker.js",
       ], { timeoutMs: 30_000, maxOutputBytes: 64 * 1024 });
       const id = created.stdout.toString("utf8").trim();
       if (created.exitCode !== 0 || !/^[a-f0-9]{64}$/u.test(id)) throw Error("contained_create_unconfirmed");
       containerId = id;
-      writeControl(directory, "container.json", { containerId });
+      writeDockerContainerReceipt(directory, containerId);
       assertActive(request.signal);
       const started = await docker.run(["start", id], { timeoutMs: 10_000, maxOutputBytes: 64 * 1024 });
       if (started.exitCode !== 0) throw Error("contained_start_failed");
@@ -214,6 +217,15 @@ export class DockerContainedPatchAgent implements AgentRunPort {
       finally { waitController.abort(); if (waiting) await waiting; }
       assertActive(request.signal);
     }
+  }
+
+  /** Diagnosis only. Never releases the run, cleans files, backfills proof or starts work. */
+  async inspectPendingLaunch(name: string, binding: ContainmentBinding): Promise<DockerLaunchObservation> {
+    if (!/^omb-task-[a-f0-9]{48}$/u.test(name)) return { state: "unknown", reason: "launch_name_invalid" };
+    let record: ReturnType<typeof readDockerLaunch>;
+    try { record = readDockerLaunch(join(this.options.exchangeRoot, name)); }
+    catch { return { state: "unknown", reason: "launch_record_unavailable" }; }
+    return await this.options.containment.reconcileLaunch(record.launch, binding, record.containerId);
   }
 
   async interrupt(runId: string): Promise<void> {

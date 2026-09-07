@@ -17,11 +17,18 @@ Docker daemon/cgroup v2 提供独立于候选进程的运行状态。可信 head
 5. Provider及其脱离进程组的后代仍在同一容器/cgroup中。退出、取消、超时、失去调用方时，启动器停止整个任务容器，按完整ID和绑定确认exited/Pid0；失败保留资料和占用。`disposeProviderReadView()`只能在已确认退出后调用，不得在未知进程仍可能读取时清理。
 6. 之后继续原 Executor 自测、独立 Verifier、当前 Spec/候选/断言的 Meta 验收。独立任务容器不能代替测试证据、风险判断或 Owner 审批。
 
-新组件边界：控制面保存独占launch/container记录，但尚无跨重启启动对账器；未知create继续保留资料和runId占用。递增心跳10秒失联检测使用worker单调时间，不能据此证明旧协调器停止或释放Git锁。候选写入不是多文件原子事务，中途故障仍须账本恢复和候选校验。smoke-contained-patch是零模型合成Provider验证；smoke-contained-opencodex是固定一次性新夹具的真实模型组件验证，后者已消费并保留原证据，不重复运行、不冒充群任务或原失败事项验收。
+新组件边界：新启动已保存v2签名launch记录并提供跨进程只读身份对账；unknown create仍保留资料和runId占用。该查询不是自动恢复器，不释放仓库锁。递增心跳10秒失联检测使用worker单调时间，不能据此证明旧协调器停止或释放Git锁。候选写入不是多文件原子事务，中途故障仍须账本恢复和候选校验。smoke-contained-patch是零模型合成Provider验证；smoke-contained-opencodex是固定一次性新夹具的真实模型组件验证，后者已消费并保留原证据，不重复运行、不冒充群任务或原失败事项验收。
+
+## v2启动身份对账（2026-09-07）
+
+- 新启动保持原名称推导，独占记录固定name/image、完整binding、hostGeneration、verifierVersion及用途隔离的HMAC；文件、任务目录和父目录均fsync成功之后才提交Docker create。create完整回执也独占落盘并fsync后才start。失败不覆盖既有文件；v1历史不升级或倒签。
+- Docker标签新增非秘密launch摘要；HMAC只保留在可信控制文件，不放标签、日志或群消息。查询先验证原签名、代次及expected binding，再按完整绑定标签列出唯一完整ID，核对精确名字、固定Image/Config.Image、launch摘要、标签和明确状态。已有container.json时ID还必须相同；缺失、多个、改名、与已保存ID不同的重建、旧代次、restart/dead/缺字段均unknown。未保存原ID时，查询只能观察当前符合签名启动约束的对象，不能证明未被有Docker权限的操作者替换，因此不生成可解锁的执行凭据。
+- `DockerContainedPatchAgent.inspectPendingLaunch(name,binding)`只读原目录和独立Docker；返回observed created/active/exited或unknown，不返回execution proof，不签回原生命周期、不发start/kill/rm、不清理目录或更改attempt。created和查不到都不能当成未执行证明。当前未接入runtime自动settlement。
+- 实际独立Node调用方在create成功、回执未落盘之前被SIGKILL，新进程使用持久记录找回真实容器；created不签执行proof，后续合成active/exited可观察，删除后unknown、旧代次unknown，原记录逐字节不变。该测试无模型、无业务挂载/群消息；不代表headless/Git在途恢复。
 
 ## 必须继续解决的恢复缺口
 
-- create回执丢失仍可能有真实容器；不得把“查不到”或零PID当成未启动证明。需要可信、持久的启动身份登记和可重新查询的绑定，不得猜测进程或容器ID。
+- create回执丢失后的持久身份查询已实现，但未知状态不自动解锁。仍须把新启动日志与命令账本做只读关联，并在协调器独立停止证据齐全后设计明确的恢复/收束协议；不得从观察状态倒签执行proof。
 - 原协调器还会运行容器外的 Git/候选操作。没有 finalization intent 不能仅靠任务容器退出解锁；需进一步证明旧协调器确实终止、不会继续原生写入，或将其写入也纳入持久隔离身份。现有租约过期不是该证据。
 - 旧无proof事项保留原失败/次数/占用，不追补假凭据、不换账本重置尝试次数。新实现只为新启动记录真实证据。
 
