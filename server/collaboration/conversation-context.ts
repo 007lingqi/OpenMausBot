@@ -1,0 +1,191 @@
+import { createHash } from "node:crypto";
+import type { DatabaseSync } from "node:sqlite";
+import type { ConversationIntentRequest, ConversationIntentDecision } from "./conversation-intent.ts";
+import { readLatestWorkItemSnapshot } from "./snapshot.ts";
+import { redactSensitiveText } from "./sensitive-text.ts";
+import { renderDingTalkSessionMessage } from "../integrations/dingtalk/session-message.ts";
+import { completedCandidateHasPassedMetaReview } from "./candidate-verification.ts";
+import { renderConversationReplyCard, type InboundCard } from "./message-renderer.ts";
+
+export interface ConversationJob {
+  id: string; source_event_id: string; conversation_id: string; principal_id: string; normalized_json: string;
+  received_at: number; source_hash: string; requested_work_item_id: string | null; status: string;
+  context_outbox_sequence: number;
+  target_work_item_id: string | null; proposal_json: string | null;
+}
+export const conversationSourceHash = (value: string): string => createHash("sha256").update(value).digest("hex");
+type HistoryEntry = ConversationIntentRequest["history"][number] & { at: number; order: number; clipped: boolean };
+interface SentReply { id: string; payload_json: string; sent_at: number; delivery_sequence: number; work_item_id: string | null;
+  principal_id: string | null; created_by: string | null; proposal_json: string | null }
+
+function pendingQuestion(db: DatabaseSync, job: ConversationJob, sent: SentReply[], candidates: string[]): ConversationIntentRequest["pendingQuestion"] {
+  const staff = db.prepare("SELECT external_id FROM collaboration_principal_aliases WHERE principal_id=? AND source='dingtalk' AND alias_kind='corp_staff'")
+    .all(job.principal_id) as Array<{ external_id: string }>;
+  const pending: NonNullable<ConversationIntentRequest["pendingQuestion"]>[] = [];
+  for (const row of sent) {
+    // A question is consumed by a later message from its addressee, not by
+    // unrelated group traffic. The current event is precisely excluded.
+    const intervening = db.prepare("SELECT 1 FROM collaboration_external_events e JOIN collaboration_conversation_intents j ON j.event_id=e.id " +
+      "WHERE e.conversation_id=? AND e.principal_id=? AND e.rowid<(SELECT rowid FROM collaboration_external_events WHERE id=?) " +
+      "AND j.context_outbox_sequence>=? LIMIT 1").get(job.conversation_id, job.principal_id, job.id, row.delivery_sequence);
+    if (intervening) continue;
+    const card = JSON.parse(row.payload_json) as InboundCard;
+    let kind: NonNullable<ConversationIntentRequest["pendingQuestion"]>["kind"] | null = null;
+    let text = "";
+    if (card.type === "clarification_card" && row.work_item_id && candidates.includes(row.work_item_id)) {
+      const snapshot = readLatestWorkItemSnapshot(db, row.work_item_id);
+      if (snapshot?.revision !== card.snapshotRevision) continue;
+      const questions = card.questions.filter(question => question.requestedResponder?.targetId
+        ? staff.some(alias => alias.external_id === question.requestedResponder!.targetId)
+        : row.created_by === job.principal_id);
+      if (questions.length) { kind = "requirement"; text = questions.map(question => question.question).join("；"); }
+    } else if (card.type === "command_status_card" && card.command === "conversation" && row.principal_id === job.principal_id && row.proposal_json) {
+      const proposal = JSON.parse(row.proposal_json) as ConversationIntentDecision;
+      if (proposal.action === "ask_context") {
+        kind = ["status_query", "explanation"].includes(proposal.intent) || proposal.reason === "pending_read_only" ? "read_only"
+          : proposal.reason === "pending_approval" ? "approval" : "association";
+        text = card.summary ?? "";
+      }
+    } else if (card.type === "plan_status_card" && card.status === "candidate_ready" && row.work_item_id && candidates.includes(row.work_item_id)) {
+      const owner = db.prepare("SELECT 1 FROM collaboration_owner_bindings WHERE principal_id=?").get(job.principal_id);
+      if (owner) { kind = "approval"; text = "是否批准当前改动？需要核对动作、影响和风险。"; }
+    }
+    if (kind && text) pending.push({ kind, sourceEventId: `outbox:${row.id}`, workItemIds: row.work_item_id ? [row.work_item_id] : [], text: redactSensitiveText(text).slice(0, 500) });
+  }
+  // Never guess which of several outstanding questions a short answer means.
+  return pending.length === 1 ? pending[0] : pending.length > 1 ? {
+    kind: "association", sourceEventId: pending[0].sourceEventId,
+    workItemIds: [...new Set(pending.flatMap(row => row.workItemIds))].slice(0, 3),
+    text: "有多个问题等待确认，请说明正在回答哪一个。",
+  } : null;
+}
+
+export function readConversationContext(db: DatabaseSync, job: ConversationJob): ConversationIntentRequest {
+  const normalized = JSON.parse(job.normalized_json) as { text: string; replyToSourceEventId?: string | null };
+  const replyId = normalized.replyToSourceEventId ?? null;
+  const items = db.prepare("SELECT id,title,version,status FROM collaboration_work_items WHERE conversation_id=? " +
+    "ORDER BY (id=?) DESC,updated_at DESC,id LIMIT 21").all(job.conversation_id, job.requested_work_item_id ?? "") as
+    Array<{ id: string; title: string; version: number; status: string }>;
+  const userSql = "SELECT e.*,e.rowid AS event_order,COALESCE(e.work_item_id,j.target_work_item_id) AS context_item_id FROM collaboration_external_events e " +
+    "LEFT JOIN collaboration_conversation_intents j ON j.event_id=e.id AND j.status='applied' " +
+    "WHERE e.conversation_id=? AND e.rowid<=(SELECT rowid FROM collaboration_external_events WHERE id=?) ";
+  type UserRow = { source_event_id: string; principal_id: string; normalized_json: string; context_item_id: string | null; received_at: number; event_order: number };
+  const rows = db.prepare(userSql + "ORDER BY e.rowid DESC LIMIT 13").all(job.conversation_id, job.id) as UserRow[];
+  const reference = replyId ? db.prepare(userSql + "AND e.source_event_id=?").get(job.conversation_id, job.id, replyId) as UserRow | undefined : undefined;
+  if (reference && !rows.some(row => row.source_event_id === replyId)) rows.push(reference);
+  const userHistory: HistoryEntry[] = rows.map(row => {
+    const text = redactSensitiveText(String(JSON.parse(row.normalized_json).text));
+    return { sourceEventId: row.source_event_id, role: "user", principalId: row.principal_id, text: text.slice(0, 2000),
+      workItemId: row.context_item_id, at: row.received_at, order: row.event_order,
+      clipped: text.length > 2000 && row.source_event_id !== job.source_event_id };
+  });
+  // Only successful deliveries are model-visible as assistant speech. A queued
+  // plan or failed send is not something the person could have replied to.
+  const sent = db.prepare("SELECT o.id,o.payload_json,o.sent_at,o.delivery_sequence,w.created_by,e.principal_id,j.proposal_json," +
+    "COALESCE(w.id,j.target_work_item_id) AS work_item_id FROM collaboration_outbox o " +
+    "LEFT JOIN collaboration_work_items w ON w.id=o.aggregate_id AND o.aggregate_type IN ('work_item','plan') " +
+    "LEFT JOIN collaboration_external_events e ON e.id=o.aggregate_id AND o.aggregate_type='association' " +
+    "LEFT JOIN collaboration_conversation_intents j ON j.event_id=e.id " +
+    "WHERE COALESCE(w.conversation_id,e.conversation_id)=? AND o.delivery_state='sent' AND o.delivery_sequence<=? " +
+    "ORDER BY o.delivery_sequence DESC LIMIT 13").all(job.conversation_id, job.context_outbox_sequence) as unknown as SentReply[];
+  const assistantHistory: HistoryEntry[] = sent.map(row => {
+    const text = redactSensitiveText((renderDingTalkSessionMessage(JSON.parse(row.payload_json)).markdown as { text: string }).text);
+    return { sourceEventId: `outbox:${row.id}`, role: "assistant", principalId: null,
+      text: text.slice(0, 2000), workItemId: row.work_item_id, at: row.sent_at, order: row.delivery_sequence, clipped: text.length > 2000 };
+  });
+  const merged = [...userHistory, ...assistantHistory].sort((a, b) => a.at - b.at || a.order - b.order);
+  const selected = merged.slice(-12);
+  const current = userHistory.find(row => row.sourceEventId === job.source_event_id);
+  if (current && !selected.includes(current)) { selected.shift(); selected.push(current); }
+  const referenced = replyId ? userHistory.find(row => row.sourceEventId === replyId) : undefined;
+  if (referenced && !selected.includes(referenced)) { selected.shift(); selected.unshift(referenced); }
+  const question = pendingQuestion(db, job, sent, items.slice(0, 20).map(item => item.id));
+  const questionSource = question ? assistantHistory.find(row => row.sourceEventId === question.sourceEventId) : undefined;
+  if (questionSource && !selected.includes(questionSource)) {
+    const discard = selected.findIndex(row => row !== current && row !== referenced);
+    selected.splice(discard, 1); selected.push(questionSource);
+  }
+  return { sourceEventId: job.source_event_id, principalId: job.principal_id, text: redactSensitiveText(normalized.text),
+    referencedWorkItemId: job.requested_work_item_id, referencedReplyId: replyId, pendingQuestion: question,
+    candidates: items.slice(0, 20).map(row => ({ id: row.id, title: redactSensitiveText(row.title), version: row.version,
+      snapshotRevision: readLatestWorkItemSnapshot(db, row.id)?.revision ?? 0,
+      state: row.status === "accepted" ? "completed" : row.status === "cancelled" ? "cancelled" : "open" })),
+    history: selected.map(({ at: _at, order: _order, clipped: _clipped, ...entry }) => entry),
+    // A routine recent-history window is disclosed separately from missing
+    // evidence needed for this turn; otherwise every busy group deadlocks.
+    historyWindowed: merged.length > 12,
+    contextTruncated: (items.length > 20 && !job.requested_work_item_id) || selected.some(row => row.clipped) || (!!replyId && !referenced),
+  };
+}
+
+/** This is a point-in-time read, not a new execution or an Owner action. */
+export function conversationStatus(db: DatabaseSync, workItemId: string): string {
+  const row = db.prepare("SELECT title,status,definition_status,control_state,current_plan_revision,accepted_candidate_sha FROM collaboration_work_items WHERE id=?")
+    .get(workItemId) as { title: string; status: string; definition_status: string; control_state: string; current_plan_revision: number | null; accepted_candidate_sha: string | null } | undefined;
+  if (!row) return "暂时找不到这个问题的进度，请说一下具体的问题。";
+  const title = redactSensitiveText(row.title).replace(/\bWI-[A-Z0-9-]+\b/giu, "").trim().slice(0, 120) || "这个问题";
+  let progress: string;
+  if (row.status === "cancelled" || row.control_state === "cancelled") progress = "已取消，不会继续修改。";
+  else if (row.control_state === "paused") progress = "已暂停，需要负责人决定是否继续。";
+  else if (row.status === "accepted") {
+    const target = db.prepare("SELECT r.id FROM collaboration_runs r JOIN collaboration_candidates c ON c.run_id=r.id " +
+      "WHERE r.work_item_id=? AND r.plan_revision=? AND c.result_sha=? AND r.status='succeeded' ORDER BY r.started_at DESC LIMIT 1")
+      .get(workItemId, row.current_plan_revision, row.accepted_candidate_sha) as { id: string } | undefined;
+    progress = target && row.accepted_candidate_sha && completedCandidateHasPassedMetaReview(db, target.id, row.accepted_candidate_sha)
+      ? "修改完成，相关检查已通过。"
+      : "有结果记录，但目前还不能核对完整验证依据，不能据此确认修改完成。";
+  } else {
+    const run = db.prepare("SELECT status FROM collaboration_runs WHERE work_item_id=? AND plan_revision=? ORDER BY started_at DESC LIMIT 1")
+      .get(workItemId, row.current_plan_revision) as { status: string } | undefined;
+    if (run?.status === "running") progress = "正在修改或检查，还没有完成。";
+    else if (run && ["failed", "invalid", "needs_configuration", "timed_out"].includes(run.status)) progress = "这次执行没有完成，需要负责人核查后决定下一步。";
+    else if (run?.status === "succeeded") progress = "已有改动结果，正在核对验证和确认条件，还不能标记完成。";
+    else progress = ({ collecting: "正在整理需求，还没有开始修改。", waiting_clarification: "还需要补充信息，确认后才能开始修改。",
+      planning: "正在整理修改方案，还没有开始修改。", ready_for_execution: "修改方案已整理好，等待开始执行。",
+      planning_failed: "修改方案还没有整理完成，目前没有开始修改。" } as Record<string, string>)[row.definition_status] ?? "最新进度还需要核查。";
+  }
+  return `关于“${title}”：${progress}`;
+}
+
+/** Freeze the actual point-in-time answer immediately before its first send.
+ * Once a transmission has been attempted its idempotent payload cannot change. */
+export function refreshConversationStatusReply(db: DatabaseSync, row: { id: string; source_event_id: string; aggregate_id: string; payload_json: string; attempt: number }): boolean {
+  if (!row.source_event_id.startsWith("conversation:")) return true;
+  const context = db.prepare("SELECT j.proposal_json,j.target_work_item_id,e.conversation_id,w.conversation_id AS target_group " +
+    "FROM collaboration_conversation_intents j JOIN collaboration_external_events e ON e.id=j.event_id " +
+    "LEFT JOIN collaboration_work_items w ON w.id=j.target_work_item_id WHERE j.event_id=? AND j.status='applied' AND e.source_event_id=?")
+    .get(row.aggregate_id, row.source_event_id.slice("conversation:".length)) as {
+      proposal_json: string | null; target_work_item_id: string | null; conversation_id: string; target_group: string | null;
+    } | undefined;
+  if (!context?.proposal_json) return true;
+  const result = JSON.parse(context.proposal_json) as ConversationIntentDecision;
+  if (result.action !== "read_status") return true;
+  if (!context.target_work_item_id || context.conversation_id !== context.target_group) return false;
+  const payload = JSON.stringify(renderConversationReplyCard(conversationStatus(db, context.target_work_item_id)));
+  if (payload === row.payload_json) return true;
+  if (row.attempt !== 1) return false;
+  const updated = db.prepare("UPDATE collaboration_outbox SET payload_json=? WHERE id=? AND delivery_state='claimed' AND attempt=1 AND sent_at IS NULL")
+    .run(payload, row.id);
+  if (!updated.changes) return false;
+  row.payload_json = payload;
+  return true;
+}
+
+export function conversationReply(db: DatabaseSync, result: ConversationIntentDecision): string {
+  if (result.action === "acknowledge") return "不客气，有需要继续说。";
+  if (result.action === "control_requires_authorization") return "这涉及控制或审批操作，需要由负责人确认具体动作和影响；目前没有执行。";
+  if (result.action === "read_status" && result.target) return conversationStatus(db, result.target.id);
+  if (result.action === "explain_reply" && result.reply) {
+    const row = db.prepare("SELECT payload_json FROM collaboration_outbox WHERE id=? AND delivery_state='sent'")
+      .get(result.reply.sourceEventId.replace(/^outbox:/u, "")) as { payload_json: string } | undefined;
+    if (!row) return "我还不能确认你指的是哪条回复，请说一下其中的内容。";
+    const card = JSON.parse(row.payload_json) as { type: string; status?: string };
+    if (card.type === "clarification_card") return "之前的回复是在确认还缺哪些信息：需要先回答其中会影响修改结果的问题，并不是说已经改好了。";
+    if (card.status === "completed" || card.status === "owner_accepted") return "之前的回复表示当时的修改和检查已完成；它说的是当时那次结果，不代表后来新增的要求也已经处理。";
+    if (card.status === "candidate_ready") return "之前的回复表示改动已准备好，但还有风险需要负责人确认，任务尚未完成。";
+    if (card.status === "planning" || card.status === "ready_for_execution") return "之前的回复是在说明准备进度，并不是修改已经完成；执行和检查后才会给出结果。";
+    return `之前的回复内容是：${redactSensitiveText(result.reply.text).slice(0, 700)}\n这只是说明之前的消息，不会因此重新修改。`;
+  }
+  if (result.action === "ask_context" && result.reason === "missing_reply") return "你想了解哪条回复的意思？说一下其中的内容就行。";
+  return "你说的是哪个问题，或者想确认哪一件事？简单说一下问题名称或具体内容就行。";
+}

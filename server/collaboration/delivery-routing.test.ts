@@ -17,6 +17,8 @@ import { OutboxDispatcher } from "./outbox-dispatcher.ts";
 import { InstanceLeaseCoordinator } from "./leases.ts";
 import { CollaborationHeadlessRuntime } from "./operations/runtime.ts";
 import { parseDingTalkOwnerTextCommand, parseDingTalkOwnerTextAction } from "../integrations/dingtalk/text-actions.ts";
+import { ModelNaturalIntakeInterpreter } from "./natural-intake.ts";
+import { validProposal, policy } from "./planner.test-fixtures.ts";
 
 const roots: string[] = [];
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -50,6 +52,26 @@ function fixture(environment: NodeJS.ProcessEnv) {
 }
 
 describe("production delivery group routing", () => {
+  it("routes a deferred read-only reply to its durable original group without a Work Item or session", async () => {
+    const env = { OMB_DINGTALK_ALLOWED_CONVERSATION_IDS: "group-a,group-b", OMB_DINGTALK_PROACTIVE_CONVERSATION_MAP: '{"group-a":"open-a","group-b":"open-b"}' };
+    const f = fixture(env);
+    const service = startCollaborationService({ dataDirectory: f.root, planning: { planner: { propose: validProposal }, policy,
+      naturalIntake: new ModelNaturalIntakeInterpreter({ async complete(request) {
+        const input = JSON.parse(request.user);
+        return { version: 1, sourceEventId: input.sourceEventId, intent: "acknowledgement", targetWorkItemId: null, replySourceEventId: null, quote: input.text, confidence: "high" };
+      } }) } });
+    try {
+      service.ingestDingTalkMessage({ sourceEventId: "thanks", transportMessageId: "thanks", conversationId: "group-b", addressedToBot: true,
+        text: "谢谢。", sender: { senderId: "staff", senderCorpId: "corp", senderStaffId: "staff", displayName: "Test" } });
+      await service.processNaturalIntake();
+      const message = { ...f.message("conversation:thanks"), aggregateType: "association" as const };
+      expect(f.db.prepare("SELECT work_item_id FROM collaboration_external_events WHERE source_event_id='thanks'").get()).toEqual({ work_item_id: null });
+      expect(await createDingTalkDelivery(new DingTalkSessionReplyRegistry(), env, f.root).deliver(message)).toEqual({ outcome: "sent" });
+      expect(f.destinations).toEqual(["open-b"]);
+      expect(await f.delivery.deliver({ ...message, id: "forged", aggregateId: "missing" })).not.toEqual({ outcome: "sent" });
+      expect(f.destinations).toEqual(["open-b"]);
+    } finally { service.close(); f.db.close(); }
+  });
   it("reconstructs query-only delivery without resending through an available session", async () => {
     const env = { OMB_DINGTALK_ALLOWED_CONVERSATION_IDS: "group-a,group-b", OMB_DINGTALK_PROACTIVE_CONVERSATION_MAP: '{"group-a":"open-a","group-b":"open-b"}' };
     const f = fixture(env); let state = "PROCESSING";

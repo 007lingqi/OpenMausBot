@@ -34,6 +34,7 @@ import { hasUnsettledVerification } from "./verification-lifecycle.ts";
 import { CommandCleanupError } from "./execution-limits.ts";
 import { completeVerifiedLowRiskCandidate } from "./candidate-approval.ts";
 import { publishVerificationRuntimePolicy } from "./verification-runtime-policy.ts";
+import { conversationStatus } from "./conversation-context.ts";
 
 const scratch: string[] = [];
 const resources: Array<{ close(): void }> = [];
@@ -297,6 +298,21 @@ function mappingHarness(item: Fixture) {
 }
 
 describe("independent candidate verification", () => {
+  it("reports completion only while the accepted fixed candidate still has current paired evidence", async () => {
+    const item = fixture(undefined, true, true); const h = mappingHarness(item);
+    item.database.prepare("UPDATE collaboration_work_nodes SET risk='low' WHERE work_item_id=?").run(item.workItemId);
+    publishVerificationRuntimePolicy(item.database, { instance: { ownerId: "instance-1", fence: 1 }, now: Date.now(),
+      repositories: { [item.repository]: { targetCommands: item.commands } }, mappingPolicy: "fixture-v1" });
+    expect((await h.coordinator.verify({ candidateRunId: item.runId, worktreePath: item.worktree,
+      instance: { ownerId: "instance-1", fence: 1 }, now: 4000 })).passed).toBe(true);
+    expect(completeVerifiedLowRiskCandidate(item.database, { workItemId: item.workItemId, runId: item.runId,
+      sourceEventId: "completion-query-proof", now: 5000 }).completed).toBe(true);
+    expect(conversationStatus(item.database, item.workItemId)).toContain("修改完成，相关检查已通过");
+    // Reading a completed result must not reopen the active execution/Owner gate.
+    expect(candidateHasPassedMetaReview(item.database, item.runId, item.candidateSha)).toBe(false);
+    item.database.prepare("UPDATE collaboration_work_nodes SET read_scope_json='[\"changed-scope\"]' WHERE work_item_id=? AND node_type='validate'").run(item.workItemId);
+    expect(conversationStatus(item.database, item.workItemId)).toContain("不能据此确认修改完成");
+  });
   it("verifies and reads both review stages under a matching published runtime policy", async () => {
     const item = fixture(undefined, true, true); const h = mappingHarness(item);
     publishVerificationRuntimePolicy(item.database, { instance: { ownerId: "instance-1", fence: 1 }, now: Date.now(),

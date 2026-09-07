@@ -13,6 +13,7 @@ import type { AttachmentEvidenceNotification } from "./attachment-ingestion.ts";
 import { readNaturalIntakeContext } from "./natural-intake-context.ts";
 import { naturalIntakeFailureEventId } from "./natural-intake-recovery.ts";
 import { naturalJobStorage, materialInterpretationSourceCurrent, materialIntakeFailureEventId, type NaturalJob } from "./natural-material-intake.ts";
+import { classifyConversationIntent, type ConversationIntentRequest, type ConversationIntentDecision } from "./conversation-intent.ts";
 
 export interface NaturalIntakeEvent { sourceEventId: string; principalId: string; text: string }
 export interface NaturalIntakeRequest {
@@ -30,6 +31,7 @@ export interface NaturalIntakeRequest {
 export interface NaturalIntakeInterpreter {
   interpret(request: NaturalIntakeRequest, signal: AbortSignal): Promise<unknown>;
   associate?: NaturalAssociationPort;
+  classifyConversation?: (request: ConversationIntentRequest, signal: AbortSignal) => Promise<ConversationIntentDecision>;
 }
 
 export interface NaturalIntakeModelPort {
@@ -39,6 +41,9 @@ export interface NaturalIntakeModelPort {
 export class ModelNaturalIntakeInterpreter implements NaturalIntakeInterpreter {
   private readonly model: NaturalIntakeModelPort;
   constructor(model: NaturalIntakeModelPort) { this.model = model; }
+  classifyConversation(request: ConversationIntentRequest, signal: AbortSignal): Promise<ConversationIntentDecision> {
+    return classifyConversationIntent(this.model, request, signal);
+  }
   associate(request: NaturalAssociationRequest, signal: AbortSignal): Promise<unknown> {
     return interpretNaturalAssociation(this.model, request, signal);
   }

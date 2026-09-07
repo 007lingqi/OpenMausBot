@@ -214,7 +214,7 @@ function publicEvidence(evidence: readonly TestEvidence[], commands: Readonly<Re
   }));
 }
 
-function readRow(database: DatabaseSync, candidateRunId: string): VerificationRow | null {
+function readRow(database: DatabaseSync, candidateRunId: string, completed = false): VerificationRow | null {
   const row = database.prepare(
     "SELECT r.id AS candidate_run_id, r.work_item_id, r.plan_revision, p.snapshot_revision, p.proposal_hash, " +
       "m.assigned_agent_id AS modify_agent_id, v.assigned_agent_id AS verifier_agent_id, " +
@@ -231,7 +231,7 @@ function readRow(database: DatabaseSync, candidateRunId: string): VerificationRo
       "AND v.node_type = 'validate' AND v.active = 1 " +
       "WHERE r.id = ? AND r.status = 'succeeded' AND c.state = 'target_tests_passed' " +
       "AND c.result_sha IS NOT NULL AND w.definition_status = 'ready_for_execution' " +
-      "AND w.control_state = 'active'",
+      (completed ? "AND w.control_state='accepted' AND w.status='accepted' AND w.accepted_candidate_sha=c.result_sha" : "AND w.control_state = 'active'"),
   ).get(candidateRunId) as VerificationRow | undefined;
   return row && readPlanMaterialReadiness(database, row.work_item_id, row.plan_revision).ready ? row : null;
 }
@@ -365,6 +365,14 @@ export function candidateHasPassedMetaReview(
   if (!FULL_SHA.test(candidateSha)) return false;
   const row = readRow(database, candidateRunId);
   return Boolean(row && !hasUnsettledRepositoryActivity(database,row.repository_path) && row.result_sha === candidateSha && latestPassedReviewPair(database, row));
+}
+
+/** Read-only proof for an already completed result. Deliberately separate from
+ * the active candidate gate: a query must never reopen execution or approval. */
+export function completedCandidateHasPassedMetaReview(database: DatabaseSync, candidateRunId: string, candidateSha: string): boolean {
+  if (!FULL_SHA.test(candidateSha)) return false;
+  const row = readRow(database, candidateRunId, true);
+  return Boolean(row && !hasUnsettledRepositoryActivity(database, row.repository_path) && row.result_sha === candidateSha && latestPassedReviewPair(database, row));
 }
 
 export class CandidateVerificationCoordinator {

@@ -11,6 +11,7 @@ import { buildDefinitionPatchFromText } from "./spec-builder.ts";
 import { redactSensitiveText } from "./sensitive-text.ts";
 import { NaturalIntakeCoordinator, type NaturalIntakeInterpreter, type NaturalProjection } from "./natural-intake.ts";
 import { NaturalAssociationCoordinator } from "./natural-association.ts";
+import { ConversationIngressCoordinator } from "./conversation-ingress.ts";
 import { clarificationRecipient } from "./clarification-recipients.ts";
 import { attachmentCompletenessGates, attachmentExcerpts, readNaturalAttachmentContext } from "./attachment-completeness.ts";
 import { readAttachmentEvidenceNotification } from "./attachment-ingestion.ts";
@@ -138,6 +139,7 @@ export class PlanningCoordinator {
   private closed = false;
   private readonly naturalIntake: NaturalIntakeCoordinator | null;
   private readonly naturalAssociation: NaturalAssociationCoordinator | null;
+  private readonly conversationIngress: ConversationIngressCoordinator | null;
 
   constructor(databaseFile: string, options: PlanningCoordinatorOptions) {
     this.options = options;
@@ -151,6 +153,10 @@ export class PlanningCoordinator {
         this.reviseDefinition(workItemId, patch, now, { natural }) !== null) : null;
     this.naturalAssociation = options.naturalIntake?.associate ? new NaturalAssociationCoordinator(this.database,
       options.naturalIntake.associate.bind(options.naturalIntake), (workItemId, sourceEventId, now) => {
+        this.observeAcceptedEvent(workItemId, "", now, sourceEventId);
+      }) : null;
+    this.conversationIngress = options.naturalIntake?.classifyConversation ? new ConversationIngressCoordinator(this.database,
+      options.naturalIntake.classifyConversation.bind(options.naturalIntake), (workItemId, sourceEventId, now) => {
         this.observeAcceptedEvent(workItemId, "", now, sourceEventId);
       }) : null;
   }
@@ -335,6 +341,8 @@ export class PlanningCoordinator {
 
   async processNaturalIntake(now = Date.now(), beforeInterpret?: () => void): Promise<string | null> {
     if (this.closed) throw new Error("Planning coordinator is closed");
+    if (this.conversationIngress) await this.conversationIngress.processOne(now);
+    if (this.closed) return null;
     if (this.naturalAssociation) await this.naturalAssociation.processOne(now);
     if (this.closed) return null;
     beforeInterpret?.();
@@ -543,6 +551,7 @@ export class PlanningCoordinator {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    this.conversationIngress?.close();
     this.naturalIntake?.close();
     this.naturalAssociation?.close();
     this.database.close();

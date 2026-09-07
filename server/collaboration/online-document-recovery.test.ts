@@ -118,17 +118,17 @@ it('preserves all schema34 failed-read fields and requires fresh Owner recovery 
   try {
     const { recovery_generation: generation, ...original } = h.db.prepare('SELECT * FROM collaboration_online_read_jobs').get()!;
     expect(generation).toBe(0);
-    h.db.exec(`DROP TABLE collaboration_online_read_recoveries; DROP TRIGGER online_read_jobs_binding;
+    h.db.exec(`DROP TABLE collaboration_conversation_intents; DROP TABLE collaboration_online_read_recoveries; DROP TRIGGER online_read_jobs_binding;
       ALTER TABLE collaboration_online_read_jobs DROP COLUMN recovery_generation;
       CREATE TRIGGER online_read_jobs_binding BEFORE UPDATE ON collaboration_online_read_jobs
         WHEN NEW.id<>OLD.id OR NEW.work_item_id<>OLD.work_item_id OR NEW.source_event_id<>OLD.source_event_id
           OR NEW.normalized_hash<>OLD.normalized_hash OR NEW.reference_hash<>OLD.reference_hash
           OR NEW.grant_fingerprint<>OLD.grant_fingerprint OR NEW.attempts<OLD.attempts OR NEW.projection_attempts<OLD.projection_attempts
         BEGIN SELECT RAISE(ABORT,'online source and budget are immutable'); END;
-      DELETE FROM collaboration_schema_migrations WHERE version=35; PRAGMA user_version=34`);
+      DELETE FROM collaboration_schema_migrations WHERE version>=35; PRAGMA user_version=34`);
     const upgraded = startCollaborationService(h.options);
     try {
-      expect(h.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 35 });
+      expect(h.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 36 });
       expect(h.db.prepare('SELECT * FROM collaboration_online_read_jobs').get()).toEqual({ ...original, recovery_generation: 0 });
       h.authorize(); await upgraded.processOnlineDocuments(h.now); expect(h.reads()).toBe(0);
       expect(h.recover().allowed).toBe(true); await upgraded.processOnlineDocuments(h.now); expect(h.reads()).toBe(1);

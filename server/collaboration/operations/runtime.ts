@@ -898,8 +898,8 @@ export class CollaborationHeadlessRuntime {
   ingestDingTalkMessage(message: DingTalkInboundMessage): InboundMessageOutcome {
     this.assertAcceptingNewWork();
     const outcome = this.service!.ingestDingTalkMessage(message);
-    if (!outcome.duplicate && outcome.workItemId) this.syncMetaBundleBestEffort(outcome.workItemId, true);
-    if (this.options.autoExecuteReady && !outcome.duplicate && outcome.workItemId) {
+    if (!outcome.duplicate && !outcome.deferred && outcome.workItemId) this.syncMetaBundleBestEffort(outcome.workItemId, true);
+    if (this.options.autoExecuteReady && !outcome.duplicate && !outcome.deferred && outcome.workItemId) {
       this.scheduleReadyExecution(outcome.workItemId);
     }
     return outcome;

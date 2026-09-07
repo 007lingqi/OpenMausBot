@@ -9,6 +9,7 @@ import {
   renderAssociationChoiceCard,
   renderInvalidReferenceCard,
   renderPrimaryStatusCard,
+  renderConversationReplyCard,
   type InboundAcknowledgementCard,
 } from "./message-renderer.ts";
 import {
@@ -32,6 +33,7 @@ export interface InboundMessageOutcome {
   workItemId: string | null;
   card: InboundAcknowledgementCard;
   outboxId: string;
+  deferred?: boolean;
 }
 
 interface ExistingEventRow {
@@ -80,14 +82,17 @@ export class InboundMessageProcessor {
   private readonly database: DatabaseSync;
   private closed = false;
   private readonly naturalAssociation: boolean;
+  private readonly conversationRouting: boolean;
 
-  constructor(databaseFile: string, naturalAssociation = false) {
+  constructor(databaseFile: string, naturalAssociation = false, conversationRouting = false) {
     this.naturalAssociation = naturalAssociation;
+    this.conversationRouting = conversationRouting;
     this.database = new DatabaseSync(databaseFile);
     this.database.exec("PRAGMA foreign_keys = ON");
     this.database.exec("PRAGMA busy_timeout = 5000");
     const version = this.database.prepare("PRAGMA user_version").get() as { user_version: number };
     if (version.user_version < 2) throw new Error("Collaboration ingress schema is not installed");
+    if (conversationRouting && version.user_version < 36) throw new Error("Conversation ingress schema is not installed");
   }
 
   processDingTalkMessage(message: DingTalkInboundMessage): InboundMessageOutcome {
@@ -133,7 +138,7 @@ export class InboundMessageProcessor {
         if (
           outbox.card.type === "clarification_card" ||
           outbox.card.type === "plan_status_card" ||
-          outbox.card.type === "command_status_card"
+          (outbox.card.type === "command_status_card" && outbox.card.command !== "conversation")
         ) {
           throw new Error(`Inbound acknowledgement ${sourceEventId} has an invalid card type`);
         }
@@ -149,6 +154,7 @@ export class InboundMessageProcessor {
           workItemId: existing.work_item_id,
           card: outbox.card,
           outboxId: outbox.id,
+          ...(outbox.card.type === "command_status_card" && outbox.card.command === "conversation" ? { deferred: true } : {}),
         };
       }
 
@@ -205,8 +211,12 @@ export class InboundMessageProcessor {
     let selectedWorkItemId: string | null = null;
     let card: InboundAcknowledgementCard;
     let aggregateVersion = 1;
+    const deferred = this.conversationRouting && input.association.kind !== "invalid_reference";
 
-    if (input.association.kind === "create") {
+    if (deferred) {
+      state = "ambiguous";
+      card = renderConversationReplyCard("我先看一下这条消息，确认你是在补充需求还是询问进展。");
+    } else if (input.association.kind === "create") {
       state = "created";
       selectedWorkItemId = workItemId();
       this.database
@@ -309,7 +319,14 @@ export class InboundMessageProcessor {
         "INSERT INTO collaboration_association_options (external_event_id, work_item_id) VALUES (?, ?)",
       );
       for (const candidate of input.association.workItemIds) insertOption.run(externalEventId, candidate);
-      if (this.naturalAssociation) this.database.prepare("INSERT INTO collaboration_natural_association_jobs (event_id,status) VALUES (?,'pending')").run(externalEventId);
+      if (this.naturalAssociation && !deferred) this.database.prepare("INSERT INTO collaboration_natural_association_jobs (event_id,status) VALUES (?,'pending')").run(externalEventId);
+    }
+
+    if (deferred) {
+      const event = this.database.prepare("SELECT normalized_json FROM collaboration_external_events WHERE id=?").get(externalEventId) as { normalized_json: string };
+      this.database.prepare("INSERT INTO collaboration_conversation_intents (event_id,source_hash,requested_work_item_id,status,context_outbox_sequence) " +
+        "VALUES (?,?,?,'pending',(SELECT COALESCE(MAX(delivery_sequence),0) FROM collaboration_outbox))")
+        .run(externalEventId, createHash("sha256").update(event.normalized_json).digest("hex"), input.association.kind === "associate" ? input.association.workItemId : null);
     }
 
     const outbox = enqueueInboundCard(this.database, {
@@ -320,6 +337,9 @@ export class InboundMessageProcessor {
       card,
       now: input.now,
     });
+    // Fast interpretation replaces this acknowledgement before it is sent. Slow
+    // interpretation still has one durable, truthful progress notice.
+    if (deferred) this.database.prepare("UPDATE collaboration_outbox SET next_attempt_at=? WHERE id=?").run(input.now + 15000, outbox.id);
     return {
       accepted: true,
       duplicate: false,
@@ -331,6 +351,7 @@ export class InboundMessageProcessor {
       workItemId: selectedWorkItemId,
       card,
       outboxId: outbox.id,
+      ...(deferred ? { deferred: true } : {}),
     };
   }
 }

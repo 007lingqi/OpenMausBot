@@ -96,6 +96,7 @@ describe("fake DingTalk Work Item ingress", () => {
       card: { type: "primary_status_card", headline: "已接收", association: "created", workItemVersion: 1 },
     });
     if (!result.accepted) throw new Error("Expected accepted result");
+    if (result.card.type !== "primary_status_card") throw new Error("Expected task acknowledgement");
     expect(result.workItemId).toMatch(/^WI-[A-F0-9]{12}$/u);
     expect(result.card.acknowledgement).toContain("不表示系统已经理解、执行或完成任务");
     expect(service.pendingOutbox()).toHaveLength(1);

@@ -109,7 +109,22 @@ export interface CommandStatusCard {
   controlState?: string;
 }
 
-export type InboundAcknowledgementCard = PrimaryStatusCard | AssociationChoiceCard | InvalidReferenceCard;
+/** Read-only conversational copy reuses the existing business-message transport envelope. */
+export interface ConversationReplyCard {
+  type: "command_status_card";
+  command: "conversation";
+  headline: "协作回复";
+  workItemId: "";
+  outcome: "allowed";
+  presentation: "business";
+  summary: string;
+}
+export function renderConversationReplyCard(summary: string): ConversationReplyCard {
+  return { type: "command_status_card", command: "conversation", headline: "协作回复", workItemId: "",
+    outcome: "allowed", presentation: "business", summary };
+}
+
+export type InboundAcknowledgementCard = PrimaryStatusCard | AssociationChoiceCard | InvalidReferenceCard | ConversationReplyCard;
 
 export type InboundCard =
   | InboundAcknowledgementCard

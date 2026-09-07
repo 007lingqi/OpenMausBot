@@ -16,7 +16,14 @@ export function readPlanMaterialReadiness(db: DatabaseSync, workItemId: string, 
   const current = !!plan && !!snapshot && snapshot.revision === latest?.revision &&
     (planRevision === undefined || planRevision === plan.revision);
   const gaps = snapshot ? attachmentCompletenessGates(db, workItemId, snapshot.facts) : [];
-  return { ready: current && gaps.length === 0, current, gaps, snapshotRevision: snapshot?.revision ?? null };
+  // Unclassified incoming text may still be a correction to this Spec. Wait
+  // for routing without adding it as a requirement or bumping the version.
+  const conversationPending = !!db.prepare("SELECT 1 FROM collaboration_conversation_intents j " +
+    "JOIN collaboration_external_events e ON e.id=j.event_id JOIN collaboration_work_items w ON w.conversation_id=e.conversation_id " +
+    "WHERE w.id=? AND ((j.status IN ('pending','running') AND (j.requested_work_item_id IS NULL OR j.requested_work_item_id=w.id)) " +
+    "OR (j.status IN ('routed','failed') AND j.target_work_item_id=w.id AND json_extract(j.proposal_json,'$.action') IN ('create_work','contribute'))) LIMIT 1")
+    .get(workItemId);
+  return { ready: current && gaps.length === 0 && !conversationPending, current, gaps, snapshotRevision: snapshot?.revision ?? null };
 }
 
 /** Startup recovery must not require a model/planner just to stop an incomplete old plan. */

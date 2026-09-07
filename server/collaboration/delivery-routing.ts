@@ -1,6 +1,22 @@
 import { DatabaseSync } from "node:sqlite";
+import type { OutboxDeliveryPort } from "./outbox.ts";
 
 const FIELD = "OMB_DINGTALK_PROACTIVE_CONVERSATION_MAP";
+
+/** Resolve only a persisted outbound binding, never strip a user-looking prefix
+ * and hope it names a real event or borrow another task's latest destination. */
+export function conversationReplyOrigin(databaseFile: string, message: Parameters<OutboxDeliveryPort["deliver"]>[0]): string | undefined {
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    const row = db.prepare("SELECT e.source_event_id FROM collaboration_outbox o " +
+      "JOIN collaboration_external_events e ON e.id=o.aggregate_id " +
+      "JOIN collaboration_conversation_intents j ON j.event_id=e.id " +
+      "WHERE o.id=? AND o.dedupe_key=? AND o.aggregate_type='association' AND o.aggregate_id=? " +
+      "AND e.source='dingtalk' AND o.source_event_id IN ('conversation:'||e.source_event_id,'conversation-failed:'||e.source_event_id)")
+      .get(message.id, message.dedupeKey, message.aggregateId) as { source_event_id: string } | undefined;
+    return row?.source_event_id;
+  } finally { db.close(); }
+}
 
 /** Trusted deployment configuration, never inferred from message text or payloads. */
 export function proactiveConversationRoutes(environment: NodeJS.ProcessEnv, allowed: ReadonlySet<string>): ReadonlyMap<string, string> {

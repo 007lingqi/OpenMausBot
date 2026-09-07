@@ -91,7 +91,7 @@ export function startCollaborationService(options: CollaborationServiceOptions):
   const ledger: CollaborationLedger = openCollaborationLedger(join(options.dataDirectory, "collaboration"));
   let inbound: InboundMessageProcessor;
   try {
-    inbound = new InboundMessageProcessor(ledger.filePath, !!options.planning?.naturalIntake?.associate);
+    inbound = new InboundMessageProcessor(ledger.filePath, !!options.planning?.naturalIntake?.associate, !!options.planning?.naturalIntake?.classifyConversation);
   } catch (error) {
     ledger.close();
     throw error;
@@ -164,8 +164,8 @@ export function startCollaborationService(options: CollaborationServiceOptions):
       assertServiceArmed();
       try {
         const outcome = inbound.processDingTalkMessage(message);
-        if (outcome.workItemId) onlineDocuments?.enqueue(outcome.workItemId, message.receivedAt);
-        if (planning && outcome.workItemId) {
+        if (outcome.workItemId && !outcome.deferred) onlineDocuments?.enqueue(outcome.workItemId, message.receivedAt);
+        if (planning && outcome.workItemId && !outcome.deferred) {
           planning.observeAcceptedEvent(outcome.workItemId, message.text, message.receivedAt, outcome.sourceEventId);
         }
         return outcome;

@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { OPENMAUSBOT_SOURCE_BASELINE } from "./config.ts";
 
-export const COLLABORATION_SCHEMA_VERSION = 35;
+export const COLLABORATION_SCHEMA_VERSION = 36;
 
 interface Migration {
   version: number;
@@ -1564,6 +1564,30 @@ const migrations: readonly Migration[] = [
           BEGIN SELECT RAISE(ABORT,'online source and budget are immutable'); END;
       `);
     },
+  },
+  {
+    version: 36, name: "conversation-intent-before-mutation", checksum: "v36:durable-read-only-conversation-routing",
+    apply(database) { database.exec(`
+      CREATE TABLE collaboration_conversation_intents (
+        event_id TEXT PRIMARY KEY REFERENCES collaboration_external_events(id),
+        source_hash TEXT NOT NULL CHECK(length(source_hash)=64),
+        context_outbox_sequence INTEGER NOT NULL DEFAULT 0 CHECK(context_outbox_sequence>=0),
+        requested_work_item_id TEXT REFERENCES collaboration_work_items(id),
+        status TEXT NOT NULL CHECK(status IN ('pending','running','routed','applied','failed')),
+        attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts BETWEEN 0 AND 3),
+        projection_attempts INTEGER NOT NULL DEFAULT 0 CHECK(projection_attempts BETWEEN 0 AND 3),
+        target_work_item_id TEXT REFERENCES collaboration_work_items(id),
+        proposal_json TEXT, claim_token TEXT, lease_until INTEGER
+      ) STRICT;
+      CREATE TRIGGER conversation_intent_binding BEFORE UPDATE ON collaboration_conversation_intents
+        WHEN OLD.status IN ('applied','failed') OR NEW.event_id<>OLD.event_id OR NEW.source_hash<>OLD.source_hash
+          OR NEW.requested_work_item_id IS NOT OLD.requested_work_item_id OR NEW.attempts<OLD.attempts
+          OR NEW.context_outbox_sequence<>OLD.context_outbox_sequence
+          OR (OLD.proposal_json IS NOT NULL AND NEW.target_work_item_id IS NOT OLD.target_work_item_id)
+          OR NEW.projection_attempts<OLD.projection_attempts
+          OR (OLD.proposal_json IS NOT NULL AND NEW.proposal_json IS NOT OLD.proposal_json)
+        BEGIN SELECT RAISE(ABORT,'conversation intent source, result and budget are immutable'); END;
+    `); },
   },
 ];
 
