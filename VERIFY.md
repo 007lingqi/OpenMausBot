@@ -1,5 +1,14 @@
 # Meta 协作验证记录
 
+## 2026-09-07 镜像内文档relay打包验证（完整验证通过/未部署）
+
+- d75809：Docker部署先行测试1失败/2通过，复现正式Dockerfile漏复制文档relay。修复后44274d：4文件61项、pnpm typecheck、pnpm build:server及git diff --check通过。
+- 693f3c核对正式Dockerfile六个COPY源/目标与离线验证构建清单完全一致；0c6d85确认在已有固定runtime镜像上离线构建成功，固定新镜像sha256:41df36eec053b15ca956a5e8497f7aabc137d25fe11acc14bd6f5bcf79bdb4db。当前业务bundle源自fe941c3，Dockerfile打包修复与烟测尚在本批；这是复用已存在依赖层的构建，不冒充重新执行正式多阶段依赖安装。
+- 536fc8/7bcd6c：`node scripts/smoke-online-document-docker.mjs colima-openmausbot-pilot sha256:41df36eec053b15ca956a5e8497f7aabc137d25fe11acc14bd6f5bcf79bdb4db --packaged`及不带--packaged的原模式均通过，随后typecheck/diff exit0。镜像模式未挂入relay替身，真实受限容器使用/opt内程序；root被拒、UID501/GID1000成功、启动无读取、授权拒绝、一次合成读取、父管道退出通过。新容器3c1b06f9…与22149c32…均已退出保留。
+- d40b22：打包服务无node_modules启动、9代理路径、headless健康/停止、模型与文档host/relay合成请求/退出全部通过。154585：原试点仍固定1f53b346…healthy/restarts0；没有真实文档、群消息、模型调用、身份/凭据变更或服务部署。
+- 9cdefb：新固定镜像内六个bundle与dist-server逐字节哈希一致；实际Docker wrapper在独立合成库、禁群/禁执行、无网络/业务挂载条件下输出healthy/schema35并退出0。专用测试容器61c68e1a…已退出保留，不涉及真实库升级或部署。
+- 53df18确认d1532f/session19861整链exit0：`pnpm test && pnpm typecheck && git diff --check`通过。主集309文件通过/1跳过、3585项通过/18跳过；broker7项、桌面15+5+2+10项通过；重新打包、无node_modules启动、9代理路径、headless以及模型/文档host/relay启动退出均通过。业务源码与测试全程固定，仅状态记录变化；全部验证会话已终态。本批仅本地保存，不push/部署，材料账号及真实试点验收继续保留未完成。
+
 ## 2026-09-07 在线读取授权修复与Owner恢复（完整验证通过/未部署）
 
 - 22d27c确认84a9dd/session94056 exit0：26文件344项定向、pnpm typecheck、完整pnpm test及git diff --check通过。完整主集309文件通过/1跳过、3578项通过/18跳过；broker7项与桌面15+5+2+10项通过；打包、无node_modules启动、9代理路径、headless及合成模型/文档host/relay启动退出通过。该链启动后业务源码没有修改。

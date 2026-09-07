@@ -64,7 +64,10 @@ async function controller() {
     phase = 'root_denied';
     assert.throws(() => statSync(socketPath), { code: 'EACCES' });
     phase = 'relay_start';
-    relay = start(fileURLToPath(new URL('./online-document-relay.mjs', import.meta.url)), config.channelArgs);
+    const relayPath = process.argv[2] === 'packaged'
+      ? '/opt/openmausbot/collaboration/operations/online-document-relay.js'
+      : fileURLToPath(new URL('./online-document-relay.mjs', import.meta.url));
+    relay = start(relayPath, config.channelArgs);
     await relay.ready('online_document_channel_ready');
     const reads = () => upstream.stdout().split('\n').filter(Boolean).map(line => JSON.parse(line)).filter(value => value.event === 'fixture_read').length;
     assert.equal(reads(), 0);

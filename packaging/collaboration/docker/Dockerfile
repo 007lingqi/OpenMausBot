@@ -28,6 +28,7 @@ RUN groupadd --gid 10001 openmausbot-agent \
 COPY --from=build /src/dist-server/collaboration-headless.js /opt/openmausbot/collaboration-headless.js
 COPY --from=build /src/dist-server/collaboration-docker.js /opt/openmausbot/collaboration-docker.js
 COPY --from=build /src/dist-server/collaboration/operations/opencodex-model-channel.js /opt/openmausbot/collaboration/operations/opencodex-model-channel.js
+COPY --from=build /src/dist-server/collaboration/operations/online-document-relay.js /opt/openmausbot/collaboration/operations/online-document-relay.js
 COPY --from=build /src/dist-server/collaboration/operations/docker-apply-patch.js /opt/openmausbot/docker-apply-patch.js
 COPY --from=build /src/dist-server/collaboration/operations/contained-patch-worker.js /opt/openmausbot/contained-patch-worker.js
 

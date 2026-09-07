@@ -1,5 +1,15 @@
 # Meta 协作实施进度
 
+## 当前批次：文档relay镜像打包遗漏（2026-09-07，完整验证通过/未部署）
+
+- 上轮fe941c3已本地提交，工作树只保留用户AGENTS.md/outputs；属于实际修复与验证进展。继续检查非生产部署发现正式Dockerfile没有复制entrypoint要求的online-document-relay.js，旧Docker烟测从宿主挂入relay副本，不能发现这一遗漏。d75809先行红灯确认缺失。
+- 已补正式镜像COPY与回归测试；Docker烟测新增--packaged模式，只挂入合成probe，不编译或挂载relay替身，固定执行镜像内正式路径。44274d确认4文件61项、typecheck、build:server及diff通过；d40b22确认无node_modules启动/9代理路径和headless/模型/文档host/relay启动退出通过。
+- 693f3c逐项比对正式Dockerfile的六个COPY清单，复用原固定runtime依赖层并离线构建验证镜像；0c6d85确认构建exit0，镜像sha256:41df36eec053b15ca956a5e8497f7aabc137d25fe11acc14bd6f5bcf79bdb4db，构建目录/private/tmp/omb-doc-image-fe941c3-whYkXx。没有完整重拉依赖或执行正式多阶段依赖安装，不能扩大此构建证明的范围。
+- 536fc8/7bcd6c确认镜像内relay和原fixture两模式、typecheck及diff均exit0：root直连被拒、非root转发成功、启动不读、拒绝未授权来源、仅一次合成读取、父管道退出。两个新测试容器3c1b06f9…和22149c32…均停止保留，没有真实DWS/模型/群消息。154585确认原唯一试点仍1f53b346…healthy/restarts0，未更换服务/配置/身份/凭据。
+- 9cdefb确认镜像内六个正式bundle哈希与本次构建逐字节一致，并经实际Docker wrapper在禁群/禁执行、无网络与业务挂载的合成库上健康启动退出，schema35；独立测试容器61c68e1a…已退出保留。此健康探针未打开真实账本或部署服务。
+- 53df18确认d1532f/session19861整链exit0：完整pnpm test、typecheck及diff通过；主集309文件通过/1跳过、3585项通过/18跳过，broker7项、桌面15+5+2+10项，以及打包/无node_modules启动/9代理路径/headless与模型/文档通道启动退出均通过。源码/测试固定，仅记录更新。所有会话已终态，不再轮询或重启旧链；本批8文件核对后本地commit、不push，AGENTS.md/outputs保持原样。测试镜像不是实际试点部署或真实正文验收。
+- 剩余路径仍需Owner指定非生产钉钉文档/表格及允许的已登录账号，核验DWS真实包装/正文入Spec，装配宿主文档通道、准备schema35兼容回退后切换试点，再完成六类群场景/完整交付与恢复及Owner本人验收。禁止使用schema31旧镜像打开已升级真实库；不覆盖后续事件，不倒签旧proof或重置失败预算。Goal active，不能用此次镜像合成检查标完整目标通过。
+
 ## 当前批次：读取授权修复后的唯一Owner恢复（2026-09-07，完整验证通过/未部署）
 
 - 22d27c已确认84a9dd/session94056整链exit0：26文件344项扩大定向、typecheck、完整pnpm test、打包/无node_modules启动/9代理路径、headless与合成模型/文档host/relay启动退出、diff全部通过。完整主集309文件通过/1跳过、3578项通过/18跳过；broker7项、桌面15+5+2+10项通过。业务源码自84a9dd启动后未修改。
