@@ -1,9 +1,9 @@
 import {spawn,type ChildProcess} from 'node:child_process';
 import {existsSync,realpathSync} from 'node:fs';
 import {fileURLToPath,pathToFileURL} from 'node:url';
-import {relayLaunchConfiguration,superviseDockerService,type ManagedService} from './collaboration/operations/docker-service-supervisor.ts';
+import {documentRelayLaunchConfiguration,relayLaunchConfiguration,superviseDockerService,type ManagedService} from './collaboration/operations/docker-service-supervisor.ts';
 
-function managed(child:ChildProcess,relayUrl?:string):ManagedService {
+function managed(child:ChildProcess,relayUrl?:string,event='model_channel_ready'):ManagedService {
   const exited=new Promise<number>(resolve=>{
     child.once('error',()=>resolve(1));child.once('exit',code=>resolve(code??1));
   });
@@ -21,7 +21,7 @@ function managed(child:ChildProcess,relayUrl?:string):ManagedService {
         output+=chunk.toString('utf8');if(!output.includes('\n'))return;
         try{
           const report=JSON.parse(output.trim());
-          if(report.event!=='model_channel_ready'||report.mode!=='relay'||report.url!==relayUrl){fail();return;}
+          if(report.event!==event||report.mode!=='relay'||report.url!==relayUrl){fail();return;}
           done=true;resolve();
         }catch{fail();}
       });
@@ -38,17 +38,21 @@ function managed(child:ChildProcess,relayUrl?:string):ManagedService {
 
 export async function runDockerEntrypoint(args=process.argv.slice(2),environment:NodeJS.ProcessEnv=process.env):Promise<number>{
   const config=relayLaunchConfiguration(environment);
-  if(config&&(process.platform!=='linux'||process.getuid?.()!==0||!existsSync('/.dockerenv')))
+  const documents=documentRelayLaunchConfiguration(environment);
+  if((config||documents)&&(process.platform!=='linux'||process.getuid?.()!==0||!existsSync('/.dockerenv')))
     throw new Error('docker_relay_container_required');
   const suffix=import.meta.url.endsWith('.ts')?'.ts':'.js';
   const headless=fileURLToPath(new URL(`./collaboration-headless${suffix}`,import.meta.url));
   const channel=fileURLToPath(new URL(`./collaboration/operations/opencodex-model-channel${suffix}`,import.meta.url));
+  const documentChannel=fileURLToPath(new URL(`./collaboration/operations/online-document-relay${suffix}`,import.meta.url));
   const stop=new AbortController(),terminate=()=>stop.abort();
   process.once('SIGTERM',terminate);process.once('SIGINT',terminate);
   try{
     return await superviseDockerService({signal:stop.signal,
       ...(config?{startRelay:()=>managed(spawn('/usr/bin/setpriv',[...config.args,process.execPath,channel,...config.channelArgs],
         {env:config.environment,stdio:['pipe','pipe','ignore']}),config.url)}:{}),
+      ...(documents?{startDocumentRelay:()=>managed(spawn('/usr/bin/setpriv',[...documents.args,process.execPath,documentChannel,...documents.channelArgs],
+        {env:documents.environment,stdio:['pipe','pipe','ignore']}),documents.url,'online_document_channel_ready')}:{}),
       startHeadless:()=>managed(spawn(process.execPath,[headless,...args],{env:environment,stdio:['ignore','inherit','inherit']})),
     });
   }finally{process.off('SIGTERM',terminate);process.off('SIGINT',terminate);}

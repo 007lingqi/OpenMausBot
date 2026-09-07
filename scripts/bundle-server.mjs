@@ -47,6 +47,7 @@ const ENTRY_POINTS = [
   "collaboration/operations/contained-patch-worker.ts",
   "collaboration/operations/opencodex-model-channel.ts",
   "collaboration/operations/online-document-bridge.ts",
+  "collaboration/operations/online-document-relay.ts",
   // The packaged smoke probe imports this manifest directly. Importing the
   // shared avatar contract widens TypeScript's inferred emit root to the repo,
   // so tsc may place its copy under dist-server/server/. Bundle an explicit

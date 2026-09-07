@@ -1,5 +1,11 @@
 # Meta 协作决策记录
 
+## D-126 — Docker文档读取复用既有非root身份，不提升控制服务权限
+
+真实试点root控制服务仅有CHOWN/SETUID/SETGID，访问UID501/GID1000、0700目录下私有socket得到EACCES。保留此边界，新增固定回环文档relay并复用setpriv约束；DWS和固定grant在宿主，headless另有相同授权，relay只转发来源和受校验回执。模型与文档通道独立，不开放网络、shell或DWS配置。失联继续清理未确认，不自动重读，也不把relay退出当作宿主读取已收束。
+
+supervisor等待两个relay就绪，任一退出停止其余进程；父管道控制跨UID退出，不增加CAP_KILL。Compose/launchd模板仅是待装配产物，启动失败驻留、不无限重试。真实隔离Docker fixture已验证跨UID，但没有DWS业务读取、群消息或模型调用，不能代替真实验收。
+
 ## D-125 — 文档读取使用独立宿主能力通道，不复用模型命令权限
 
 操作员私有配置固定profile、白名单群和精确目标，服务启动失败时只输出安全错误，不静默降级读取其他身份或资源。Docker控制面经私有Unix socket提交原来源，宿主再次依自己的grant核对，并执行已有三条只读DWS leaf；禁止请求内CLI参数、任意HTTP地址、身份覆盖或凭据。宿主到控制面只返回脱敏正文与来源回执；不将文档中的指令提升为控制规则。

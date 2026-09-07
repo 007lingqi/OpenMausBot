@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.openmausbot.documents-pilot-channel</string>
+  <key>ProgramArguments</key><array>
+    <string>/usr/bin/env</string><string>-i</string>
+    <string>HOME=__HOME__</string><string>PATH=/usr/bin:/bin</string><string>LC_ALL=C</string>
+    <string>OMB_DINGTALK_ENABLED=1</string>
+    <string>OMB_DINGTALK_ALLOWED_CONVERSATION_IDS=__ALLOWED_GROUPS__</string>
+    <string>__NODE__</string><string>__RELEASE__/documents-launch-agent.mjs</string>
+    <string>--mode</string><string>bridge</string>
+    <string>--port</string><string>18103</string>
+    <string>--config</string><string>__ROOT__/config/online.json</string>
+    <string>--ssh-config</string><string>__HOME__/.colima/_lima/colima-openmausbot-pilot/ssh.config</string>
+    <string>--state-file</string><string>__ROOT__/state/documents.json</string>
+  </array>
+  <key>WorkingDirectory</key><string>__RELEASE__</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>ThrottleInterval</key><integer>30</integer>
+  <key>ExitTimeOut</key><integer>180</integer>
+  <key>Umask</key><integer>63</integer>
+  <key>StandardOutPath</key><string>__ROOT__/channel.stdout.log</string>
+  <key>StandardErrorPath</key><string>__ROOT__/channel.stderr.log</string>
+</dict></plist>

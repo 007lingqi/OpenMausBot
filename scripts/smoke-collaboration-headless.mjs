@@ -50,7 +50,7 @@ try {
   await smokeModelChannel(realpathSync(join(staging,"server","collaboration","operations","opencodex-model-channel.js")),
     minimalEnvironment(healthData),staging);
   await smokeOnlineDocumentChannel(realpathSync(join(staging,"server","collaboration","operations","online-document-bridge.js")),
-    minimalEnvironment(healthData),staging);
+    minimalEnvironment(healthData),staging,realpathSync(join(staging,"server","collaboration","operations","online-document-relay.js")));
 
   const health = await execFileAsync(process.execPath, [entry, "--health", "--data-dir", healthData], {
     cwd: staging,

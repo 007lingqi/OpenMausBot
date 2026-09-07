@@ -1,10 +1,42 @@
 import {expect,it,vi} from 'vitest';
-import {superviseDockerService,relayLaunchConfiguration,type ManagedService} from './docker-service-supervisor.ts';
+import {superviseDockerService,relayLaunchConfiguration,documentRelayLaunchConfiguration,type ManagedService} from './docker-service-supervisor.ts';
 
 function deferred<T>(){let resolve!:(value:T)=>void;const promise=new Promise<T>(r=>{resolve=r;});return {promise,resolve};}
 function child(){const exit=deferred<number>(),ready=deferred<void>();return {
  exited:exit.promise,ready:ready.promise,stop:vi.fn(()=>exit.resolve(0)),exit,readyGate:ready,
 };}
+it('waits for both independent relays before starting headless and stops every peer',async()=>{
+ const model=child(),documents=child(),headless=child(),stop=new AbortController(),start=vi.fn(()=>headless);
+ model.readyGate.resolve();
+ const pending=superviseDockerService({startRelay:()=>model,startDocumentRelay:()=>documents,startHeadless:start,signal:stop.signal});
+ try{
+  await new Promise(resolve=>setTimeout(resolve,10));expect(start).not.toHaveBeenCalled();
+  documents.readyGate.resolve();await vi.waitFor(()=>expect(start).toHaveBeenCalledOnce());
+ }finally{stop.abort();await pending;}
+ expect(documents.stop).toHaveBeenCalledOnce();expect(model.stop).toHaveBeenCalledOnce();expect(headless.stop).toHaveBeenCalledOnce();
+});
+it.each(['model','documents'])('does not start headless if %s exits while the second relay is starting',async which=>{
+ const model=child(),documents=child(),start=vi.fn();model.readyGate.resolve();
+ const pending=superviseDockerService({startRelay:()=>model,startDocumentRelay:()=>documents,startHeadless:start,signal:new AbortController().signal});
+ await new Promise(resolve=>setTimeout(resolve,5));(which==='model'?model:documents).exit.resolve(0);
+ expect(await pending).toBe(1);expect(start).not.toHaveBeenCalled();expect(documents.stop).toHaveBeenCalledOnce();
+});
+it('stops headless and the model relay if the document relay dies after startup',async()=>{
+ const model=child(),documents=child(),headless=child(),start=vi.fn(()=>headless);model.readyGate.resolve();documents.readyGate.resolve();
+ const pending=superviseDockerService({startRelay:()=>model,startDocumentRelay:()=>documents,startHeadless:start,signal:new AbortController().signal});
+ await vi.waitFor(()=>expect(start).toHaveBeenCalledOnce());documents.exit.resolve(0);
+ expect(await pending).toBe(1);expect(model.stop).toHaveBeenCalledOnce();expect(headless.stop).toHaveBeenCalledOnce();
+});
+it('uses the existing socket owner with no credential environment or model-port collision',()=>{
+ const documentEnv={OMB_DOCUMENT_RELAY_ENABLED:'1',OMB_DOCUMENT_RELAY_UID:'501',OMB_DOCUMENT_RELAY_GID:'1000',
+  OMB_DOCUMENT_RELAY_PORT:'18102',OMB_DOCUMENT_RELAY_SOCKET:'/run/omb-document-channel/documents.sock'};
+ const result=documentRelayLaunchConfiguration({...documentEnv,CLIENT_SECRET:'private',HOME:'/private'})!;
+ expect(result.args).toContain('--reuid=501');expect(result.args).toContain('--regid=1000');expect(result.args).toContain('--clear-groups');
+ expect(result.environment).not.toHaveProperty('CLIENT_SECRET');expect(result.environment).not.toHaveProperty('HOME');
+ expect(result.channelArgs).toEqual(['--port','18102','--socket','/run/omb-document-channel/documents.sock','--parent-stdin','1']);
+ expect(()=>documentRelayLaunchConfiguration({...documentEnv,OMB_OPENCODEX_RELAY_ENABLED:'1',OMB_OPENCODEX_RELAY_PORT:'18102'})).toThrow('docker_document_relay_port_conflict');
+ expect(()=>documentRelayLaunchConfiguration({...documentEnv,OMB_DOCUMENT_RELAY_UID:'10001'})).toThrow('docker_relay_configuration_invalid');
+});
 it('starts headless only after relay readiness and closes the relay when headless exits',async()=>{
  const relay=child(),headless=child(),start=vi.fn(()=>headless),stop=new AbortController();
  const pending=superviseDockerService({startRelay:()=>relay,startHeadless:start,signal:stop.signal});

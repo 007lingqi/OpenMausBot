@@ -10,11 +10,21 @@
 
 宿主的transport为 `host_dws`，显式指定 `executable`、`configDirectory`、`home`、`cwd` 与仅含绝对目录的 `path`。调用环境仅包含这些固定路径及必要语言变量，不继承项目Secret。宿主只调用现有DWS `doc +fetch`、`sheet +list-sheets`、`sheet +read`；不开放shell、写入或账号选择。
 
-控制面的transport为 `private_socket`，只指定 `socketPath`。配置中仍需相同grants以核对授权指纹；DWS登录配置和凭据不进入Docker。socket与真实父目录必须由进程同UID持有，权限分别为0600/0700；无HTTP或其他网络回退。健康探针只验证配置，不触发材料读取或socket连接。
+Docker控制面的transport为 `docker_relay`，只指定固定容器回环 `port: 18102`，必须与 `OMB_DOCUMENT_RELAY_ENABLED=1` 和 `OMB_DOCUMENT_RELAY_PORT` 一致。配置中仍需相同grants以核对授权指纹；DWS登录配置和凭据不进入Docker。控制服务没有DAC override，不能直接访问其他UID的私有socket；由既有socket owner UID/GID启动的独立受限relay负责访问，不放宽文件权限或容器capabilities。
+
+`private_socket` 仍用于与socket owner同UID的本机调用，不适用于当前root控制进程。socket与真实父目录必须由进程同UID持有，权限分别为0600/0700；无任意URL或网络回退。headless健康探针只验证配置；relay启动使用无效空请求确认协议可达，不读取正文。
+
+## Docker与宿主启动模板
+
+`docker/compose.documents.yaml` 显式追加到已核实的OpenCodex/contained-provider配置之后，只增加两个已存在的只读挂载：controller私有JSON、`/tmp/omb-documents-channel-18103`。缺失路径拒绝启动；`OMB_DOCUMENT_RELAY_UID/GID` 必须为实际socket owner，不能是root或候选执行身份。不增加网络发布、DWS HOME挂载、凭据或额外capabilities。
+
+宿主模板 `com.openmausbot.documents-pilot-channel.plist` 与 `documents-launch-agent.mjs` 使用独立18103端口及私有持久状态。wrapper旁需有同一已验证发布包的 `online-document-bridge.mjs`（对应打包的 `collaboration/operations/online-document-bridge.js`），不直接运行可变工作目录产物。配置/启动/清理失败只输出安全提示并驻留等待处理，不进入无限重启。模板尚未安装，不证明自启恢复已通过。
+
+Docker supervisor等待两个relay分别就绪才启动headless；任一退出停止其余进程。跨UID通过父进程管道退出，不增加CAP_KILL。relay无身份选择/配置/命令执行接口；失联仍是清理未确认，relay退出不能证明宿主读取已结束。
 
 ## 独立宿主通道
 
-打包入口为 `collaboration/operations/online-document-bridge.js`（开发入口同名.ts）。启动参数要求显式 `--config`、`--mode`、`--port`，并设置 `OMB_DINGTALK_ENABLED=1` 和当前群白名单环境变量。入口配置必须是host_dws，不能把private_socket再套一层代理。
+打包入口为 `collaboration/operations/online-document-bridge.js`（开发入口同名.ts）。启动参数要求显式 `--config`、`--mode`、`--port`，并设置 `OMB_DINGTALK_ENABLED=1` 和当前群白名单环境变量。入口配置必须是host_dws，不能把private_socket或docker_relay再套一层代理。
 
 - `host`模式只在127.0.0.1监听，用于受控本机集成；它不开放公网。
 - `bridge`模式另需现有指定试点的 `--ssh-config`（路径以 `/colima-openmausbot-pilot/ssh.config` 结束）和私有目录内的 `--state-file`。必须指定非零独立端口，不能复用模型端口。

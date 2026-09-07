@@ -1,0 +1,24 @@
+# Opt-in after compose.opencodex.yaml / compose.contained-provider.yaml.
+# The existing socket owner is explicit; no new capabilities, ports, credentials or DWS home mounts.
+services:
+  collaboration:
+    environment:
+      OMB_ONLINE_DOCUMENTS_CONFIG_FILE: /run/omb-documents-config/online.json
+      OMB_DOCUMENT_RELAY_ENABLED: "1"
+      OMB_DOCUMENT_RELAY_UID: ${OMB_DOCUMENT_RELAY_UID:?required}
+      OMB_DOCUMENT_RELAY_GID: ${OMB_DOCUMENT_RELAY_GID:?required}
+      OMB_DOCUMENT_RELAY_PORT: "18102"
+      OMB_DOCUMENT_RELAY_SOCKET: /run/omb-document-channel/documents.sock
+    volumes:
+      - type: bind
+        source: ${OMB_DOCUMENTS_CONTROLLER_CONFIG:?required}
+        target: /run/omb-documents-config/online.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${OMB_DOCUMENTS_CHANNEL_DIRECTORY:?required}
+        target: /run/omb-document-channel
+        read_only: true
+        bind:
+          create_host_path: false

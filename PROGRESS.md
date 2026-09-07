@@ -1,5 +1,17 @@
 # Meta 协作实施进度
 
+## 当前批次：Docker文档非root中继（2026-09-07，完整验证通过/未部署）
+
+- 9d389b已确认d20e6c/session2007整链exit0：74项定向、typecheck、完整pnpm test、打包/无node_modules启动/9代理路径、headless与模型/文档host/relay启动退出、diff全部通过。主集308文件通过/1跳过、3567项通过/18跳过；broker7项通过。受测源码与测试固定，仅记录更新。所有验证会话已终态，无在途模型/读取/发布，不再轮询旧句柄。
+- 10b968使用清空项目变量与合成配置完成真实Docker Compose合并dry-run：原三项capabilities、Astra/medium、两个独立只读通道及create_host_path:false保持，无对外端口和旧model auth挂载。5d6c84确认原试点running/healthy/restarts0，固定镜像未变；三个本批新fixture容器均已退出保留，未删除历史容器。
+- 本批22个任务文件经核对后保存本地commit、不push；AGENTS.md/outputs保留不动。下一实际步骤需要明确非生产材料链接和可用DWS账号，不自行选身份、读取私人材料或伪造群事件。真实装配/正文成功契约、六群场景/完整引擎/主机恢复/Owner本人验收仍待完成，Goal active。下方运行中记录为历史过程，已由本条终态覆盖。
+
+- 基线f26782a已本地提交；旧session36496由4ccd7b确认exit0，类型检查、打包模型/文档/relay启动退出及diff通过。当前新增受限relay、双relay supervisor、docker_relay配置、Compose/宿主模板、专项测试及跨UID Docker smoke。不修改实际DWS账号/授权/凭据。
+- 622092/aa2d68/eb1f9f确认root服务无法访问UID501/GID1000私有通道；28621f再次确认原服务healthy、仅CHOWN/SETUID/SETGID。保留边界改用同socket owner身份relay，不给候选容器挂文档通道。
+- 0705b5：65项定向及typecheck/diff通过。2d5248/f51797：专用无网络只读Docker夹具、typecheck/diff exit0；新容器ea41953627064644edeebf46389ffa58541c9dcacbbfcb3f40f736854629cce9已停止保留。root直连EACCES、relay501:1000成功、启动不读、未授权拒绝、一次合成读取、父管道退出。两次先行fixture失败e6ec30/01abf6均终态：fixture_ready被fixture_read前缀误计数，已改精确JSON event；同时明确公开夹具目录0755。没有真实读取或模型调用。
+- 当前唯一完整链d20e6c/session2007：74项扩大定向与typecheck已由dc7ee2确认通过，完整pnpm test运行中，末尾diff待执行。源码/测试固定，仅状态文档更新。接续原句柄，通过后核对任务文件本地commit、不push。AGENTS.md/outputs保留不提交；未部署新版本或操作原业务数据，三失败及旧无proof限制保持。
+- 下一步：获准非生产文档/表格及明确DWS profile、真实成功包装核验、宿主装配恢复、六群场景/完整引擎/Owner本人验收。fixture和模板不替代这些条件，完整Goal仍active。
+
 ## 当前批次：正式文档读取配置与独立宿主通道（2026-09-07，未提交/未部署）
 
 - 当前完整链8349d3/session96894已确认exit0：352项扩大定向、完整pnpm test、前后类型检查、打包/启动及diff通过。19项受影响复测与68d853的独立打包文档通道/typecheck/diff也通过；新headless/配置/channel/bridge测试在共享函数提取后由完整集重新执行。全部测试会话终态；两次打包失败已修复，无在途发布或真实业务调用。本批经任务文件归属核对后本地commit、不push/不部署。下一步核实真实授权材料与宿主/Docker装配，完整Goal仍active。

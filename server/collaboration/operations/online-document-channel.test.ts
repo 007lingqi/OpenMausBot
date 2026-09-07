@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { CommandCleanupError } from "../execution-limits.ts";
 import { DwsOnlineDocumentReader, type OnlineReadGrant, type OnlineDocumentReader } from "./dws-online-reader.ts";
-import { PrivateSocketOnlineDocumentReader, startOnlineDocumentGateway } from "./online-document-channel.ts";
+import { DockerRelayOnlineDocumentReader, PrivateSocketOnlineDocumentReader, startOnlineDocumentGateway } from "./online-document-channel.ts";
+import { startOnlineDocumentRelay } from "./online-document-relay.ts";
 
 const closes: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of closes.splice(0).reverse()) await close(); });
@@ -33,6 +34,13 @@ async function fixture(reader: OnlineDocumentReader = fixtureReader().reader) {
   closes.push(() => new Promise(resolve => forward.close(() => resolve())));
   return { gateway, root, socketPath, client: new PrivateSocketOnlineDocumentReader([grant], socketPath), received };
 }
+async function throughRelay(h: Awaited<ReturnType<typeof fixture>>) {
+  const listener = createServer(); listener.listen(0, '127.0.0.1'); await once(listener, 'listening');
+  const address = listener.address(); if (!address || typeof address === 'string') throw new Error('fixture_address');
+  await new Promise<void>(resolve => listener.close(() => resolve()));
+  const relay = await startOnlineDocumentRelay({ socketPath: h.socketPath, port: address.port }); closes.push(relay.close);
+  return new DockerRelayOnlineDocumentReader([grant], address.port);
+}
 it("carries a source-bound sanitized receipt through a private socket without sending a profile or command", async () => {
   const { reader, run } = fixtureReader(), h = await fixture(reader);
   const result = await h.client.read(source, new AbortController().signal);
@@ -41,6 +49,19 @@ it("carries a source-bound sanitized receipt through a private socket without se
   expect(result.grantFingerprint).toBe(reader.authorizationFingerprint(source)); expect(run).toHaveBeenCalledOnce();
   const wire = Buffer.concat(h.received).toString();
   expect(wire).toContain(source.normalizedHash); expect(wire).not.toContain(grant.profile); expect(wire).not.toContain("--profile");
+});
+it("connects controller, unprivileged relay, private socket and host reader while the startup probe reads nothing", async () => {
+  const { reader, run } = fixtureReader(), h = await fixture(reader), listener = createServer();
+  listener.listen(0, "127.0.0.1"); await once(listener, "listening"); const address = listener.address();
+  if (!address || typeof address === "string") throw new Error("fixture_address");
+  await new Promise<void>(resolve => listener.close(() => resolve()));
+  const relay = await startOnlineDocumentRelay({ socketPath: h.socketPath, port: address.port }); closes.push(relay.close);
+  expect(run).not.toHaveBeenCalled();
+  const controller = new DockerRelayOnlineDocumentReader([grant], address.port);
+  expect((await controller.read(source, new AbortController().signal)).records[0].text).toContain("保留用户名");
+  expect(run).toHaveBeenCalledOnce();
+  await expect(controller.read({ ...source, conversationId: "outside" }, new AbortController().signal)).rejects.toThrow();
+  expect(run).toHaveBeenCalledOnce();
 });
 it.each(["group", "node", "profile", "argv"])("rejects caller-controlled %s before a host CLI call", async mode => {
   const { reader, run } = fixtureReader(), h = await fixture(reader);
@@ -71,33 +92,58 @@ it.each(["regular-file", "parent-mode", "socket-mode", "symlink"])("does not con
   await expect(new PrivateSocketOnlineDocumentReader([grant], path).read(source, new AbortController().signal)).rejects.toThrow("online_document_socket_unavailable");
   expect(run).not.toHaveBeenCalled();
 });
-it("distinguishes a settled read failure from unconfirmed host cleanup without exposing its error", async () => {
+it.each(['private_socket', 'docker_relay'])("%s distinguishes settled failure from unconfirmed cleanup without private errors", async transport => {
   const { reader } = fixtureReader();
   for (const unknown of [false, true]) {
     const h = await fixture({ authorizationFingerprint: input => reader.authorizationFingerprint(input), async read() {
       if (unknown) throw new CommandCleanupError(new Error("private-error")); throw new Error("private-error");
     } });
-    const error = await h.client.read(source, new AbortController().signal).catch(value => value);
+    const client = transport === 'docker_relay' ? await throughRelay(h) : h.client;
+    const error = await client.read(source, new AbortController().signal).catch(value => value);
     expect(error).toBeInstanceOf(unknown ? CommandCleanupError : Error);
     if (!unknown) expect(error).not.toBeInstanceOf(CommandCleanupError);
     expect(error.message).not.toContain("private-error");
   }
 });
-it("rejects a receipt for another source even if the server claims success", async () => {
+it.each(['private_socket', 'docker_relay'])("%s rejects a receipt for another source even if the server claims success", async transport => {
   const { reader } = fixtureReader();
   const h = await fixture({ authorizationFingerprint: input => reader.authorizationFingerprint(input), async read(input, signal) {
     return { ...await reader.read(input, signal), sourceEventId: "other-event" };
   } });
-  await expect(h.client.read(source, new AbortController().signal)).rejects.toBeInstanceOf(CommandCleanupError);
+  const client = transport === 'docker_relay' ? await throughRelay(h) : h.client;
+  await expect(client.read(source, new AbortController().signal)).rejects.toBeInstanceOf(CommandCleanupError);
 });
-it("waits for host read settlement during shutdown and treats the lost client response as unknown", async () => {
+it.each(['private_socket', 'docker_relay'])("%s waits for host settlement during shutdown and treats lost response as unknown", async transport => {
   const { reader } = fixtureReader(); let finish!: () => void, started = false;
   const h = await fixture({ authorizationFingerprint: input => reader.authorizationFingerprint(input), async read(input, signal) {
     started = true; await new Promise<void>(resolve => { finish = resolve; }); return reader.read(input, signal);
   } });
-  const pending = h.client.read(source, new AbortController().signal).catch(error => error);
+  const client = transport === 'docker_relay' ? await throughRelay(h) : h.client;
+  const pending = client.read(source, new AbortController().signal).catch(error => error);
   await vi.waitFor(() => expect(started).toBe(true));
   let stopped = false; const stop = h.gateway.close().then(() => { stopped = true; });
   expect(await pending).toBeInstanceOf(CommandCleanupError); expect(stopped).toBe(false);
   finish(); await stop; expect(stopped).toBe(true);
+});
+it('rejects changed host authorization through the relay even for the same source and body', async () => {
+  const { reader } = fixtureReader();
+  const h = await fixture({ authorizationFingerprint: input => reader.authorizationFingerprint(input), async read(input, signal) {
+    return { ...await reader.read(input, signal), grantFingerprint: 'b'.repeat(64) };
+  } });
+  const client = await throughRelay(h);
+  await expect(client.read(source, new AbortController().signal)).rejects.toBeInstanceOf(CommandCleanupError);
+});
+it('does not send an already aborted read, and never retries a cancelled in-flight relay read', async () => {
+  const { reader } = fixtureReader(); let calls = 0, upstreamSignal: AbortSignal | undefined, finish!: () => void;
+  const h = await fixture({ authorizationFingerprint: input => reader.authorizationFingerprint(input), async read(input, signal) {
+    calls++; upstreamSignal = signal; await new Promise<void>(resolve => { finish = resolve; }); return reader.read(input, signal);
+  } });
+  const client = await throughRelay(h), aborted = new AbortController(); aborted.abort();
+  await expect(client.read(source, aborted.signal)).rejects.toThrow(); expect(calls).toBe(0);
+  const stop = new AbortController(), pending = client.read(source, stop.signal).catch(error => error);
+  try {
+    await vi.waitFor(() => expect(calls).toBe(1)); stop.abort();
+    expect(await pending).toBeInstanceOf(CommandCleanupError);
+    await vi.waitFor(() => expect(upstreamSignal?.aborted).toBe(true)); expect(calls).toBe(1);
+  } finally { stop.abort(); finish?.(); await pending; }
 });

@@ -1,5 +1,14 @@
 # Meta 协作验证记录
 
+## 2026-09-07 Docker文档中继与跨UID验证（未部署）
+
+- 最终9d389b确认d20e6c/session2007 exit0：74项定向、typecheck、完整pnpm test、打包及diff全部通过。主集308文件通过/1跳过、3567项通过/18跳过；broker7项通过，桌面各子集通过。打包服务无node_modules启动、9代理路径、headless健康/退出、合成模型通道与文档host/relay启动/退出通过。没有运行中的验证/发布/真实模型调用。
+- 10b968：专用context的Compose四文件合成配置dry-run通过，保留Astra/medium、原capabilities、只读私有挂载/不自动创建路径，无对外端口或model auth。5d6c84：原服务仍running/healthy/restarts0、镜像1f53…未变；本批三新fixture均停止保留。真实DWS正文、宿主安装/恢复及六群场景不在以上通过结论内。
+
+- 4ccd7b：旧session36496 exit0，类型/打包模型与文档host/relay启动退出/diff通过。0705b5：4文件65项定向/typecheck/diff通过。
+- 2d5248/f51797：`node scripts/smoke-online-document-docker.mjs colima-openmausbot-pilot sha256:1f53b346ebf89534c02d831e241681bac2a34191e817373e5121d71606e734eb`、typecheck、diff exit0。真实无网络只读Docker仅原三项capabilities及no-new-privileges；root直连EACCES，UID501/GID1000 relay成功，启动无读取、授权外拒绝、一次合成读取、父管道退出。新测试容器ea419536…已停止保留，无真实DWS、群消息或模型调用。先行e6ec30/01abf6为夹具事件前缀判定失败，已用严格event匹配修正，不是正式链路失败。
+- d20e6c/session2007：dc7ee2确认5文件74项扩大定向与typecheck通过，完整pnpm test仍运行，末尾diff待执行。等待原会话终态，不预报完整回归或真实试点成功。
+
 ## 2026-09-07 文档运行入口与独立宿主通道（完整验证进行中）
 
 - 当前完整链8349d3/session96894已确认exit0：352项扩大定向、完整pnpm test、前后类型检查、打包/启动及diff通过。19项受影响复测与68d853的独立打包文档通道/typecheck/diff也通过；新headless/配置/channel/bridge测试在共享函数提取后由完整集重新执行。全部测试会话终态；两次打包失败已修复，无在途发布或真实业务调用。本批经任务文件归属核对后本地commit、不push/不部署。下一步核实真实授权材料与宿主/Docker装配，完整Goal仍active。

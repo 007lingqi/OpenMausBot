@@ -19,6 +19,15 @@ it("is opt-in and validates a fixed private configuration without contacting the
   const h = fixture(), reader = configuredOnlineDocuments(h.environment, new Set(["group"]))!;
   expect(reader.authorizationFingerprint({ conversationId: "group", node: "fixture-node", sourceEventId: "event", normalizedHash: "a".repeat(64) })).toMatch(/^[a-f0-9]{64}$/);
 });
+it("requires the controller's configured document relay port to match its private grant configuration", () => {
+  const h = fixture(); h.write({ ...h.config, transport: { kind: "docker_relay", port: 18102 } });
+  expect(() => configuredOnlineDocuments(h.environment, new Set(["group"]))).toThrow("online_document_configuration_invalid");
+  expect(() => configuredOnlineDocuments({ ...h.environment, OMB_DOCUMENT_RELAY_ENABLED: "1", OMB_DOCUMENT_RELAY_PORT: "18103" }, new Set(["group"])))
+    .toThrow("online_document_configuration_invalid");
+  expect(configuredOnlineDocuments({ ...h.environment, OMB_DOCUMENT_RELAY_ENABLED: "1", OMB_DOCUMENT_RELAY_PORT: "18102" }, new Set(["group"]))).toBeDefined();
+  expect(() => configuredOnlineDocuments({ ...h.environment, OMB_DOCUMENT_RELAY_ENABLED: "1", OMB_DOCUMENT_RELAY_PORT: "18102" }, new Set(["group"]), { hostOnly: true }))
+    .toThrow("online_document_configuration_invalid");
+});
 it.each(["unlisted-group", "disabled", "bad-permissions", "symlink", "unknown-key", "empty-grants", "duplicate", "relative", "tcp"])("fails closed for %s", mode => {
   const h = fixture(); let allowed = new Set(["group"]);
   if (mode === "unlisted-group") allowed = new Set();
