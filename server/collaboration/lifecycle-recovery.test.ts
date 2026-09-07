@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { startCollaborationService } from "./service.ts";
 import { policy, validProposal } from "./planner.test-fixtures.ts";
 import { InstanceLeaseCoordinator } from "./leases.ts";
@@ -14,6 +14,7 @@ import { applyCollaborationMigrations } from "./migrations.ts";
 import { containmentBindingHash, runtimeIdentityFingerprint, type ContainmentPort, type ContainmentProof } from "./containment.ts";
 import { DockerCliContainmentSupervisor } from "./operations/docker-containment.ts";
 import { registerCoordinator, type CoordinatorAuthority } from "./coordinator-lifecycle.ts";
+import type { UnactivatedLaunchRecoveryPort } from "./unactivated-launch-recovery.ts";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -76,6 +77,52 @@ async function verificationFixture() {
 }
 
 describe("passive lifecycle recovery", () => {
+  it("records a distinct never-activated receipt without inventing execution proof or finalization", async () => {
+    const f = fixture(true);
+    const coordinator: CoordinatorAuthority = { capture: async () => { throw Error("no backfill"); }, inspect: async () => ({ state: "stopped", fingerprint: "f".repeat(64) }) };
+    const recover = vi.fn<UnactivatedLaunchRecoveryPort["recover"]>(async (binding, context) => {
+      context.assertCurrent(); expect(context.coordinatorFingerprint).toBe("f".repeat(64));
+      return { state: "aborted_before_activation", bindingHash: containmentBindingHash(binding), containerId: "c".repeat(64), launchHash: "a".repeat(64), deniedGateHash: "d".repeat(64) };
+    });
+    try {
+      f.command(); const input = { kind: "execution" as const, sessionId: f.sessionId, instance: f.takeover(), now: Date.now,
+        containment: f.containment, coordinator, unactivatedLaunchRecovery: { recover } };
+      expect(await recoverLifecycleSession(f.db, input)).toMatchObject({ state: "recovered", reason: "unactivated_launch_aborted" });
+      expect(await recoverLifecycleSession(f.db, input)).toMatchObject({ state: "already_settled" }); expect(recover).toHaveBeenCalledTimes(1);
+      expect(hasUnsettledExecution(f.db, f.root)).toBe(false);
+      for (const suffix of ["proofs", "finalization_intents"]) expect(f.db.prepare(`SELECT * FROM collaboration_execution_${suffix}`).all()).toEqual([]);
+      const saved = f.db.prepare("SELECT evidence_json FROM collaboration_execution_settlements").get() as { evidence_json: string };
+      expect(JSON.parse(saved.evidence_json).evidence[0]).toMatchObject({ ordinal: 1, state: "aborted_before_activation", deniedGateHash: "d".repeat(64) });
+      expect(f.db.prepare("SELECT attempt FROM collaboration_execution_sessions").get()).toEqual({ attempt: 1 });
+    } finally { f.db.close(); }
+  });
+  it.each(["active", "missing", "later-command"])("never mutates an unactivated launch when coordinator authority is %s, even with finalization", async mode => {
+    const f = fixture(mode !== "missing"), recover = vi.fn();
+    const coordinator: CoordinatorAuthority = { capture: async () => ({}), inspect: async () => ({ state: mode === "active" ? "active" : "stopped", fingerprint: "f".repeat(64) }) };
+    try {
+      f.command(); if (mode === "later-command") f.command(2); await f.settle();
+      expect((await recoverLifecycleSession(f.db, { kind: "execution", sessionId: f.sessionId, instance: f.takeover(), now: Date.now,
+        containment: f.containment, coordinator, unactivatedLaunchRecovery: { recover } })).state).toBe("blocked");
+      expect(recover).not.toHaveBeenCalled(); expect(hasUnsettledExecution(f.db, f.root)).toBe(true);
+    } finally { f.db.close(); }
+  });
+  it("awaits in-flight abort work after cancellation and never writes a settlement", async () => {
+    const f = fixture(true), cancelled = new AbortController(); let finish!: () => void, began!: () => void;
+    const started = new Promise<void>(resolve => { began = resolve; });
+    const coordinator: CoordinatorAuthority = { capture: async () => ({}), inspect: async () => ({ state: "stopped", fingerprint: "f".repeat(64) }) };
+    const recovery: UnactivatedLaunchRecoveryPort = { async recover(binding, context) {
+      began(); await new Promise<void>(resolve => { finish = resolve; }); context.assertCurrent();
+      return { state: "aborted_before_activation", bindingHash: containmentBindingHash(binding), containerId: "c".repeat(64), launchHash: "a".repeat(64), deniedGateHash: "d".repeat(64) };
+    } };
+    try {
+      f.command(); let done = false;
+      const pending = recoverLifecycleSession(f.db, { kind: "execution", sessionId: f.sessionId, instance: f.takeover(), now: Date.now, containment: f.containment,
+        coordinator, unactivatedLaunchRecovery: recovery, signal: cancelled.signal }).then(result => { done = true; return result; });
+      await started; cancelled.abort(); await new Promise(resolve => setTimeout(resolve, 10)); expect(done).toBe(false);
+      finish(); expect(await pending).toMatchObject({ state: "blocked", reason: "recovery_cancelled" });
+      expect(hasUnsettledExecution(f.db, f.root)).toBe(true);
+    } finally { f.db.close(); }
+  });
   it("recovers without finalization only after independently proving the old coordinator epoch and every command stopped", async () => {
     const f = fixture(true); let state: "active" | "stopped" | "unknown" = "active";
     const coordinator: CoordinatorAuthority = { capture: async () => { throw Error("must_not_backfill"); }, inspect: async (proof, expected) => {

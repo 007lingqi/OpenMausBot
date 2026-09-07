@@ -1,5 +1,7 @@
 # 内部研发助手 Meta 协作规范
 
+未激活启动恢复增量（2026-09-07，未部署）：新contained v2启动的第一条Provider command缺proof且没有后续command时，可通过“旧coordinator事前proof独立stopped＋原签名launch＋唯一实际固定容器＋无执行材料＋持久拒绝门禁”生成独立aborted_before_activation证据；即使有finalization也必须证明旧协调器停止。严格验证worker镜像/命令/环境/隔离/挂载，拒绝控制路径遮蔽和执行环境注入；有界停止仅用于已被拒绝授权的原等待容器，每launch最多三次持久kill预留，取消不可遗弃mutation。原容器/目录永久保留防止迟到start获得授权；不是补签proof、不是代码修改完成、不刷新尝试次数。已激活/查不到/多匹配/历史无协调器proof仍受阻。本增量仅替代满足上述完整条件的缺proof分支。
+
 协调器恢复增量（2026-09-07，未部署）：新task_container运行时在任何任务session之前登记独立Docker启动代次proof，绑定固定controller镜像、完整ID、实际PID namespace、StartedAt、host boot及owner/fence。schema31仅新增不可变记录且禁止事后补登记；health-only不签发。对已有该记录的新session，无finalization时可通过旧启动实例独立stopped及每条任务command proof/empty完成被动收束；不倒签finalization，不以协调器proof替代任务proof。旧历史、跨VM boot、缺失旧容器、任何未知状态继续阻塞。此前关于“无finalization一律不恢复”的描述仅被这一事前登记、全部证据齐全的分支替代；完整引擎、群聊与文档验收仍未完成。
 
 启动恢复增量（2026-09-07）：新contained启动必须在Docker create前将签名v2启动身份及目录fsync；完整create回执落盘后才能start。丢回执可由新进程只读核对唯一完整ID、固定镜像、精确名字、绑定标签及代次；查询结果仅为observed/unknown，不是执行proof或恢复授权。历史v1、不完整记录、查不到、多匹配、旧代次一律保守未知，不清理占用、不补造proof、不启动新尝试。没有finalization intent时，旧协调器及其容器外Git仍须独立停止证明；只停止任务容器/租约过期均不能替代。运行试点未切换。

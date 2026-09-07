@@ -1,5 +1,12 @@
 # Meta 协作决策记录
 
+## D-117 — 创建中断只能用持久拒绝门禁证明未获执行授权
+
+- 严格限于事前登记旧coordinator且其epoch已停止、execution ordinal1无commandId/无proof/无后续command的新contained v2启动；finalization不能授权文件或kill mutation。当前ledger/租约/session及原command快照在每个动作边界复查。历史无proof事项不得倒填身份或刷新模型重试次数。
+- 从签名原journal核对唯一实际完整ID、固定创建/运行镜像、entrypoint/worker命令、可信PATH和有限env、private PID、network none、readonly rootfs、cap-drop ALL/有限cap-add/NNP及exact挂载；拒绝额外祖先/子路径挂载和执行环境覆盖。控制资料只能含原launch/container/heartbeat及本机制记录，出现request/view/proposal/apply即拒绝。
+- 独占并fsync原proposal.start为start:false，原启动器wx不能覆盖；worker已有门禁先于模型/relay/写入。原任务在等待时，持久预留最多三次kill并按完整ID停止；立即重验当前权限，所有mutation必须await，不可被可遗弃的observe或Promise.race包装。观察为created/exited后再次验证拒绝gate，才记录独立取消证据。
+- 保留原容器与目录：它们承接旧daemon已收到但迟到的start并拒绝授权，不能删掉后让同名新建/旧请求继续。该证据不是ContainmentProof/empty，也不宣称任何未来进程永不启动。settlement保存原binding/launch/gate哈希而不写proof/finalization；对群回复“上次修改尚未开始”，禁止误报完成，恢复不自动重做。真实Docker合成测试与最终业务/真实群验收分别记录。
+
 ## D-116 — 协调器启动代次证据必须在任务前登记
 
 - 用固定controller镜像、完整Docker ID、启动时间（纳秒精度）、PID namespace、host boot以及实例owner/fence签发独立用途的协调器proof。签发时只在固定只读镜像中执行readlink诊断，对照本进程namespace并前后复核同一启动。拒绝host PID、privileged、可写rootfs、越权cap或诊断路径被挂载覆盖；候选不能指定命令或参数。查询仅inspect，不执行命令/kill/rm。

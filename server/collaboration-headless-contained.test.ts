@@ -7,6 +7,7 @@ import { runCollaborationHeadless } from "./collaboration-headless.ts";
 import { DockerContainedPatchAgent } from "./collaboration/operations/contained-patch-agent.ts";
 import { DockerPatchAgent } from "./collaboration/operations/docker-patch-agent.ts";
 import { DockerCoordinatorAuthority } from "./collaboration/operations/docker-coordinator.ts";
+import { DockerUnactivatedLaunchRecovery } from "./collaboration/operations/unactivated-launch.ts";
 import { CollaborationHeadlessRuntime, type CollaborationHeadlessRuntimeOptions } from "./collaboration/operations/runtime.ts";
 
 const scratch: string[] = [];
@@ -41,6 +42,7 @@ describe("headless contained provider assembly", () => {
     expect(f.seen).toHaveLength(1); expect(f.seen[0].agent).toBeInstanceOf(DockerContainedPatchAgent);
     expect(f.seen[0].commandRunner).toBeDefined(); expect(f.seen[0].executionIsolation).toBe("docker_linux");
     expect(f.seen[0].coordinator).toBeInstanceOf(DockerCoordinatorAuthority);
+    expect(f.seen[0].unactivatedLaunchRecovery).toBeInstanceOf(DockerUnactivatedLaunchRecovery);
     expect(f.seen[0].execution?.repositories[f.root].targetCommands.cases.argv).toEqual(["node", "--version"]);
   });
   it.each([

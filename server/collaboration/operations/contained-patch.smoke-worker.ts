@@ -7,6 +7,7 @@ import { runContainedPatchWorker } from "./contained-patch-worker-core.ts";
 
 runContainedPatchWorker({ controlDirectory: "/run/omb-control", candidateRoot: "/run/omb-private/candidate", signal: new AbortController().signal,
   propose: async request => {
+    writeFileSync("/run/omb-control/provider-called", "1", { mode: 0o600 });
     const program = `
       const assert=require('node:assert/strict'),fs=require('node:fs'),cp=require('node:child_process');
       assert.equal(process.getuid(),10001);

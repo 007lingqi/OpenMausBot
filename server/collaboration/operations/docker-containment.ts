@@ -10,7 +10,7 @@ import {
   runtimeIdentityFingerprint,
   type RuntimeIdentity,
 } from "../containment.ts";
-import { dockerLaunchPayload, dockerLaunchSchema, type DockerLaunchObservation, type DockerLaunchRecord } from "./docker-launch.ts";
+import { dockerLaunchPayload, dockerLaunchSchema, sealUnactivatedLaunch, type DockerLaunchObservation, type DockerLaunchRecord } from "./docker-launch.ts";
 
 const BACKEND = "docker_cgroup_v2";
 const MANAGED_LABEL = "com.openmausbot.collaboration.managed";
@@ -137,8 +137,9 @@ interface DockerInspection {
   Id?: unknown;
   Name?: unknown;
   Image?: unknown;
-  Config?: { Image?: unknown; Labels?: Record<string, string> | null };
-  HostConfig?: { RestartPolicy?: { Name?: unknown } };
+  Config?: { Image?: unknown; Labels?: Record<string, string> | null; User?: unknown; Env?: unknown; Entrypoint?: unknown; Cmd?: unknown };
+  HostConfig?: { RestartPolicy?: { Name?: unknown }; NetworkMode?: unknown; ReadonlyRootfs?: unknown; Privileged?: unknown; PidMode?: unknown; CapDrop?: unknown; CapAdd?: unknown; SecurityOpt?: unknown };
+  Mounts?: Array<{ Type?: unknown; Source?: unknown; Destination?: unknown; RW?: unknown }>;
   State?: { Running?: unknown; Status?: unknown; Pid?: unknown; Paused?: unknown; Restarting?: unknown };
 }
 
@@ -246,6 +247,52 @@ export class DockerCliContainmentSupervisor implements ContainmentPort {
 
   private launchReceipt(launch: DockerLaunchRecord): string {
     return createHmac("sha256", this.verifierKey).update(dockerLaunchPayload(launch)).digest("base64url");
+  }
+
+  async inspectUnactivatedLaunch(launch: DockerLaunchRecord, binding: ContainmentBinding, directory: string, id?: string): Promise<DockerLaunchObservation> {
+    const found = await this.reconcileLaunch(launch, binding, id);
+    if (found.state !== "observed") return found;
+    const actual = await this.inspection(found.containerId);
+    const mounts = actual?.Mounts;
+    const mount = (destination: string, source: string, writable: boolean) => {
+      const matches = mounts?.filter(value => value.Destination === destination);
+      return matches?.length === 1 && matches[0].Source === source && matches[0].RW === writable;
+    };
+    const allowedMounts = new Set(["/run/omb-control", "/workspace", "/run/omb-private/candidate", "/run/omb-channel", "/tmp", "/run/omb-private"]);
+    const capabilities = actual?.HostConfig?.CapAdd;
+    const drop = actual?.HostConfig?.CapDrop;
+    const security = actual?.HostConfig?.SecurityOpt;
+    const environment = actual?.Config?.Env;
+    const workerPath = "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+    if (!actual || !this.labelsMatch(actual, binding) || actual.Image !== launch.image || actual.Config?.User !== "0:0" ||
+      JSON.stringify(actual.Config?.Entrypoint) !== '["node"]' || JSON.stringify(actual.Config?.Cmd) !== '["/opt/openmausbot/contained-patch-worker.js"]' ||
+      actual.HostConfig?.NetworkMode !== "none" || actual.HostConfig.ReadonlyRootfs !== true || actual.HostConfig.Privileged !== false || actual.HostConfig.PidMode !== "" ||
+      !Array.isArray(drop) || drop.length !== 1 || drop[0] !== "ALL" ||
+      !Array.isArray(capabilities) || capabilities.some(cap => !["CHOWN", "SETUID", "SETGID"].includes(cap)) ||
+      !Array.isArray(security) || security.length !== 1 || !["no-new-privileges", "no-new-privileges:true"].includes(security[0]) ||
+      !Array.isArray(environment) || environment.filter(value => value === workerPath).length !== 1 ||
+      environment.some(value => typeof value !== "string" || !/^(?:PATH|NODE_VERSION|YARN_VERSION|NODE_ENV|OMB_OPENCODEX_RELAY_UID|OMB_OPENCODEX_RELAY_GID)=/u.test(value) ||
+        (value.startsWith("PATH=") && value !== workerPath)) ||
+      !mounts || mounts.some(value => typeof value.Destination !== "string" || !allowedMounts.has(value.Destination) ||
+        ((value.Destination === "/tmp" || value.Destination === "/run/omb-private") && value.Type !== "tmpfs") ||
+        (value.Destination === "/run/omb-channel" && value.RW !== false)) ||
+      new Set(mounts.map(value => value.Destination)).size !== mounts.length ||
+      !mount("/run/omb-control", directory, true) || !mount("/workspace", directory, false) || !mount("/run/omb-private/candidate", binding.canonicalWorktreePath, true))
+      return { state: "unknown", reason: "abort_worker_contract_mismatch" };
+    const state = observedState(actual, true);
+    return state === "unknown" ? { state, reason: "abort_state_unconfirmed" } : { state: "observed", containerId: found.containerId,
+      status: state === "active" ? "active" : actual.State?.Status === "created" ? "created" : "exited" };
+  }
+
+  /** Only after old coordinator stop + absent task proof + durable denied gate;
+   * the caller reserves the persistent kill budget and awaits this operation. */
+  async stopUnactivatedLaunch(launch: DockerLaunchRecord, binding: ContainmentBinding, directory: string, id: string, assertCurrent: () => void): Promise<void> {
+    assertCurrent();
+    sealUnactivatedLaunch(directory, launch);
+    const actual = await this.inspectUnactivatedLaunch(launch, binding, directory, id);
+    if (actual.state !== "observed") throw Error("abort_identity_unconfirmed");
+    assertCurrent();
+    if (actual.status === "active") await this.docker.run(["kill", id], { timeoutMs: this.emptyTimeoutMs, maxOutputBytes: 4096 });
   }
 
   private validLaunch(launch: DockerLaunchRecord): boolean {

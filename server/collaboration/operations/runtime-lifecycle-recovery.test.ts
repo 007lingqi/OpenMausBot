@@ -21,7 +21,7 @@ import { enqueueInboundCard } from "../outbox.ts";
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
-async function fixture() {
+async function fixture(unactivated = false) {
   const root = mkdtempSync(join(tmpdir(), "runtime-lifecycle-recovery-")); roots.push(root);
   const service = startCollaborationService({ dataDirectory: root, planning: {
     planner: { propose: validProposal }, policy: { ...policy, allowedRepositories: [root] },
@@ -34,6 +34,8 @@ async function fixture() {
   const db = new DatabaseSync(join(root, "collaboration", "collaboration.sqlite"));
   const leases = new InstanceLeaseCoordinator(db, "old");
   const lease = leases.acquire(Date.now(), 60000)!;
+  if (unactivated) db.prepare("INSERT INTO collaboration_coordinator_proofs(instance_owner,instance_fence,proof_json,created_at) VALUES(?,?,?,?)")
+    .run(lease.ownerId, lease.fence, JSON.stringify({ ownerId: lease.ownerId, fence: lease.fence }), Date.now());
   const session = new ExecutionLifecycle(db, "runtime-recovery-execution", lease);
   session.reserve({ workItemId: item.workItemId!, planRevision: 1, repository: root, baseSha: "a".repeat(40), attempt: 1 });
   const binding = { runId: session.id, canonicalWorktreePath: root, instanceOwner: lease.ownerId, instanceFence: lease.fence, nonce: "a".repeat(64) };
@@ -43,16 +45,32 @@ async function fixture() {
     async inspect(identity) { return { state: "active", fingerprint: runtimeIdentityFingerprint(identity) }; },
     async terminateAndWaitEmpty() { throw new Error("recovery_must_not_kill"); },
   };
-  session.command(1, binding); session.proof(1, proof);
+  session.command(1, binding); if (!unactivated) session.proof(1, proof);
   await session.settle(containment);
   leases.release(lease, Date.now());
-  const runtime = (lifecycleRecoveryTimeoutMs = 5000) => new CollaborationHeadlessRuntime({ dataDirectory: root, containment, shutdownTimeoutMs: 25, platform: "linux", lifecycleRecoveryTimeoutMs });
+  const runtime = (lifecycleRecoveryTimeoutMs = 5000) => new CollaborationHeadlessRuntime({ dataDirectory: root, containment, shutdownTimeoutMs: 25, platform: "linux", lifecycleRecoveryTimeoutMs,
+    ...(unactivated ? { coordinator: { capture: async (instance: { ownerId: string; fence: number }) => instance,
+      inspect: async (_proof: unknown, instance: { ownerId: string; fence: number }) => ({ state: instance.ownerId === "old" ? "stopped" as const : "active" as const, fingerprint: "f".repeat(64) }) },
+    unactivatedLaunchRecovery: { async recover() { return { state: "aborted_before_activation" as const, bindingHash: containmentBindingHash(binding), containerId: "c".repeat(64), launchHash: "a".repeat(64), deniedGateHash: "d".repeat(64) }; } } } : {}) });
   const notices = () => db.prepare("SELECT payload_json FROM collaboration_outbox WHERE source_event_id LIKE 'lifecycle-recovery:%'").all() as Array<{payload_json:string}>;
   const settled = () => !!db.prepare("SELECT 1 FROM collaboration_execution_settlements WHERE session_id=?").get(session.id);
   return { root, db, session, binding, proof, containment, runtime, notices, settled, workItemId: item.workItemId! };
 }
 
 describe("runtime passive lifecycle recovery", () => {
+  it("explains that an aborted launch never began and replays no success or duplicate reply", async () => {
+    const f = await fixture(true), runtime = f.runtime();
+    try {
+      await runtime.start(); await vi.waitFor(() => expect(f.settled()).toBe(true));
+      await vi.waitFor(() => expect(f.notices()).toHaveLength(1));
+      expect(f.notices()[0].payload_json).toContain("上次修改尚未开始");
+      expect(f.notices()[0].payload_json).not.toContain("已确认上次处理彻底结束");
+      expect(f.notices()[0].payload_json).toContain("这不代表修改完成");
+      await runtime.stop(); const second = f.runtime();
+      try { await second.start(); await second.drainOnce(); expect(f.notices()).toHaveLength(1); }
+      finally { await second.stop(); }
+    } finally { await runtime.stop(); f.db.close(); }
+  });
   it("unblocks the next queued reply after a real sender stalls without resending the uncertain one", async () => {
     const f = await fixture();
     vi.useFakeTimers();

@@ -28,6 +28,8 @@ Docker daemon/cgroup v2 提供独立于候选进程的运行状态。可信 head
 
 ## 必须继续解决的恢复缺口
 
+2026-09-07增量：`DockerUnactivatedLaunchRecovery`已接入lifecycle/runtime/headless。仅新v2第一条Provider command无proof、无后续command、原coordinator事前proof已独立stopped、唯一固定实际容器及未激活控制资料全部确认时，独占fsync永久start:false门禁；等待容器先持久预留最多三次kill，确认created/exited及gate未变后记录独立aborted_before_activation。保留原目录/容器防迟到start，不补签execution proof，不写假finalization，不刷新attempt；即使有finalization也必须证明原coordinator停止。全量及真实Docker强杀/丢create回执/迟到start零Provider调用烟测通过。此条覆盖下方“全部缺proof都阻塞”的旧描述，仅上述有限分支已解决；未匹配、已激活、旧记录/跨boot/缺失容器仍阻塞。尚未部署或完成真实群业务验收。
+
 - create回执丢失后的持久身份查询已实现，但未知状态不自动解锁。仍须把新启动日志与命令账本做只读关联，并在协调器独立停止证据齐全后设计明确的恢复/收束协议；不得从观察状态倒签执行proof。
 - 原协调器的Git/候选操作由新coordinator启动代次proof覆盖；仅对有事前登记的新session，可在旧启动实例独立stopped、所有command proof/empty齐全后收束。旧记录、跨VM boot、missing container及unknown-create缺任务proof仍保守阻塞；租约过期不是停止证据。
 - 旧无proof事项保留原失败/次数/占用，不追补假凭据、不换账本重置尝试次数。新实现只为新启动记录真实证据。

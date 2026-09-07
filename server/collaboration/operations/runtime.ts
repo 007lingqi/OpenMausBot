@@ -36,6 +36,7 @@ import { CommandCleanupError } from "../execution-limits.ts";
 import { hasUnsettledRepositoryActivity } from "../repository-occupancy.ts";
 import { recoverLifecycleSession, type LifecycleRecoveryOutcome } from "../lifecycle-recovery.ts";
 import { registerCoordinator, type CoordinatorAuthority } from "../coordinator-lifecycle.ts";
+import type { UnactivatedLaunchRecoveryPort } from "../unactivated-launch-recovery.ts";
 import type { PlanningPolicy } from "../graph.ts";
 import type { InboundMessageOutcome } from "../inbound.ts";
 import { assertCurrentInstanceLease, InstanceLeaseCoordinator, StaleFenceError, type InstanceLease } from "../leases.ts";
@@ -170,6 +171,7 @@ export interface CollaborationHeadlessRuntimeOptions {
   agent?: AgentRunPort;
   containment?: ContainmentPort;
   coordinator?: CoordinatorAuthority;
+  unactivatedLaunchRecovery?: UnactivatedLaunchRecoveryPort;
   commandRunner?: SandboxedCommandRunner;
   execution?: RuntimeExecutionConfiguration;
   candidateInspector?: CandidateInspectionPort;
@@ -1724,6 +1726,7 @@ export class CollaborationHeadlessRuntime {
         try {
           outcome = await recoverLifecycleSession(db, {
             kind: row.kind, sessionId: row.id, instance: lease, containment, coordinator: this.options.coordinator,
+            unactivatedLaunchRecovery: this.options.unactivatedLaunchRecovery,
             now: () => this.clock.now(), signal: AbortSignal.any([lifetime.signal, timeout.signal]),
           });
         } finally { clearTimeout(timer); }
@@ -1771,6 +1774,9 @@ export class CollaborationHeadlessRuntime {
         currentExecutionSpecSql +
         "AND NOT EXISTS(SELECT 1 FROM collaboration_outbox WHERE source='dingtalk' AND source_event_id=?)",
       ).get(session.work_item_id, session.plan_revision, sourceEventId) as { version: number; goal: string } | undefined;
+      const aborted = outcome.state !== "blocked" && !!db.prepare(
+        `SELECT 1 FROM collaboration_${session.kind}_settlements WHERE session_id=? AND json_extract(evidence_json,'$.evidence[0].state')='aborted_before_activation'`,
+      ).get(session.id);
       if (current) enqueueInboundCard(db, {
         sourceEventId, aggregateType: "plan", aggregateId: session.work_item_id, aggregateVersion: current.version,
         card: renderCommandStatusCard({ command: "status", workItemId: session.work_item_id, outcome: "allowed", presentation: "business",
@@ -1778,7 +1784,9 @@ export class CollaborationHeadlessRuntime {
             ? "服务已恢复，但还不能确认上次处理是否彻底结束。为避免重复修改，该项目的后续处理暂缓，需要负责人检查。"
             : hasUnsettledRepositoryActivity(db, session.repository_path)
               ? "已完成一次恢复检查，但该项目还有处理状态需要核实，暂不启动新的修改。需要负责人检查。"
-              : "已确认上次处理彻底结束，该项目可以继续安排后续工作。修改结果仍以代码和测试核对为准；中断的修改不会擅自重做，需要负责人安排。"),
+              : aborted
+                ? "上次修改尚未开始，系统已关闭它的执行入口。该项目可以继续安排后续工作；这不代表修改完成，中断的任务不会擅自重做，需要负责人安排。"
+                : "已确认上次处理彻底结束，该项目可以继续安排后续工作。修改结果仍以代码和测试核对为准；中断的修改不会擅自重做，需要负责人安排。"),
         }),
         supersessionKey: `lifecycle-recovery:${session.kind}:${session.id}`,
         now: this.clock.now(),

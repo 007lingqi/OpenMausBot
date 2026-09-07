@@ -1,8 +1,9 @@
 import type { DatabaseSync } from "node:sqlite";
-import { verifyContainmentProof, type ContainmentBinding, type ContainmentPort, type ContainmentProof } from "./containment.ts";
+import { containmentBindingHash, verifyContainmentProof, type ContainmentBinding, type ContainmentPort, type ContainmentProof } from "./containment.ts";
 import { assertCurrentInstanceLease, type InstanceLease } from "./leases.ts";
 import { assertLedgerArmed } from "./restore-guard.ts";
 import type { CoordinatorAuthority } from "./coordinator-lifecycle.ts";
+import type { UnactivatedLaunchOutcome, UnactivatedLaunchRecoveryPort } from "./unactivated-launch-recovery.ts";
 
 export interface LifecycleRecoveryInput {
   kind: "execution" | "verification";
@@ -10,6 +11,7 @@ export interface LifecycleRecoveryInput {
   instance: Pick<InstanceLease, "ownerId" | "fence">;
   containment: ContainmentPort;
   coordinator?: CoordinatorAuthority;
+  unactivatedLaunchRecovery?: UnactivatedLaunchRecoveryPort;
   now: () => number;
   signal?: AbortSignal;
 }
@@ -33,7 +35,9 @@ async function observe<T>(read: () => Promise<T>, signal?: AbortSignal): Promise
   } finally { signal.removeEventListener("abort", onAbort); }
 }
 
-/** Passive recovery: no kill, deletion, retry, approval, or trust in terminal Run labels. */
+/** Proof recovery is passive. Never-activated launch recovery additionally
+ * seals a denied gate and may stop only that verified waiting container. No
+ * deletion, task retry, approval, or trust in terminal Run labels. */
 export async function recoverLifecycleSession(db: DatabaseSync, input: LifecycleRecoveryInput): Promise<LifecycleRecoveryOutcome> {
   const kind = input.kind === "execution" ? "execution" : "verification";
   const table = `collaboration_${kind}`;
@@ -61,7 +65,9 @@ export async function recoverLifecycleSession(db: DatabaseSync, input: Lifecycle
     if (kind === "execution" || commands.length > 0) {
       const intent = db.prepare(`SELECT command_count FROM ${table}_finalization_intents WHERE session_id=?`).get(input.sessionId) as { command_count: number } | undefined;
       if (intent && intent.command_count !== commands.length) return blocked("coordinator_work_not_confirmed_finished");
-      if (!intent) {
+      const needsAbortAuthority = kind === "execution" && !!input.unactivatedLaunchRecovery && commands.length === 1 &&
+        commands[0].ordinal === 1 && !commands[0].proof_json;
+      if (!intent || needsAbortAuthority) {
         const registered = db.prepare("SELECT proof_json FROM collaboration_coordinator_proofs WHERE instance_owner=? AND instance_fence=?")
           .get(row.instance_owner, row.instance_fence) as { proof_json: string } | undefined;
         if (!registered || !input.coordinator) return blocked("coordinator_work_not_confirmed_finished");
@@ -72,14 +78,40 @@ export async function recoverLifecycleSession(db: DatabaseSync, input: Lifecycle
         coordinatorEvidence = { state: "stopped", fingerprint: observed.fingerprint };
       }
     }
-    const evidence: Array<{ ordinal: number; fingerprint: string; state: "empty" }> = [];
+    const evidence: Array<{ ordinal: number; fingerprint: string; state: "empty" } |
+      (Extract<UnactivatedLaunchOutcome, { state: "aborted_before_activation" }> & { ordinal: number })> = [];
+    let abortedBeforeActivation = false;
     for (const command of commands) {
       assertCurrent();
-      if (!command.proof_json) return blocked("process_proof_missing");
       const binding = JSON.parse(command.binding_json) as ContainmentBinding;
-      const proof = JSON.parse(command.proof_json) as ContainmentProof;
       if (binding.instanceOwner !== row.instance_owner || binding.instanceFence !== row.instance_fence ||
         (kind === "execution" ? binding.runId !== row.run_id : !binding.runId.startsWith(`${row.run_id}:verifier:`))) return blocked("process_binding_mismatch");
+      if (!command.proof_json) {
+        if (kind !== "execution" || commands.length !== 1 || command.ordinal !== 1 || binding.commandId !== undefined ||
+          !input.unactivatedLaunchRecovery || !coordinatorEvidence) return blocked("process_proof_missing");
+        const assertUnactivated = () => {
+          assertCurrent();
+          if (isSettled()) throw Error("session_already_settled");
+          const current = db.prepare(`SELECT c.ordinal,c.binding_json,p.proof_json FROM ${table}_commands c LEFT JOIN ${table}_proofs p ON p.session_id=c.session_id AND p.ordinal=c.ordinal WHERE c.session_id=? ORDER BY c.ordinal`)
+            .all(input.sessionId);
+          if (JSON.stringify(current) !== JSON.stringify(commands)) throw Error("process_set_changed");
+        };
+        assertUnactivated();
+        // This port persists files and may kill a waiting container. Unlike
+        // observe(), cancellation MUST NOT abandon the in-flight operation.
+        const result = await input.unactivatedLaunchRecovery.recover(binding, {
+          coordinatorFingerprint: coordinatorEvidence.fingerprint, assertCurrent: assertUnactivated, signal: input.signal,
+        });
+        assertUnactivated();
+        if (result.state !== "aborted_before_activation") return blocked("unactivated_launch_unconfirmed");
+        if (result.bindingHash !== containmentBindingHash(binding) ||
+          ![result.containerId, result.launchHash, result.deniedGateHash].every(value => /^[a-f0-9]{64}$/u.test(value))) return blocked("unactivated_launch_receipt_invalid");
+        evidence.push({ ordinal: command.ordinal, state: result.state, containerId: result.containerId,
+          bindingHash: result.bindingHash, launchHash: result.launchHash, deniedGateHash: result.deniedGateHash });
+        abortedBeforeActivation = true;
+        continue;
+      }
+      const proof = JSON.parse(command.proof_json) as ContainmentProof;
       const verified = await observe(() => verifyContainmentProof(input.containment, proof, binding), input.signal);
       assertCurrent();
       if (!verified.verified) return blocked("process_proof_rejected");
@@ -97,7 +129,7 @@ export async function recoverLifecycleSession(db: DatabaseSync, input: Lifecycle
       db.prepare(`INSERT INTO ${table}_settlements(session_id,evidence_json,created_at) VALUES(?,?,?)`).run(input.sessionId,
         JSON.stringify({ version: 1, recoveredBy: input.instance, evidence, ...(coordinatorEvidence ? { coordinator: coordinatorEvidence } : {}) }), input.now());
       db.exec("COMMIT");
-      return { state: "recovered", reason: "all_processes_confirmed_empty", workItemId };
+      return { state: "recovered", reason: abortedBeforeActivation ? "unactivated_launch_aborted" : "all_processes_confirmed_empty", workItemId };
     } catch (error) { db.exec("ROLLBACK"); throw error; }
   } catch {
     return blocked(input.signal?.aborted ? "recovery_cancelled" : "recovery_evidence_unavailable");

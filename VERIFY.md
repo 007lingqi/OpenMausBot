@@ -1,5 +1,16 @@
 # Meta 协作验证记录
 
+## 2026-09-07 未获执行授权的启动恢复
+
+- 最终终态（续跑核验）：6181c2/session67854全部exit0。0d29c4：主集299文件通过/1跳过，3412项通过/18跳过（3430登记），broker7、桌面32、打包启动/9代理路径/headless/channel验证均通过；末尾typecheck/diff通过。该链此前的181项定向和真实Docker两场景同样通过，期间源码/测试保持固定，仅文档更新。已取得终态，不再轮询或重跑此句柄；失败历史仍按原回执保留。
+
+- 最终接续：6181c2/session67854；34c268确认最终181项定向/typecheck及真实Docker烟测通过。两场景created/waiting，真实旧coordinator SIGKILL后独立stopped，原create回执缺失、late start被拒绝、Provider调用0、候选不变、原journal及gate保留、恢复重复幂等；合成镜像2ffdbcca617d…/专属卷及容器已清理。完整顺序链仍在运行，未取得完整pnpm test/打包/末尾typecheck终态，不自动commit；不能重新启动同一验证。当前最后读取回执d61874，业务源码与测试自6181c2启动后冻结。6a23e6原3c05339服务healthy，未部署或真实调用。AGENTS.md/outputs仍保持原状。
+
+- ca2999：继承的三文件75项及typecheck终态通过。343a24新增12项挂载遮蔽/弱隔离/最后inspect后租约失效先行红灯；e77414修复后32项/typecheck通过。d0b48f生命周期及headless三项先行红灯（取消测试等待入口未实现而超时）；76c1ca修复后85项/typecheck通过。
+- 2ca0b6三项NODE_OPTIONS/PATH/LD_PRELOAD覆盖先行红灯后修正；4f27ed真实渲染格式先行红灯后改为尚未开始的业务说明。f0883e七文件181项通过，typecheck因新烟测context推断失败，不能将整链记通过；已显式声明接口。5b7dc6类型检查通过、412931真实烟测测试断言与合成worker实际静态错误不符而失败，完整pnpm test未进入；修正测试契约，不改变产品门禁。初次烟测全部专属资源清理完成，零真实模型/群消息。
+- scripts/smoke-unactivated-launch.mjs只使用显式专用context、固定缓存image、独占合成卷/controller/task；实际SIGKILL原协调器、独立读取旧epoch、丢create回执、持久拒绝gate、迟到start和等待worker停止。不处理真实库/凭据/候选或Owner身份；端口Docker烟测与lifecycle/runtime账本自动化证据分开，不冒充完整线上引擎。
+- 当前最终顺序链验证中，业务代码/测试自启动起固定；完整终态和Docker结果取得后追加，不提前记通过。
+
 ## 2026-09-07 协调器启动代次及原生Git恢复
 
 - 123829模块缺失、4b7a2b新表缺失、3da0b7启动接线/恢复分支先行红灯；随后实现。52e484为新增参数属性不兼容Node strip-only与两项漏更新schema断言；0fa4e9/44cd0c为三个测试Mock类型扩宽，均已按证据修复。ace9c2实际租约包含expiresAt/version导致strict schema拒绝，d60add先补定向红灯，修正为只提取ownerId/fence，保持签名payload严格。

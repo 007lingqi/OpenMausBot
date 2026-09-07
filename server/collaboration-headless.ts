@@ -26,6 +26,7 @@ import {
 import { DockerSandboxedCommandRunner } from "./collaboration/operations/docker-command-runner.ts";
 import { DockerContainedPatchAgent } from "./collaboration/operations/contained-patch-agent.ts";
 import { DockerCoordinatorAuthority } from "./collaboration/operations/docker-coordinator.ts";
+import { DockerUnactivatedLaunchRecovery } from "./collaboration/operations/unactivated-launch.ts";
 import {
   CodexReadOnlyPatchProvider,
   DockerPatchAgent,
@@ -517,7 +518,9 @@ function dockerExecutionOptions(environment: NodeJS.ProcessEnv): Partial<Collabo
     containment,
     ...(providerIsolation === "task_container" ? { coordinator: new DockerCoordinatorAuthority({ docker,
       container: environment.OMB_DOCKER_COORDINATOR_CONTAINER?.trim() ?? "",
-      image: environment.OMB_DOCKER_COORDINATOR_IMAGE?.trim() ?? "", hostGeneration, verifierKey: readEncryptionKey(keyPath) }) } : {}),
+      image: environment.OMB_DOCKER_COORDINATOR_IMAGE?.trim() ?? "", hostGeneration, verifierKey: readEncryptionKey(keyPath) }),
+      unactivatedLaunchRecovery: new DockerUnactivatedLaunchRecovery({ exchangeRoot: join(exchangeRoot, "contained-provider"),
+        image: environment.OMB_DOCKER_PROVIDER_IMAGE!.trim(), containment }) } : {}),
     commandRunner: new DockerSandboxedCommandRunner({ docker, containment, image, exchangeRoot: commandRoot }),
     executionIsolation: "docker_linux",
     autoExecuteReady: true,

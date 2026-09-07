@@ -20,6 +20,13 @@ function fixture() {
     run: () => runContainedPatchWorker({ controlDirectory: control, candidateRoot: candidate, propose, signal: controller.signal, pollMs: 5, heartbeatTimeoutMs: 200 }) };
 }
 describe("trusted contained worker gates", () => {
+  it("a late start with a permanently denied gate never calls the provider or writes", async () => {
+    const f = fixture(); f.write("proposal.start", { start: false, reason: "aborted_before_activation" });
+    await expect(f.run()).rejects.toThrow("contained_gate_invalid");
+    expect(f.propose).not.toHaveBeenCalled();
+    expect(readFileSync(join(f.candidate, "src/main.ts"), "utf8")).toBe("old");
+    expect(existsSync(join(f.control, "proposal.json"))).toBe(false);
+  });
   it("does not call the provider or write the candidate until separate gates open", async () => {
     const f = fixture(), pending = f.run();
     await new Promise(resolve => setTimeout(resolve, 20)); expect(f.propose).not.toHaveBeenCalled();

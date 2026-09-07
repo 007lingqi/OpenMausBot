@@ -1,5 +1,18 @@
 # Meta 协作实施进度
 
+## 当前批次：未获执行授权的创建中断恢复（2026-09-07，完整回归通过，未部署）
+
+- 续跑终态：6181c2/session67854完整顺序链已全部通过；0d29c4主集299文件通过/1跳过、3412项通过/18跳过（3430登记），broker7、桌面32项、打包启动/9代理路径/headless/channel检查通过，末尾typecheck/diff通过。原181项定向和真实Docker两故障场景同链通过；无生产源码或测试在验证中改变，仅状态文档更新。保存完整本地commit，不push；旧群服务未切换。上一轮为实质进展，本轮从同一活句柄取得终态，不重复测试或模型调用。
+
+- 最终接续：6181c2/session67854；34c268确认最终181项定向/typecheck及真实Docker烟测通过。两场景created/waiting，真实旧coordinator SIGKILL后独立stopped，原create回执缺失、late start被拒绝、Provider调用0、候选不变、原journal及gate保留、恢复重复幂等；合成镜像2ffdbcca617d…/专属卷及容器已清理。完整顺序链仍在运行，未取得完整pnpm test/打包/末尾typecheck终态，不自动commit；不能重新启动同一验证。当前最后读取回执d61874，业务源码与测试自6181c2启动后冻结。6a23e6原3c05339服务healthy，未部署或真实调用。AGENTS.md/outputs仍保持原状。
+
+- 新增签名v2原启动的独立恢复端口，已接入lifecycle/runtime/headless task_container；仅原execution第一条Provider command无proof、无后续command，且旧coordinator有事前登记并独立确认stopped时可使用。即使有finalization，也不能跳过旧协调器停止检查。历史无coordinator proof事项仍锁定，不补签任务proof、不造finalization、不重置attempt。
+- 唯一实际容器与固定image/command/隔离/env/exact挂载核对后，确认没有request/view/proposal/apply材料，独占写入并fsync start:false门禁；原启动器wx不能覆盖。等待中的原容器只按完整ID停止，每次kill先落盘计数，原launch最多三次，跨observer不刷新。kill前再次检查当前租约；取消必须等待在途mutation结束。保留原容器/目录阻断迟到start，不将取消证据说成执行proof或所有未来进程永不启动。
+- 独立settlement记录aborted_before_activation/原binding/launch/gate哈希；群回复明确“上次修改尚未开始，系统已关闭它的执行入口”，不是修改完成，不自动重做。重复恢复/重启不重复通知。
+- ca2999承接上一轮75项与typecheck通过；343a24新增12项隔离/挂载/kill前权限TDD红灯，e77414修正后32项/typecheck通过；d0b48f生命周期和headless接线TDD红灯后76c1ca的85项/typecheck通过；2ca0b6环境覆盖3项先行红灯后修正。f0883e的7文件181项通过，但烟测新局部变量类型推断失败，未将该链标通过；显式类型后5b7dc6的typecheck通过，412931烟测因测试预期错误日志与合成worker静态错误不一致失败，已按真实worker契约修正，产品gate逻辑未改。初次烟测专属资源已清理，完整pnpm test尚未启动。
+- 当前唯一运行服务仍3c05339/image779586bc572e… healthy/schema30；未迁移真实库、未切换服务、未调用真实模型或发送真实群。用户AGENTS.md/outputs不修改不提交。待当前完整顺序验证终态后记录并本地commit，不push。
+- 接续：新schema31固定候选镜像及兼容回退/备份后部署试点；完整Spec→开发→独立测试→Meta→真实群结果仍待验收。未匹配create、跨VM boot、旧容器缺失继续blocked；六真实群场景/在线文档正文及来源/Mac主机重启/Owner本人验收尚缺。禁止重试历史WI-EA2FD321158E或一次性Astra组件脚本。Goal active。
+
 ## 最新交接：协调器启动代次及原生Git恢复通过（2026-09-07，完整回归通过，未部署）
 
 - 上批9a57f36有实际实现/验证进展，本批继续独立协调器证据。新增DockerCoordinatorAuthority、schema31事前不可变登记、runtime启动门禁和无finalization新证据分支；task_container必须提供固定controller名/镜像。具体约束见D-116与contained-provider-design。旧服务/账本仍schema30，未迁移部署。

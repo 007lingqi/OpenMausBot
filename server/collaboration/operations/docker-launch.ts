@@ -1,4 +1,5 @@
-import { closeSync, constants, fchmodSync, fstatSync, fsyncSync, lstatSync, openSync, readSync, realpathSync, writeFileSync } from "node:fs";
+import { closeSync, constants, fchmodSync, fstatSync, fsyncSync, lstatSync, openSync, readSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { z } from "zod";
 import { containmentBindingHash } from "../containment.ts";
@@ -75,4 +76,45 @@ export function readDockerLaunch(directory: string): { launch: DockerLaunchRecor
   try { containerId = z.object({ containerId: z.string().regex(/^[a-f0-9]{64}$/u) }).strict().parse(readRecord(directory, "container.json")).containerId; }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   return containerId ? { launch, containerId } : { launch };
+}
+
+function deniedGate(launch: DockerLaunchRecord) {
+  return { start: false, reason: "aborted_before_activation", launchHash: createHash("sha256").update(dockerLaunchPayload(launch)).digest("hex") };
+}
+/** No execution material may ever have been published. Retain this directory:
+ * a delayed Docker start will encounter the permanently denied model gate. */
+export function sealUnactivatedLaunch(directory: string, launch: DockerLaunchRecord): string {
+  if (JSON.stringify(readDockerLaunch(directory).launch) !== JSON.stringify(launch)) throw Error("abort_launch_changed");
+  for (const name of readdirSync(directory)) {
+    if (!["launch.json", "container.json", "heartbeat.json", "heartbeat.next", "proposal.start"].includes(name) && !/^abort-kill-[1-3]\.json$/u.test(name))
+      throw Error("launch_may_have_been_activated");
+    const stat = lstatSync(join(directory, name));
+    if (!stat.isFile() || stat.nlink !== 1 || (stat.mode & 0o777) !== 0o600 || stat.uid !== process.getuid?.()) throw Error("abort_record_invalid");
+  }
+  const gate = deniedGate(launch);
+  try {
+    if (JSON.stringify(readRecord(directory, "proposal.start")) !== JSON.stringify(gate)) throw Error("launch_may_have_been_activated");
+    // A prior process may have died between creation and fsync. Re-sync, never replace.
+    const fd = openSync(join(directory, "proposal.start"), constants.O_RDONLY | constants.O_NOFOLLOW);
+    try { fsyncSync(fd); } finally { closeSync(fd); }
+    syncDirectory(directory); syncDirectory(dirname(directory));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    writeRecord(directory, "proposal.start", gate);
+  }
+  return createHash("sha256").update(JSON.stringify(gate)).digest("hex");
+}
+export function reserveLaunchAbortKill(directory: string, launch: DockerLaunchRecord, containerId: string): void {
+  if (!/^[a-f0-9]{64}$/u.test(containerId)) throw Error("abort_identity_invalid");
+  const expected = { version: 1, launchHash: deniedGate(launch).launchHash, containerId };
+  let count = 0;
+  for (let i = 1; i <= 3; i++) {
+    try {
+      const existing = readRecord(directory, `abort-kill-${i}.json`);
+      if (count !== i - 1 || JSON.stringify(existing) !== JSON.stringify(expected)) throw Error("abort_budget_invalid");
+      count++;
+    } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  }
+  if (count >= 3) throw Error("abort_budget_exhausted");
+  writeRecord(directory, `abort-kill-${count + 1}.json`, expected);
 }
