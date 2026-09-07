@@ -35,7 +35,9 @@ class FakeDocker implements DockerCommandPort {
       return result(0, this.id);
     }
     if (args[0] === "inspect" && args[1] === this.id) {
-      return result(0, JSON.stringify([{ Id: this.id, Config: { Labels: this.labels }, State: { Running: this.running } }]));
+      return result(0, JSON.stringify([{ Id: this.id, Config: { Labels: this.labels },
+        HostConfig: { RestartPolicy: { Name: "no" } },
+        State: { Running: this.running, Status: this.running ? "running" : "exited", Pid: this.running ? 42 : 0, Paused: false, Restarting: false } }]));
     }
     return result(1, "", "not found");
   }
@@ -46,6 +48,61 @@ function result(exitCode: number, stdout = "", stderr = ""): DockerCommandResult
 }
 
 describe("Docker CLI containment supervisor", () => {
+  function fixture() {
+    const docker = new FakeDocker();
+    const supervisor = new DockerCliContainmentSupervisor({ docker, hostGeneration: "boot-1", verifierKey: Buffer.alloc(32, 7) });
+    for (const label of supervisor.labels(binding)) {
+      const offset = label.indexOf("=");
+      docker.labels[label.slice(0, offset)] = label.slice(offset + 1);
+    }
+    return { docker, supervisor };
+  }
+
+  it.each(["wrong-id", "multiple", "no-state", "no-running", "string-running", "pid-alive", "restarting", "created", "dead", "restart-policy", "foreign-generation"])(
+    "never reports ambiguous Docker state as empty (%s)", async mode => {
+      const { docker, supervisor } = fixture();
+      const proof = await supervisor.issueProof(docker.id, binding);
+      docker.running = false;
+      const valid = JSON.parse((await docker.run(["inspect", docker.id])).stdout.toString());
+      if (mode === "wrong-id") valid[0].Id = "b".repeat(64);
+      if (mode === "multiple") valid.push(valid[0]);
+      if (mode === "no-state") delete valid[0].State;
+      if (mode === "no-running") delete valid[0].State.Running;
+      if (mode === "string-running") valid[0].State.Running = "false";
+      if (mode === "pid-alive") valid[0].State.Pid = 42;
+      if (mode === "restarting") valid[0].State.Restarting = true;
+      if (mode === "created") valid[0].State.Status = "created";
+      if (mode === "dead") valid[0].State.Status = "dead";
+      if (mode === "restart-policy") valid[0].HostConfig.RestartPolicy.Name = "always";
+      if (mode === "foreign-generation") valid[0].Config.Labels["com.openmausbot.collaboration.host-generation"] = "other";
+      const run = vi.spyOn(docker, "run").mockImplementation(async () => result(0, JSON.stringify(valid)));
+      await expect(supervisor.inspect(proof.identity)).resolves.toMatchObject({ state: "unknown" });
+      await expect(supervisor.terminateAndWaitEmpty(proof.identity)).resolves.toMatchObject({ state: "unknown" });
+      expect(run.mock.calls.every(([args]) => args[0] === "inspect")).toBe(true);
+    },
+  );
+
+  it("rejects proof issue and verification when Docker returns a different full identity", async () => {
+    const { docker, supervisor } = fixture();
+    const proof = await supervisor.issueProof(docker.id, binding);
+    const wrong = JSON.parse((await docker.run(["inspect", docker.id])).stdout.toString());
+    wrong[0].Id = "b".repeat(64);
+    vi.spyOn(docker, "run").mockResolvedValue(result(0, JSON.stringify(wrong)));
+    await expect(supervisor.issueProof(docker.id, binding)).rejects.toThrow();
+    await expect(supervisor.verifyProof(proof, binding)).resolves.toMatchObject({ verified: false });
+  });
+
+  it("permits cleanup of a bound never-started container but not a malformed stopped state", async () => {
+    const { docker, supervisor } = fixture();
+    docker.running = false;
+    const state = JSON.parse((await docker.run(["inspect", docker.id])).stdout.toString());
+    state[0].State.Status = "created";
+    vi.spyOn(docker, "run").mockImplementation(async () => result(0, JSON.stringify(state)));
+    await expect(supervisor.terminateBoundContainer(docker.id, binding)).resolves.toMatchObject({ state: "empty" });
+    delete state[0].State.Pid;
+    await expect(supervisor.terminateBoundContainer(docker.id, binding)).resolves.toMatchObject({ state: "unknown" });
+  });
+
   it("does not spawn an already cancelled command", async () => {
     const controller = new AbortController();
     controller.abort("private reason");

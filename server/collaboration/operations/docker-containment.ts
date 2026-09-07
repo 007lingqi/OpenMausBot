@@ -134,7 +134,19 @@ export class NodeDockerCommandPort implements DockerCommandPort {
 interface DockerInspection {
   Id?: unknown;
   Config?: { Labels?: Record<string, string> | null };
-  State?: { Running?: unknown; Status?: unknown };
+  HostConfig?: { RestartPolicy?: { Name?: unknown } };
+  State?: { Running?: unknown; Status?: unknown; Pid?: unknown; Paused?: unknown; Restarting?: unknown };
+}
+
+/** Unknown, restarting or incomplete daemon state is never evidence of emptiness. */
+function observedState(inspection: DockerInspection, allowCreated = false): "active" | "empty" | "unknown" {
+  const state = inspection.State;
+  if (!state || inspection.HostConfig?.RestartPolicy?.Name !== "no" || state.Restarting !== false) return "unknown";
+  if (state.Running === true && Number.isSafeInteger(state.Pid) && Number(state.Pid) > 0 &&
+    ((state.Status === "running" && state.Paused === false) || (state.Status === "paused" && state.Paused === true))) return "active";
+  if (state.Running === false && state.Pid === 0 && state.Paused === false &&
+    (state.Status === "exited" || (allowCreated && state.Status === "created"))) return "empty";
+  return "unknown";
 }
 
 function receipt(key: Buffer, identity: RuntimeIdentity, binding: ContainmentBinding): string {
@@ -149,8 +161,9 @@ function parseInspection(result: DockerCommandResult): DockerInspection | null {
   if (result.exitCode !== 0 || result.stdout.length > 128 * 1024) return null;
   try {
     const parsed = JSON.parse(result.stdout.toString("utf8")) as unknown;
-    const value = Array.isArray(parsed) ? parsed[0] : parsed;
-    return value && typeof value === "object" ? (value as DockerInspection) : null;
+    if (!Array.isArray(parsed) || parsed.length !== 1) return null;
+    const value = parsed[0];
+    return value && typeof value === "object" && !Array.isArray(value) ? (value as DockerInspection) : null;
   } catch {
     return null;
   }
@@ -177,6 +190,7 @@ export class DockerCliContainmentSupervisor implements ContainmentPort {
     this.verifierKey = Buffer.from(input.verifierKey);
     this.verifierVersion = input.verifierVersion ?? "docker-cgroup-v2-hmac-v1";
     this.emptyTimeoutMs = input.emptyTimeoutMs ?? 10_000;
+    if (!Number.isSafeInteger(this.emptyTimeoutMs) || this.emptyTimeoutMs < 1) throw new Error("containment_timeout_invalid");
   }
 
   labels(binding: ContainmentBinding): string[] {
@@ -190,17 +204,13 @@ export class DockerCliContainmentSupervisor implements ContainmentPort {
   async issueProof(containerId: string, binding: ContainmentBinding): Promise<ContainmentProof> {
     const identity = this.identity(containerId);
     const inspection = await this.inspection(containerId);
-    if (!inspection || inspection.State?.Running !== true) throw new Error("containment_container_not_running");
+    if (!inspection || observedState(inspection) !== "active" || inspection.State?.Paused !== false) throw new Error("containment_container_not_running");
     if (!this.labelsMatch(inspection, binding)) throw new Error("containment_container_labels_invalid");
     return { identity, receipt: receipt(this.verifierKey, identity, binding) };
   }
 
   async verifyProof(proof: ContainmentProof, expectedBinding: ContainmentBinding) {
-    if (
-      proof.identity.backend !== BACKEND ||
-      proof.identity.hostGeneration !== this.hostGeneration ||
-      proof.identity.verifierVersion !== this.verifierVersion
-    ) {
+    if (!this.validIdentity(proof.identity)) {
       return { verified: false as const, reason: "containment_supervisor_identity_mismatch" };
     }
     const inspection = await this.inspection(proof.identity.opaqueId);
@@ -223,17 +233,16 @@ export class DockerCliContainmentSupervisor implements ContainmentPort {
     if (!this.validIdentity(identity)) return { state: "unknown", reason: "containment_identity_invalid" };
     const inspection = await this.inspection(identity.opaqueId);
     if (!inspection) return { state: "unknown", reason: "containment_container_unavailable" };
-    const fingerprint = runtimeIdentityFingerprint(identity);
-    return inspection.State?.Running === true ? { state: "active", fingerprint } : { state: "empty", fingerprint };
+    if (!this.managedIdentityMatches(inspection)) return { state: "unknown", reason: "containment_container_labels_invalid" };
+    const state = observedState(inspection);
+    return state === "unknown" ? { state, reason: "containment_state_unconfirmed" } : { state, fingerprint: runtimeIdentityFingerprint(identity) };
   }
 
   async terminateAndWaitEmpty(identity: RuntimeIdentity): Promise<ContainmentInspection> {
     if (!this.validIdentity(identity)) return { state: "unknown", reason: "containment_identity_invalid" };
-    const inspection = await this.inspection(identity.opaqueId);
-    if (!inspection) return { state: "unknown", reason: "containment_container_unavailable" };
-    if (inspection.State?.Running === true) {
-      await this.docker.run(["kill", identity.opaqueId], { timeoutMs: this.emptyTimeoutMs, maxOutputBytes: 16 * 1024 });
-    }
+    const before = await this.inspect(identity);
+    if (before.state !== "active") return before;
+    await this.docker.run(["kill", identity.opaqueId], { timeoutMs: this.emptyTimeoutMs, maxOutputBytes: 16 * 1024 });
     const deadline = Date.now() + this.emptyTimeoutMs;
     while (Date.now() <= deadline) {
       const state = await this.inspect(identity);
@@ -254,8 +263,11 @@ export class DockerCliContainmentSupervisor implements ContainmentPort {
       if (!inspection || inspection.Id !== identity.opaqueId || !this.labelsMatch(inspection, binding)) {
         return { state: "unknown", reason: "containment_binding_unconfirmed" };
       }
-      if (inspection.State?.Running === false) return { state: "empty", fingerprint };
-      if (inspection.State?.Running !== true) return { state: "unknown", reason: "containment_state_unconfirmed" };
+      // This path is only for the owning invocation after all create/start calls
+      // have returned. A never-started container cannot be a lifecycle proof.
+      const state = observedState(inspection, true);
+      if (state === "empty") return { state: "empty", fingerprint };
+      if (state !== "active") return { state: "unknown", reason: "containment_state_unconfirmed" };
       if (!killRequested) {
         // Even a nonzero kill response can race a normal exit; only the next inspect proves emptiness.
         await this.docker.run(["kill", identity.opaqueId], { timeoutMs: this.emptyTimeoutMs, maxOutputBytes: 16 * 1024 });
@@ -289,15 +301,20 @@ export class DockerCliContainmentSupervisor implements ContainmentPort {
   private labelsMatch(inspection: DockerInspection, binding: ContainmentBinding): boolean {
     const labels = inspection.Config?.Labels ?? {};
     return (
-      labels[MANAGED_LABEL] === "1" &&
-      labels[BINDING_LABEL] === containmentBindingHash(binding) &&
-      labels[GENERATION_LABEL] === this.hostGeneration
+      this.managedIdentityMatches(inspection) && labels[BINDING_LABEL] === containmentBindingHash(binding)
     );
+  }
+
+  private managedIdentityMatches(inspection: DockerInspection): boolean {
+    const labels = inspection.Config?.Labels ?? {};
+    return labels[MANAGED_LABEL] === "1" && labels[GENERATION_LABEL] === this.hostGeneration &&
+      typeof labels[BINDING_LABEL] === "string" && /^[a-f0-9]{64}$/u.test(labels[BINDING_LABEL]);
   }
 
   private async inspection(containerId: string): Promise<DockerInspection | null> {
     const normalized = containerId.trim().toLowerCase();
     if (!/^[0-9a-f]{64}$/u.test(normalized)) return null;
-    return parseInspection(await this.docker.run(["inspect", normalized], { timeoutMs: 5_000, maxOutputBytes: 128 * 1024 }));
+    const inspected = parseInspection(await this.docker.run(["inspect", normalized], { timeoutMs: 5_000, maxOutputBytes: 128 * 1024 }));
+    return inspected?.Id === normalized ? inspected : null;
   }
 }

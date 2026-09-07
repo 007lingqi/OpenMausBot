@@ -1,5 +1,15 @@
 # Meta 协作实施进度
 
+## 最新检查点：写入取消与恢复凭据收紧（2026-09-07，本批验证通过，未部署）
+
+- Docker 状态检查不再将缺字段、错误完整 ID、多对象、残余 PID、created/dead/restarting 或自动重启策略当成 empty。只有正确绑定、明确 exited/Pid0/非暂停/非重启的状态可用于释放；created 仅允许原调用在 create/start 已结束后的清理，不能签发执行凭据。
+- DockerPatchApplier 提前取消不启动；停止覆盖在途 create/start/凭据登记/wait/最终清理，并发停止等待同一次清理结束。取消后不开放写入 gate，迟到 exit0 不成功。失败统一确认绑定容器停止后才移除临时资料；create 回执未知或清理未确认保留资料和失败，拒绝复用同 runId，不猜测 ID。
+- TDD 843427 复现 23 项失败；af53f3 的 4 文件55项/typecheck/diff通过；bb8bfb 的3文件69项/typecheck/diff及真实Docker状态烟测通过，包含执行/验证账本恢复拒绝不完整状态、明确退出后幂等恢复。
+- 36214/b087c5 真实写入烟测未进入业务，旧镜像 Docker API1.41 与 daemon 最低1.44不兼容；77e4ad/1e3b3a独立只读诊断后，按原compose已有DOCKER_API_VERSION=1.44补齐测试控制器环境，未修改生产配置。60830/604583四类真实烟测通过：正常写入、登记失败、登记时取消、daemon实际start后丢回执；失败3类文件未写，全部exited/Pid0，确认停止后清理。仅一次性测试卷和受信任测试控制器有Docker socket，写入子容器无网络/socket/业务挂载，modelCalls0/realGroupMessages0；测试资源清理完成。
+- 60830/cell662已终态exit0：四类真实写入烟测后，完整pnpm test、pnpm typecheck、git diff --check通过；主集289文件通过/1跳过，3227项通过/18跳过（3245登记），broker7项、桌面32项、普通/headless打包启动退出与9代理路径通过。业务源码和测试自该链启动后固定。所有验证句柄均终态，不重复启动或轮询；本批明确归属的代码、测试、烟测与状态文档保存本地commit，不push。
+- 真实服务仍固定3140fea镜像、healthy，fa1495确认events12/outbox49/running0，无新群消息。本批未替换服务、未变更模型/Owner/凭据、未发送群消息，也未操作默认Colima profile。AGENTS.md与outputs/保留用户原有状态。
+- 仍缺 Provider 执行前的持久独立隔离身份和完整在途恢复；本批只修复已绑定写入容器的清理与现有Docker恢复判断，不给旧WI-EA2FD321158E补造proof/finalization/settlement，不重置失败次数。下一步基于本批已验证dist构建固定非生产镜像，确认无在途工作及Owner/历史表不变后仅切换controller（保留原命令镜像/policy）；此前3140fea构建/部署脚本已消费，不原样重跑。随后推进Provider独立supervisor、真实群六场景、授权在线文档/表格及Owner本人验收。Goal active。
+
 ## 最新检查点：真实建议和独立候选验证通过，新服务已部署并完成VM重启（2026-09-07）
 
 - 15297/bceea4 exit0：同一原合成事项WI-EA2FD321158E、同一请求哈希的第3次只读复查，Astra/medium于76940ms返回completed/2文件；无应用、实际群发送或业务账本变更，CLI私有状态清理且容器自然停止。保留第1次引擎失败、第2次超时和本次第3次记录，不重跑/private/tmp/omb-run-provider-review-3140fea.mjs。原VM证据根/var/lib/openmausbot-engine-probe-188ebd46-1b0b-4f6d-8887-1969df34dffd/provider-review-3；本机manifest /private/tmp/omb-provider-review-build-aCmeTs。

@@ -27,7 +27,7 @@ function fixture() {
       onCreate(); return result(id);
     }
     if (args[0] === "start") { running=true; return result(id); }
-    if (args[0] === "inspect") return result(JSON.stringify([{ Id:id,Config:{Labels:labels},State:{Running:running} }]));
+    if (args[0] === "inspect") return result(JSON.stringify([{ Id:id,Config:{Labels:labels},HostConfig:{RestartPolicy:{Name:"no"}},State:{Running:running,Status:running?"running":"exited",Pid:running?42:0,Paused:false,Restarting:false} }]));
     if (args[0] === "wait") return onWait();
     if (args[0] === "logs") return result();
     if (args[0] === "kill") { if(refuseKill) throw new Error("kill unavailable"); running=false; return result(id); }

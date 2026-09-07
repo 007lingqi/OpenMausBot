@@ -1,5 +1,7 @@
 # 内部研发助手 Meta 协作规范
 
+写入恢复不变量更新（2026-09-07）：独立Docker观察必须返回唯一完整容器ID及本实例代次的受管标签；只有显式exited、Running=false、Pid=0、Paused=false、Restarting=false且restart-policy=no才可作为empty用于生命周期恢复。created仅为原调用完成所有create/start操作后可清理的无进程状态，不是执行凭据；dead/缺字段/其他身份一律未知。写入取消不得在凭据登记后开放迟到gate；interrupt需等待在途操作及确认退出，停止后的exit0无效；未知create回执或清理失败保留资料并阻止复用。现有无proof历史不因此解锁。这是本地实现和真实隔离容器故障测试边界，不是Provider独立cgroup supervisor/完整在途恢复或真实群验收。当前服务仍3140fea，本批尚未部署。
+
 最新运行事实（2026-09-07，覆盖下方旧部署/运行中表述）：3140fea已部署唯一非生产服务，仅controller image变化，原命令镜像、policy、仓库、凭据和Owner保持不变。真实Astra/medium第3次只读建议已通过，独立候选两套7项测试和可信业务检查通过，但未形成原事项正式Executor/Meta收据。Colima专用Linux测试VM实际重启后服务、唯一实例租约及宿主私有模型通道自动恢复，历史事件和回复不重放；Mac未重启、此次没有在途任务，独立supervisor及旧无proof恢复仍未完成。真实群六场景和在线正文读取尚待实际材料/操作，不能以这些诊断替代最终验收。
 
 验收进展更新（2026-09-07）：下段提及的完整验证14079/4a48c9已exit0，真实Linux四类停止、完整pnpm test、typecheck及打包启动退出均通过，受测业务源码和单测固定。此结果不替代真实模型第3次复查、旧无proof会话的恢复或完整群业务验收；当前没有运行中测试/模型。

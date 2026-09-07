@@ -1,5 +1,13 @@
 # Meta 协作验证记录
 
+## 2026-09-07 写入停止与Docker恢复观察
+
+- 843427先行TDD：新增23项红灯，复现错误/不完整Docker观察被当empty、已取消仍创建、失败不确认退出、停止未等待及迟到gate。
+- af53f3 exit0：4文件55项/typecheck/diff通过。bb8bfb exit0：后续3文件69项/typecheck/diff通过；新增SQLite执行与复核恢复边界、取消期间的wait/登记/最终清理及空wait不误判成功。
+- bb8bfb真实Docker状态烟测：created不签proof、running校验、实际kill后exited/Pid0、重建相同配置的观察对象仍可验证原proof；无业务挂载/modelCalls0。不是独立supervisor或宿主重启证明。
+- b087c5写入烟测exit1：镜像CLI API1.41与daemon最低1.44不兼容，完整测试链未开始。1e3b3a零业务/模型诊断证实版本错误；对齐已有compose的DOCKER_API_VERSION=1.44后，604583证实四类真实写入烟测通过，失败三类无写入，所有子容器退出后清理。仅使用指定context的固定缓存镜像70087328c759…，临时测试卷已删除，用户数据及真实账本未变。
+- 60830/cell662终态exit0：完整pnpm test、typecheck及diff通过，主集289文件通过/1跳过，3227项通过/18跳过（3245登记），broker7、桌面32项及普通/headless打包烟测通过，9代理路径通过。所有句柄已终态，无需继续轮询。随后仅更新状态文档，业务源码与测试固定，保存本地commit、不push、不部署。fa1495仅只读确认真实群events12/outbox49/running0，之前8bc711因错误表名查询失败，没有执行写入，已纠正为external_events。
+
 ## 2026-09-07 真实模型候选、唯一服务切换与Colima重启
 
 - 15297/bceea4 exit0：原请求哈希匹配第2次预留，Astra/medium第3次只读建议completed，2文件、76940ms；原账本7表哈希不变，容器自然Exited0，模型私有目录已清理。没有第4次调用或原任务自动执行重试。

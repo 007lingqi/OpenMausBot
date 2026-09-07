@@ -223,6 +223,7 @@ describe("Docker patch Agent", () => {
       labels: vi.fn(() => []),
       issueProof: vi.fn(async () => proof),
       inspect: vi.fn(async () => ({ state: "empty" as const })),
+      terminateBoundContainer: vi.fn(async () => ({ state: "empty" as const })),
     };
     const applier = new DockerPatchApplier({
       docker,

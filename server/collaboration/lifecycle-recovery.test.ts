@@ -12,6 +12,7 @@ import { hasUnsettledExecution } from "./repository-occupancy.ts";
 import { hasUnsettledVerification, recordVerificationCommand, recordVerificationProof, reserveVerification, settleVerification } from "./verification-lifecycle.ts";
 import { applyCollaborationMigrations } from "./migrations.ts";
 import { containmentBindingHash, runtimeIdentityFingerprint, type ContainmentPort, type ContainmentProof } from "./containment.ts";
+import { DockerCliContainmentSupervisor } from "./operations/docker-containment.ts";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -72,6 +73,38 @@ async function verificationFixture() {
 }
 
 describe("passive lifecycle recovery", () => {
+  it.each(["execution", "verification"] as const)("keeps %s occupied on incomplete Docker observations and recovers only on explicit stopped evidence", async kind => {
+    const f = kind === "execution" ? fixture() : await verificationFixture();
+    try {
+      const id = "d".repeat(64);
+      let state: Record<string, unknown> = { Running: true, Status: "running", Pid: 123, Paused: false, Restarting: false };
+      let labels: Record<string, string> = {};
+      const containment = new DockerCliContainmentSupervisor({ hostGeneration: "boot", verifierKey: Buffer.alloc(32, 8),
+        docker: { async run(args) {
+          expect(args).toEqual(["inspect", id]);
+          return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.from(JSON.stringify([{ Id: id, Config: { Labels: labels }, HostConfig: { RestartPolicy: { Name: "no" } }, State: state }])) };
+        } },
+      });
+      labels = Object.fromEntries(containment.labels(f.binding).map(label => { const n = label.indexOf("="); return [label.slice(0, n), label.slice(n + 1)]; }));
+      const proof = await containment.issueProof(id, f.binding);
+      f.command();
+      if (kind === "execution") f.session.proof(1, proof);
+      else recordVerificationProof(f.db, f.sessionId, 1, proof, f.lease, Date.now());
+      expect(await (kind === "execution" ? f.session.settle(containment) : settleVerification(f.db, f.sessionId, f.lease, containment, Date.now, () => true))).toBe(false);
+      const input = { kind, sessionId: f.sessionId, instance: f.takeover(), containment, now: Date.now };
+      const stopped = { Running: false, Status: "exited", Pid: 0, Paused: false, Restarting: false };
+      for (const invalid of [{}, { ...stopped, Running: undefined }, { ...stopped, Pid: 123 }, { ...stopped, Status: "restarting" }]) {
+        state = invalid;
+        expect(await recoverLifecycleSession(f.db, input)).toMatchObject({ state: "blocked", reason: "process_exit_unconfirmed" });
+        expect(f.db.prepare(`SELECT count(*) AS n FROM collaboration_${kind}_settlements WHERE session_id=?`).get(f.sessionId)).toEqual({ n: 0 });
+        expect(kind === "execution" ? hasUnsettledExecution(f.db, f.root) : hasUnsettledVerification(f.db, f.root)).toBe(true);
+      }
+      state = stopped;
+      expect((await recoverLifecycleSession(f.db, input)).state).toBe("recovered");
+      expect((await recoverLifecycleSession(f.db, input)).state).toBe("already_settled");
+    } finally { f.db.close(); }
+  });
+
   it("recovers a finalized verifier without changing candidate, reviews or task status", async () => {
     const f = await verificationFixture();
     try {

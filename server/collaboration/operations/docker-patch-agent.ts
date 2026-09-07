@@ -34,6 +34,29 @@ export interface PatchApplierPort {
   interrupt(runId: string): Promise<void>;
 }
 
+function assertPatchActive(signal: AbortSignal): void {
+  if (signal.aborted) throw new Error("docker_patch_cancelled");
+}
+
+/** Only proof registration may be abandoned; create/start must finish before cleanup. */
+async function registerUnlessCancelled(request: AgentRunRequest, proof: ContainmentProof): Promise<void> {
+  assertPatchActive(request.signal);
+  let abort!: () => void;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      abort = () => reject(new Error("docker_patch_cancelled"));
+      request.signal.addEventListener("abort", abort, { once: true });
+      Promise.resolve().then(() => { assertPatchActive(request.signal); return request.registerContainment(proof); }).then(resolve, reject);
+    });
+  } finally { request.signal.removeEventListener("abort", abort); }
+}
+
+interface PatchApplication {
+  controller: AbortController;
+  finished: Promise<void>;
+  cleanupError?: CommandCleanupError;
+}
+
 function safeName(value: string): string {
   const normalized = value.toLowerCase().replace(/[^a-z0-9_.-]+/gu, "-").replace(/^-+|-+$/gu, "");
   if (!normalized) throw new Error("docker_patch_name_invalid");
@@ -92,7 +115,7 @@ export class DockerPatchApplier implements PatchApplierPort {
   private readonly exchangeRoot: string;
   private readonly helperPath: string;
   private readonly user: string;
-  private readonly active = new Map<string, string>();
+  private readonly active = new Map<string, PatchApplication>();
 
   constructor(input: {
     docker: DockerCommandPort;
@@ -116,13 +139,38 @@ export class DockerPatchApplier implements PatchApplierPort {
   }
 
   async apply(request: AgentRunRequest, changes: PatchChange[]): Promise<ContainmentProof> {
+    assertPatchActive(request.signal);
+    if (this.active.has(request.runId)) throw new Error("docker_patch_already_active_or_unsettled");
+    let finish!: () => void;
+    const active: PatchApplication = { controller: new AbortController(), finished: new Promise(resolve => { finish = resolve; }) };
+    this.active.set(request.runId, active);
+    const abort = () => active.controller.abort();
+    request.signal.addEventListener("abort", abort, { once: true });
+    try {
+      return await this.applyInContainer({ ...request, signal: active.controller.signal }, changes);
+    } catch (error) {
+      if (error instanceof CommandCleanupError) active.cleanupError = error;
+      throw error;
+    } finally {
+      request.signal.removeEventListener("abort", abort);
+      // Keep unconfirmed cleanup addressable, and forbid reusing its run id.
+      if (!active.cleanupError) this.active.delete(request.runId);
+      finish();
+    }
+  }
+
+  private async applyInContainer(request: AgentRunRequest, changes: PatchChange[]): Promise<ContainmentProof> {
+    assertPatchActive(request.signal);
     const directory = join(this.exchangeRoot, safeName(`${request.runId}-${request.containmentBinding.nonce}`));
-    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    // Never reuse a previous gate or overwrite retained recovery material.
+    mkdirSync(directory, { mode: 0o700 });
     const manifest = join(directory, "manifest.json");
     const gate = join(directory, "start");
     writeFileSync(manifest, JSON.stringify({ root: request.cwd, writeScopes: request.writeScope, changes }), { mode: 0o600 });
     const labels = this.containment.labels(request.containmentBinding).flatMap((label) => ["--label", label]);
-    const created = await this.docker.run([
+    let containerId: string;
+    try {
+      const created = await this.docker.run([
       "create",
       "--name", safeName(`${request.runId}-${request.containmentBinding.nonce.slice(0, 8)}`),
       "--network", "none",
@@ -145,44 +193,55 @@ export class DockerPatchApplier implements PatchApplierPort {
       "openmausbot-patch",
       this.helperPath,
     ], { timeoutMs: 30_000, maxOutputBytes: 64 * 1024 });
-    const containerId = created.stdout.toString("utf8").trim().toLowerCase();
-    if (created.exitCode !== 0 || !/^[0-9a-f]{64}$/u.test(containerId)) {
-      rmSync(directory, { recursive: true, force: true });
-      throw new Error(`docker_patch_create_failed:${created.stderr.toString("utf8").slice(0, 300)}`);
+      containerId = created.stdout.toString("utf8").trim().toLowerCase();
+      if (created.exitCode !== 0 || !/^[0-9a-f]{64}$/u.test(containerId)) throw new Error("docker_patch_create_failed");
+    } catch {
+      // A timed-out/failed create can still exist at the daemon. Do not guess
+      // its identity or delete the only local recovery material.
+      throw new CommandCleanupError(new Error("docker_patch_create_unconfirmed"));
     }
-    this.active.set(request.runId, containerId);
-    let abort: (() => void) | undefined;
     try {
+      assertPatchActive(request.signal);
       const started = await this.docker.run(["start", containerId], { timeoutMs: 10_000, maxOutputBytes: 64 * 1024 });
       if (started.exitCode !== 0) throw new Error("docker_patch_start_failed");
+      assertPatchActive(request.signal);
       const proof = await this.containment.issueProof(containerId, request.containmentBinding);
-      await request.registerContainment(proof);
-      writeFileSync(gate, "start\n", { mode: 0o600 });
-      abort = () => void this.interrupt(request.runId);
-      request.signal.addEventListener("abort", abort, { once: true });
+      await registerUnlessCancelled(request, proof);
+      assertPatchActive(request.signal);
+      writeFileSync(gate, "start\n", { mode: 0o600, flag: "wx" });
       const waited = await this.docker.run(["wait", containerId], {
         timeoutMs: 300_000,
         maxOutputBytes: 16 * 1024,
+        signal: request.signal,
       });
-      const exitCode = Number(waited.stdout.toString("utf8").trim());
-      if (waited.exitCode !== 0 || exitCode !== 0) {
+      assertPatchActive(request.signal);
+      const exit = waited.stdout.toString("utf8").trim();
+      if (waited.exitCode !== 0 || exit !== "0") {
         const logs = await this.docker.run(["logs", containerId], { timeoutMs: 5_000, maxOutputBytes: 64 * 1024 });
         throw new Error(`docker_patch_apply_failed:${logs.stderr.toString("utf8").slice(0, 500)}`);
       }
       const inspection = await this.containment.inspect(proof.identity);
+      assertPatchActive(request.signal);
       if (inspection.state !== "empty") throw new Error("docker_patch_container_not_empty");
       return proof;
     } finally {
-      if (abort) request.signal.removeEventListener("abort", abort);
-      this.active.delete(request.runId);
+      try {
+        const stopped = await this.containment.terminateBoundContainer(containerId, request.containmentBinding);
+        if (stopped.state !== "empty") throw new Error("docker_patch_cleanup_unconfirmed");
+      } catch {
+        throw new CommandCleanupError(new Error("docker_patch_cleanup_unconfirmed"));
+      }
       rmSync(directory, { recursive: true, force: true });
+      assertPatchActive(request.signal);
     }
   }
 
   async interrupt(runId: string): Promise<void> {
-    const id = this.active.get(runId);
-    if (!id) return;
-    await this.docker.run(["kill", id], { timeoutMs: 10_000, maxOutputBytes: 16 * 1024 });
+    const active = this.active.get(runId);
+    if (!active) return;
+    active.controller.abort();
+    await active.finished;
+    if (active.cleanupError) throw active.cleanupError;
   }
 }
 
