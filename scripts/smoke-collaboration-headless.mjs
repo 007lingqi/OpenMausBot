@@ -67,7 +67,8 @@ try {
     throw new Error("packaged health exposed a secret-bearing field");
   }
 
-  const child = execFile(process.execPath, [entry, "--data-dir", serviceData], {
+  const wrapper = realpathSync(join(staging,"server","collaboration-docker.js"));
+  const child = execFile(process.execPath, [wrapper, "--data-dir", serviceData], {
     cwd: staging,
     env: minimalEnvironment(serviceData),
     timeout: 30_000,

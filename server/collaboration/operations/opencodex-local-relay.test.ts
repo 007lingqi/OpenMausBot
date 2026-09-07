@@ -3,7 +3,7 @@ import {once} from 'node:events';
 import {chmodSync, mkdtempSync, realpathSync, rmSync, symlinkSync} from 'node:fs';
 import {join} from 'node:path';
 import {afterEach, expect, it, vi} from 'vitest';
-import {startLocalOpenCodexRelay} from './opencodex-local-relay.ts';
+import {probeLocalOpenCodexSocket,startLocalOpenCodexRelay} from './opencodex-local-relay.ts';
 
 const cleanup:Array<()=>void|Promise<void>>=[];
 const unixIt=it.skipIf(process.platform==='win32');
@@ -63,4 +63,49 @@ unixIt('rejects missing sockets, symlinks and unprotected parent directories',as
  await expect(startLocalOpenCodexRelay({socketPath:link})).rejects.toThrow('local_relay_socket_unavailable');
  chmodSync(root,0o777);await expect(startLocalOpenCodexRelay({socketPath:socket})).rejects.toThrow('local_relay_socket_unavailable');
  chmodSync(root,0o700);
+});
+
+unixIt('probes the actual Unix upstream before opening the relay without invoking a model',async()=>{
+ const socket=join(directory(),'model.sock'),requests:unknown[]=[];
+ await listen(createServer(async(req,res)=>{const chunks=[];for await(const chunk of req)chunks.push(chunk);
+  requests.push({method:req.method,path:req.url,body:Buffer.concat(chunks).toString(),authorization:req.headers.authorization,cookie:req.headers.cookie});
+  res.writeHead(400,{'Content-Type':'application/json'});res.end(JSON.stringify({error:{code:'local_gateway_request_denied'}}));
+ }),socket);
+ const value=await startLocalOpenCodexRelay({socketPath:socket,probeUpstream:true});cleanup.push(value.close);
+ expect(requests).toEqual([{method:'POST',path:'/v1/responses',body:'{}',authorization:undefined,cookie:undefined}]);
+});
+unixIt.each([
+ [200,'application/json','{"error":{"code":"local_gateway_request_denied"}}'],
+ [400,'application/json','{"error":{"code":"other"}}'],
+ [400,'text/html','{"error":{"code":"local_gateway_request_denied"}}'],
+ [400,'application/json','private-upstream-diagnostic'],
+ [302,'application/json','{"error":{"code":"local_gateway_request_denied"}}'],
+ [400,'application/json','x'.repeat(4097)],
+])('rejects an unrecognized upstream response (%s, %s)',async(status,contentType,body)=>{
+ const socket=join(directory(),'model.sock');
+ await listen(createServer((_req,res)=>{res.writeHead(status,{'Content-Type':contentType});res.end(body);}),socket);
+ await expect(startLocalOpenCodexRelay({socketPath:socket,probeUpstream:true}).then(value=>{
+  cleanup.push(value.close);return value;
+ })).rejects.toThrow('local_relay_probe_failed');
+});
+unixIt.each(['headers','body'])('bounds a hanging %s probe and closes its connection',async(stage)=>{
+ const socket=join(directory(),'model.sock');let closed=false;
+ await listen(createServer((_req,res)=>{res.on('close',()=>{closed=true;});if(stage==='body'){
+  res.writeHead(400,{'Content-Type':'application/json'});res.write('{');
+ }}),socket);
+ await expect(probeLocalOpenCodexSocket(socket,{timeoutMs:100})).rejects.toThrow('local_relay_probe_failed');
+ await vi.waitFor(()=>expect(closed).toBe(true));
+});
+unixIt('fails the probe on disconnect, never exposes upstream errors, and does not retry',async()=>{
+ const socket=join(directory(),'model.sock');let calls=0;
+ await listen(createServer((req)=>{calls++;req.socket.destroy(new Error('private detail'));}),socket);
+ await expect(probeLocalOpenCodexSocket(socket)).rejects.toThrow('local_relay_probe_failed');expect(calls).toBe(1);
+});
+unixIt('revalidates socket privacy before a probe and bounds its timeout configuration',async()=>{
+ const socket=join(directory(),'model.sock'),calls=vi.fn();await listen(createServer(calls),socket);
+ chmodSync(socket,0o666);
+ await expect(probeLocalOpenCodexSocket(socket)).rejects.toThrow('local_relay_socket_unavailable');
+ chmodSync(socket,0o600);
+ for(const timeoutMs of [0,-1,5001,NaN,Infinity,1.5])await expect(probeLocalOpenCodexSocket(socket,{timeoutMs})).rejects.toThrow('local_relay_probe_failed');
+ expect(calls).not.toHaveBeenCalled();
 });

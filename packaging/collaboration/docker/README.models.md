@@ -65,6 +65,18 @@ Owner 已明确授权受限本机 OpenCodex 调用，并允许网络问题时直
 
 本次授权解决了“是否允许本机模型调用”的阻碍，不授权取消不可信附件/候选代码隔离，不改变凭据/身份。现有试点仍为旧镜像；六类真实场景、独立supervisor/主机恢复和Owner验收保持待验收。下方2026-09-06“尚未授权”是历史状态。
 
+## 中继启动前检查
+
+Docker运行镜像现在包含`collaboration-docker.js`及独立channel包；默认不启用relay，兼容原headless。`compose.opencodex.yaml`是无密钥模式专用overlay（Compose >=2.24.4），只和base compose合并，不和`compose.models.yaml`混用。需要显式提供已验证的VM私有socket目录、拥有该socket的专用UID/GID及验收策略版本；端口固定18100，四角色固定Astra/medium。!override保留原账本、仓库、Docker socket和两份业务凭据挂载，仅移除旧模型auth挂载，不修改或删除原文件。缺少目录不能自动创建。
+
+wrapper经setpriv清空附加组、继承/ambient能力和凭据环境；relay必须非root且不同于执行Provider身份，只有socket持有者可启动。relay探测后才启动headless；二者任一退出则关闭另一方，父stdin管道关闭是relay终止通知，不需要新增CAP_KILL。启动5秒/关闭10秒有界，Compose给20秒停止宽限；异常/超时以非零主进程退出交给Docker/tini关闭PID命名空间。不要在宿主启用relay wrapper模式。真实临时容器已补SIGSTOP冻结生产relay的故障注入：它不能响应父管道关闭，约10秒后wrapper失败退出、整个容器停止且State.Pid=0；不代表宿主/VM重启恢复。
+
+真实缓存镜像已验证：正常SIGTERM、中继被终止后业务退出、业务配置失败后中继退出、缺少通道时无业务启动输出。全部为禁用钉钉/业务执行、无原账本/凭据的临时容器；服务启动健康JSON不表示业务ready或Owner验收通过。原试点未切换，需先核对租约/在途任务/原配置连续性与回滚，再启动唯一非生产服务。
+
+独立通道入口的relay模式可增加`--probe-upstream 1`。监听前通过受保护Unix socket向宿主网关发送空请求，要求返回网关的明确拒绝；不调用模型、不发送用户材料。连接失败、超时、错误协议或超限响应会终止启动，不打印上游诊断正文。默认1.5秒、4KiB响应/响应头，无重试、无TCP回退、无重定向。
+
+这是通道可达检查，不是OpenCodex模型或钉钉业务健康检查；未启用此选项的旧relay仍只验证文件权限和本地监听。真实临时容器已验证探测后Astra/medium调用及私有连接恢复；wrapper和镜像/Compose接线已实现，常驻宿主服务与唯一群服务切换仍未完成。
+
 ## OpenCodex 本机无密钥模式
 
 Owner 本次选择为 OpenCodex、`gpt-6-astra`、`medium`，不是 OpenCode。无需修改 OpenCode 启动器或生成 API 密钥。三个角色分别显式配置；不要使用本文下方凭据挂载叠加模板来启动该模式。

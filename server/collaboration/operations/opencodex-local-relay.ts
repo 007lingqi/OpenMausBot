@@ -13,12 +13,49 @@ function privateSocket(path:string):void {
   }catch{throw new Error('local_relay_socket_unavailable');}
 }
 
+/** Negative protocol handshake with the host gateway, not with this relay's
+ * local filter. An empty request is rejected before any model call. This
+ * checks transport/protocol availability, NOT model or business health. */
+export async function probeLocalOpenCodexSocket(socketPath:string,options:{timeoutMs?:number}={}):Promise<void> {
+  privateSocket(socketPath);
+  const timeoutMs=options.timeoutMs??1500;
+  if(!Number.isSafeInteger(timeoutMs)||timeoutMs<1||timeoutMs>5000)throw new Error('local_relay_probe_failed');
+  await new Promise<void>((resolveProbe,reject)=>{
+    let settled=false;
+    const finish=(ok=false)=>{
+      if(settled)return;settled=true;clearTimeout(timer);call.destroy();
+      if(ok)resolveProbe();else reject(new Error('local_relay_probe_failed'));
+    };
+    const call=request({socketPath,path:'/v1/responses',method:'POST',agent:false,maxHeaderSize:4096,
+      headers:{'Content-Type':'application/json','Content-Length':'2'}},response=>{
+      const chunks:Buffer[]=[];let size=0;
+      response.on('error',()=>finish());response.on('aborted',()=>finish());
+      if(response.statusCode!==400||String(response.headers['content-type']??'').split(';')[0].trim()!=='application/json'){
+        response.destroy();finish();return;
+      }
+      response.on('data',(chunk:Buffer)=>{
+        size+=chunk.length;
+        if(size>4096){response.destroy();finish();return;}chunks.push(chunk);
+      });
+      response.on('end',()=>{
+        try{
+          const result=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+          finish(result?.error?.code==='local_gateway_request_denied');
+        }catch{finish();}
+      });
+    });
+    const timer=setTimeout(()=>finish(),timeoutMs);
+    call.on('error',()=>finish());call.end('{}');
+  });
+}
+
 /** Relay identity must own the private mounted socket. It has no remote TCP
  * fallback, credentials, tool dispatcher, retry queue, or request-body logs.
  * Each connection rechecks the trusted socket directory; after upstream
  * restart a new request reconnects rather than reusing a stale connection. */
-export async function startLocalOpenCodexRelay(options:{socketPath:string;port?:number;timeoutMs?:number}) {
+export async function startLocalOpenCodexRelay(options:{socketPath:string;port?:number;timeoutMs?:number;probeUpstream?:boolean}) {
   privateSocket(options.socketPath);
+  if(options.probeUpstream)await probeLocalOpenCodexSocket(options.socketPath);
   const fetcher:typeof fetch=async(_url,init)=>{
     privateSocket(options.socketPath);
     return new Promise<Response>((resolveResponse,reject)=>{

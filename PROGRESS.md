@@ -1,5 +1,31 @@
 # Meta 协作实施进度
 
+## 最新接续：启动接线完整回归通过，准备本地提交（2026-09-07）
+
+- 上轮progress，本轮progress。前轮cell393审核超时未启动，cell395唯一重试成功，54406/773901最终exit0：严格四类真实Docker烟测、完整pnpm test、typecheck、独立编译/tmp/openmausbot-docker-wrapper-typecheck和diff全链通过，包含普通包/9代理路径及新wrapper/父stdin通道无node_modules启动与退出。中间输出截断不补造全量统计；steer-e2e本次2项通过，历史ECONNRESET根因未知，不宣称已修复。受测代码/测试全程固定，54406已终态，不重轮询。
+- 新增真实冻结relay故障注入仅改临时探测脚本：38168/1681d8 exit0，SIGSTOP使生产relay无法响应关闭，约10秒后wrapper退出1且容器State.Pid=0。原四类也通过，全部本次容器、镜像标签、通道和目录清理通过。cell397首次审核超时未启动，唯一重试完成；该句柄已终态。
+- 本批业务变更已达局部验证门槛，准备只提交18个本任务文件（包括之前未提交探测批次），不push；最终提交以Git回执为准。用户AGENTS.md/outputs不动。原群容器9b9e95仍healthy；原账本只读聚合查询cell401审核超时未启动，唯一重试回执待核对，不能提前称无在途任务。
+- 后续需常驻宿主bridge服务和跨进程失败预算，核对原账本/租约/在途任务及备份回滚后切换唯一非生产群服务。真实文档/六场景、独立cgroup supervisor、VM/主机恢复和Owner本人签字仍待验收；Goal active，不将此提交称全产品完成。
+- 原账本唯一重试a4115b只读成功：activeOwners=1、liveInstanceLeases=1；运行记录5项needs_configuration/4项succeeded，无running；事项3项accepted/2项cancelled/1项collecting；节点无leased/running/validating；Outbox39项sent/10项superseded，无pending/claimed。仅该时刻快照，不替代切换前再次检查，不读取消息/身份值或改状态。无仍在运行的查询/验证句柄。
+
+## 最新接续：Docker启动接线与四类真实容器验证通过（2026-09-07）
+
+- 上轮progress，本轮progress；基线仍7a60e6f，上一批未提交。19337/2ed275最终exit1：3110通过/1失败/18跳过（3129登记），唯一失败steer-e2e排队用例fetch ECONNRESET。82679独立复测此前通过；根因未确认，未改该测试或业务队列。19337已终态，不再轮询。
+- 新增docker-service-supervisor、collaboration-docker入口、父stdin生命周期、bundle/Dockerfile和无密钥Compose overlay及测试。766c94/f49e1c为缺功能红灯；fccf97复现就绪/退出竞态和取消掩盖非零退出，已修复。30186/a00885 exit0：55项、typecheck、build及无node_modules旧模式wrapper/通道父管道关闭smoke通过。47985/65531f的17失败为误在沙箱监听EPERM，非产品故障；授权宿主87818/4c4ae3 exit0：57项/typecheck及真实Docker复测通过。
+- /tmp/openmausbot-docker-wrapper-probe.mjs：固定缓存镜像离线增量打包生产入口/relay/headless，指定context；四种临时无网络/只读/原三cap场景通过：正常SIGTERM、中继故障导致业务退出、业务失败导致中继退出、通道缺失阻止业务启动。禁用钉钉/执行，无原账本或凭据挂载；临时容器、镜像标签、转发/目录均清理。首次76406/bd7879超时由夹具等待默认NULL_LOGGER不会输出的日志标记导致，改为真实健康JSON后通过。随后收紧JSON app/钉钉禁用与缺通道空stdout断言，当前复核见下一项。
+- b922df exit0：真实Compose用/dev/null env-file和全合成参数合并，确认六挂载、无旧auth/模型密钥、固定四角色Astra/medium、原三cap不变及20秒停止宽限。bd4419只读原群服务healthy，未替换或操作其他context。
+- 当前待续句柄为functions cell393（需先wait取得exec session/终态）：命令依次重跑严格四类Docker烟测、pnpm test、typecheck、独立编译到/tmp/openmausbot-docker-wrapper-typecheck、diff。首次返回仍等待工具回执，不把已提交调用当完整测试已启动/通过；不要重复启动。后续在该命令期间保持业务/测试固定。所有其他本批句柄均已终态。未自动commit，待完整链实际通过再只提交本批文件、不push；用户AGENTS.md/outputs保持不动。
+- 按goal-protocol本批20工具轮检查点收束，Goal active。下一步先取393回执并继续唯一验证；完成后补无响应relay强制容器收束故障注入与常驻宿主生命周期/失败预算持久化，再核对账本租约和在途任务/回滚并切换唯一原试点。真实文档/六场景、独立cgroup supervisor、主机重启和Owner签字仍待验收，不将临时容器启动等同群里已升级。
+
+## 最新接续：中继启动探测已实现，完整回归在运行（2026-09-07）
+
+- 基线7a60e6f；只修改opencodex-local-relay/model-channel及对应测试、smoke-model-channel和五份说明；用户AGENTS.md/outputs保留。未改Dockerfile/Compose或替换原服务，无新Owner/Stream、凭据或数据迁移。
+- da7582 exit1为新增12项预期红灯（启动探测缺失）。实现严格私有Unix上游负向握手、1.5秒/4KiB界限与显式relay CLI选项后，6952/680a51 exit0：31项/typecheck/diff通过。
+- 19337是当前唯一仍需继续读取的完整验证会话。7024dd启动命令：先bundle /tmp/openmausbot-relay-model-client.ts，再运行/tmp/openmausbot-managed-channel-probe.mjs，随后pnpm test、pnpm typecheck、git diff --check。47abcf已证实两次真实临时容器Astra/medium调用、启动探测、同master转发恢复（connections=2）和临时资源清理全部通过；原试点358123只读healthy。真实探测脚本已为relay启用probeUpstream:true。
+- 完整pnpm test主集仍运行，8907c1已出现server/steer-e2e.test.ts排队用例1失败，具体最终诊断需取得19337终态；不能重跑整个未结束测试或称完整通过。82679/c8b5eb独立复测2项通过，但原因仍未知，不改既有测试/业务逻辑、不放宽断言、不自动提交。本批业务与测试代码在全量运行期间固定。全量后的打包smoke和typecheck尚不可宣称完成。
+- c6e15d exit0：使用固定缓存镜像的无网络只读临时容器，沿用原CHOWN/SETGID/SETUID能力，setpriv降至501:501并清空附加组，验证Inh/Prm/Eff/Amb均零和NoNewPrivs=1。退出自动清理，无业务挂载。后续wrapper不能假设无CAP_KILL的root可直接杀死降权子进程，需同身份有界收束测试；不要无证据添加cap。
+- 按goal-protocol本批工具轮检查点收束，Goal active而非complete/blocked。下一步先继续19337并分析完整终态；确认/修复既有回归失败后验证完整链，再本地提交本批明确归属文件、不push。随后实现Docker wrapper、无密钥opt-in挂载与实际镜像启动/退出，再检查账本/租约/在途任务并切换唯一非生产服务。真实六类群场景/文档、独立cgroup supervisor、主机恢复及Owner本人签字仍未验收。
+
 ## 最新接续：已有SSH转发守护恢复与完整回归均通过（2026-09-07）
 
 - 上轮progress；本轮先取得63105/28d0d8完整终态并提交上一批24f6d01，未重启测试。随后新增SSH适配器、串行恢复状态机、独占本机端口的bridge生命周期和CLI模式。本批8个代码/测试文件及5份说明，用户AGENTS.md/outputs不动。

@@ -42,6 +42,7 @@ const yamlEsmPlugin = {
 const ENTRY_POINTS = [
   "index.ts",
   "collaboration-headless.ts",
+  "collaboration-docker.ts",
   "collaboration/operations/docker-apply-patch.ts",
   "collaboration/operations/opencodex-model-channel.ts",
   // The packaged smoke probe imports this manifest directly. Importing the

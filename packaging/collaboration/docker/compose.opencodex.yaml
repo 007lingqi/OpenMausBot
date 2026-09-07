@@ -1,0 +1,65 @@
+# Opt-in alternative to compose.models.yaml, never combine both overlays.
+# Requires Docker Compose >= 2.24.4 for !override. No service is deployed by this file.
+services:
+  collaboration:
+    stop_grace_period: 20s
+    environment:
+      OMB_OPENCODEX_RELAY_ENABLED: "1"
+      OMB_OPENCODEX_RELAY_UID: ${OMB_OPENCODEX_RELAY_UID:?required}
+      OMB_OPENCODEX_RELAY_GID: ${OMB_OPENCODEX_RELAY_GID:?required}
+      OMB_OPENCODEX_RELAY_PORT: "18100"
+      OMB_OPENCODEX_RELAY_SOCKET: /run/omb-channel/model.sock
+      OMB_CODEX_OPENCODEX_ENDPOINT: http://127.0.0.1:18100/v1/responses
+      OMB_CODEX_MODEL: gpt-6-astra
+      OMB_CODEX_REASONING_EFFORT: medium
+      OMB_NATURAL_INTAKE_ENABLED: "1"
+      OMB_NATURAL_INTAKE_TRANSPORT: opencodex_local
+      OMB_NATURAL_INTAKE_MODEL: gpt-6-astra
+      OMB_NATURAL_INTAKE_ENDPOINT: http://127.0.0.1:18100/v1/responses
+      OMB_NATURAL_INTAKE_REASONING_EFFORT: medium
+      OMB_ACCEPTANCE_MAPPING_ENABLED: "1"
+      OMB_ACCEPTANCE_MAPPING_POLICY_REVISION: ${OMB_ACCEPTANCE_MAPPING_POLICY_REVISION:?required}
+      OMB_ACCEPTANCE_MAPPING_PROPOSER_TRANSPORT: opencodex_local
+      OMB_ACCEPTANCE_MAPPING_PROPOSER_MODEL: gpt-6-astra
+      OMB_ACCEPTANCE_MAPPING_PROPOSER_ENDPOINT: http://127.0.0.1:18100/v1/responses
+      OMB_ACCEPTANCE_MAPPING_PROPOSER_REASONING_EFFORT: medium
+      OMB_ACCEPTANCE_MAPPING_VERIFIER_TRANSPORT: opencodex_local
+      OMB_ACCEPTANCE_MAPPING_VERIFIER_MODEL: gpt-6-astra
+      OMB_ACCEPTANCE_MAPPING_VERIFIER_ENDPOINT: http://127.0.0.1:18100/v1/responses
+      OMB_ACCEPTANCE_MAPPING_VERIFIER_REASONING_EFFORT: medium
+    # Preserve the original ledger, repository and service credentials, but do
+    # not mount the legacy model auth file. Never delete the original file.
+    volumes: !override
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /var/lib/openmausbot-collaboration-pilot
+        target: /var/lib/openmausbot-collaboration-pilot
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${OMB_EXECUTION_REPOSITORY:?required}
+        target: ${OMB_EXECUTION_REPOSITORY:?required}
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /etc/openmausbot-collaboration-pilot/dingtalk.json
+        target: /run/openmausbot-secrets/dingtalk.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /etc/openmausbot-collaboration-pilot/containment-verifier.key
+        target: /run/openmausbot-secrets/containment-verifier.key
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${OMB_OPENCODEX_RELAY_HOST_DIRECTORY:?required}
+        target: /run/omb-channel
+        read_only: true
+        bind:
+          create_host_path: false

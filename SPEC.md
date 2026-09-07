@@ -1,5 +1,11 @@
 # 内部研发助手 Meta 协作规范
 
+最新验证更新（2026-09-07）：Docker双进程接线完整pnpm test/typecheck/独立编译与打包验证已通过；补充冻结生产relay的真实故障注入，约10秒后容器退出1/State.Pid0，替代下文关于该强制关闭场景尚未验证的历史描述。原群服务仍未切换，OS自启/重启、真实六场景及Owner签字不因此完成。
+
+Docker双进程启动接线（2026-09-07）：新增collaboration-docker入口；未显式启用relay时兼容原headless。relay启用仅接受Linux/root/Docker环境，专用非root UID/GID必须不同于Provider，清空附加组与继承/ambient能力，最小环境不继承凭据、HOME或NODE_OPTIONS；不增加容器cap。通过父进程私有stdin管道维持relay生命周期，先完成上游探测并匹配就绪回执再启动headless；任一端退出收束另一端，启动5秒、关闭10秒有界，异常/超时返回失败。最外层入口明确退出，由Docker/tini终止整个PID命名空间，不能在宿主使用启用relay模式。新增compose.opencodex.yaml是替代旧模型凭据overlay的显式opt-in：固定四角色Astra/medium与18100回环、只读私有socket，!override精确保留原业务挂载但不挂旧模型auth文件，不删除原文件。健康JSON/四类临时容器验证证明进程启动收束，不代表真实Owner/群任务完成、无响应relay强制容器收束或OS重启已经验收；原群服务尚未替换。
+
+中继启动通道验证（2026-09-07）：relay显式配置`--probe-upstream 1`时，在监听前经私有Unix socket直接向宿主网关发送空对象；只接受400/application-json及`local_gateway_request_denied`。该负向协议握手在宿主网关调用模型前被拒绝，不发送需求/凭据、不消耗模型调用，不经relay自己的过滤器制造假阳性。默认1.5秒、最多4KiB响应/响应头，无重试或重定向；连接、响应或权限异常阻止监听。旧relay默认行为兼容；此选项仅证明当时的通道协议可达，不证明OpenCodex模型健康、业务完成或持续在线。Docker业务启动wrapper与常驻服务切换仍待实现。
+
 已有SSH连接守护（2026-09-07）：独立通道增加bridge模式，先占用显式非零宿主回环端口，才允许管理由端口派生的/tmp/omb-model-channel-<port>/model.sock；退出先撤销/清理转发再释放端口，不与另一同端口桥接进程争抢。仅支持已授权colima-openmausbot-pilot，使用当前用户拥有且不可被组/其他人写的ssh.config；只复用已有SSH master，所有调用禁用新连接回退，单次5秒/4KiB有界。master PID与VM启动代次共同标识连接代次；目录/socket需当前SSH UID及0700/0600、无链接/别名，清理拒绝普通文件。使用/proc/net/unix确认真正监听，不信任残留socket文件。同代次连续三次恢复失败后停止修改，仅继续观察master，代次变化后可重新恢复；不重放模型请求。该计数是进程内计数，不声称跨进程失败预算持久化。SIGTERM等待在途操作后清理，清理不确定显式失败。真实同master转发取消/恢复和前后模型请求已验证；OS自启、真实master/VM重启、Docker常驻接线和群服务切换仍未完成。
 
 通道进程与容器中继（2026-09-07）：新增独立opencodex-model-channel入口，显式选择host/relay、监听端口和对应上游/私有socket；不从环境变量推断身份或凭据。host仅宿主回环；relay仅本容器回环，经Unix socket连接，不作TCP回退。启动及每次请求复查socket为当前UID所有的0600 socket，父目录为同UID的0700真实目录，无路径别名/符号链接；由受信任专用身份拥有和管理路径，不授予不可信候选进程该身份或挂载。断开/超时取消流，socket消失或权限变化明确失败；上游重建后新请求重新连接，不重放旧请求。SIGTERM/SIGINT关闭监听并取消活跃请求。启动JSON仅表示监听就绪，不证明模型、SSH通道或业务完成。两模式已加入独立发布包和无node_modules打包烟测，真实临时容器回环relay已验证；尚未加入Docker运行镜像/Compose或常驻SSH守护，不代表原服务切换或主机重启恢复完成。

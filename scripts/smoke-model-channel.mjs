@@ -10,7 +10,8 @@ import {join} from 'node:path';
 export async function smokeModelChannel(entry,environment,cwd){
  const children=[],servers=[];let socketRoot;
  async function launch(args){
-  const child=spawn(process.execPath,[entry,...args],{cwd,env:environment,stdio:['ignore','pipe','pipe']});
+  const parentPipe=args.includes('--parent-stdin');
+  const child=spawn(process.execPath,[entry,...args],{cwd,env:environment,stdio:[parentPipe?'pipe':'ignore','pipe','pipe']});
   const exit=new Promise((resolve,reject)=>{child.once('exit',(code,signal)=>resolve({code,signal}));child.once('error',reject);});
   void exit.catch(()=>{});children.push({child,exit});let output='',errors='';
   child.stdout.on('data',chunk=>{output=(output+chunk).slice(0,4096);});
@@ -22,13 +23,17 @@ export async function smokeModelChannel(entry,environment,cwd){
   const ready=JSON.parse(output.trim());assert.equal(ready.event,'model_channel_ready');
   assert.equal(new URL(ready.url).hostname,'127.0.0.1');
   return {url:ready.url,async stop(){
-   const timer=setTimeout(()=>child.kill('SIGKILL'),5000);child.kill('SIGTERM');
+   const timer=setTimeout(()=>child.kill('SIGKILL'),5000);if(parentPipe)child.stdin.end();else child.kill('SIGTERM');
    try{assert.deepEqual(await exit,{code:0,signal:null});}finally{clearTimeout(timer);}
   }};
  }
  const peer=()=>createServer(async(req,res)=>{
   const chunks=[];for await(const chunk of req)chunks.push(chunk);
   const input=JSON.parse(Buffer.concat(chunks).toString());
+  if(Object.keys(input).length===0){
+   assert.equal(req.url,'/v1/responses');assert.equal(req.method,'POST');
+   res.writeHead(400,{'Content-Type':'application/json'});res.end(JSON.stringify({error:{code:'local_gateway_request_denied'}}));return;
+  }
   assert.equal(input.model,'gpt-6-astra');assert.equal(input.reasoning.effort,'medium');
   assert.equal(req.url,'/v1/responses');
   res.writeHead(200,{'Content-Type':'text/event-stream'});res.end('data: synthetic\n\n');
@@ -47,10 +52,10 @@ export async function smokeModelChannel(entry,environment,cwd){
    socketRoot=mkdtempSync(join(realpathSync('/tmp'),'omb-mcs-'));chmodSync(socketRoot,0o700);
    const socket=join(socketRoot,'model.sock'),unixPeer=peer();servers.push(unixPeer);
    unixPeer.listen(socket);await once(unixPeer,'listening');chmodSync(socket,0o600);
-   const relay=await launch(['--mode','relay','--port','0','--socket',socket]);
+   const relay=await launch(['--mode','relay','--port','0','--socket',socket,'--probe-upstream','1','--parent-stdin','1']);
    await request(relay.url);await relay.stop();
   }
-  console.log('packaged model channel host/available relay starts, forwards synthetic requests and exits on SIGTERM ✓');
+  console.log('packaged model channel starts, probes/forwards synthetic requests and exits on SIGTERM or parent-pipe closure ✓');
  }finally{
   for(const {child,exit} of children){if(child.exitCode===null&&child.signalCode===null)child.kill('SIGKILL');await exit.catch(()=>{});}
   for(const server of servers){server.closeAllConnections();await new Promise(resolve=>server.close(()=>resolve()));}

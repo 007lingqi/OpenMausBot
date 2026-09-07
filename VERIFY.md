@@ -1,5 +1,33 @@
 # Meta 协作验证记录
 
+## 2026-09-07 启动接线完整验证终态
+
+- 54406/773901 exit0：严格四类真实临时Docker烟测、完整`pnpm test`、`pnpm typecheck`、`pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-docker-wrapper-typecheck`和`git diff --check`全部完成。普通包无node_modules启动/9个代理、新channel父管道关闭和兼容Docker wrapper的headless健康/启动/SIGTERM均通过。中间输出截断，不补造总数；此前steer-e2e连接重置本次未复现，根因仍未知。
+- 38168/1681d8另证实冻结生产relay后关闭超时触发Docker整体退出（code1/State.Pid0），加原四场景及全部临时资源清理通过。此前文档“尚未验证强制超时路径”已由此证据替代；仍非OS/VM重启或群业务验收。
+- 本批代码/测试在54406运行期间固定，所有验证句柄已终态；仅只读原账本统计首次cell401审核超时，后续唯一重试不属于业务动作或验证重跑。未迁移原账本、切换服务、修改Owner/凭据或推送。
+- a4115b exit0：以readOnly DatabaseSync及一致性读事务统计原账本，1个active Owner/1个live租约、运行记录无running、节点无leased/running/validating、Outbox无pending/claimed。保留5项needs_configuration及1项collecting，不清掉旧失败或采集事项。此为瞬时快照，切换前必须再次核对。
+
+## 2026-09-07 卡死中继与容器强制关闭验证
+
+- 前轮cell393授权审核超时，命令没有启动。cell395是回执允许的唯一重试，已返回54406；cf5a31证明收紧的四类Docker烟测（真实app/钉钉禁用健康JSON、缺通道空stdout）通过并清理，随后完整pnpm test实际运行。steer-e2e本次2项通过，但此前ECONNRESET根因仍未知，不称修复。54406仍待完整链终态，代码与测试固定。
+- 新增故障注入只改/tmp/openmausbot-docker-wrapper-probe.mjs：先启动正常生产wrapper/relay/headless临时容器，以relay同UID对其发送SIGSTOP，再向容器主进程发SIGTERM。断言退出码1、至少经历9秒的关闭等待，以及Docker State.Pid=0。38168/1681d8 exit0：原四类及此冻结中继超时场景均通过，全部临时容器、缓存派生镜像标签、私有通道和目录清理通过。第一次cell397仅审核超时未启动，唯一重试成功。
+- 此证据覆盖本次Docker/tini PID命名空间强制收束，不代表OS自动启动/VM或主机重启恢复，也不证明真实群业务ready。原试点9b9e95只读仍running/healthy，未切换。
+
+## 2026-09-07 Docker双进程生命周期和无密钥Compose
+
+- 原19337/2ed275已终态exit1：完整主集3110通过/1失败/18跳过，唯一steer-e2e排队用例fetch ECONNRESET；独立复测2项此前通过，根因未知。不重轮询旧句柄，不称完整通过。
+- 766c94/f49e1c红灯后实现；fccf97新增测试复现就绪/退出同刻仍启动业务、取消后非零退出误报0，两项已修复。30186/a00885 exit0：55项/typecheck/build/server和无依赖通道父stdin关闭、旧模式Docker wrapper健康启动/SIGTERM通过。
+- 47985/65531f因默认沙箱Unix监听EPERM失败；授权宿主87818/4c4ae3 exit0：57项/typecheck、四类生产Docker临时容器启动退出通过。首次76406/bd7879烟测超时来自等待NULL_LOGGER不输出的事件；修正为健康JSON，不改业务。真实测试固定context/缓存镜像、无网络/只读、原三cap、无群/执行/原数据凭据，清理全部本次资源。无响应relay强制超时收束尚未真实验证。
+- b922df真实Compose合成环境合并exit0：6挂载且无旧模型auth，四角色同Astra/medium回环路由，无模型密钥、cap仍CHOWN/SETGID/SETUID；不读取真实.env、不部署服务。
+- 新严格Docker烟测+完整pnpm test/typecheck/独立编译/diff命令已提交，等待functions cell393回执与后续终态。没有本批完整通过或commit证据；对应源码/测试保持固定，文档检查点可更新。后续不要依据历史绿色报告提交未完整验证的新启动接线。
+
+## 2026-09-07 中继启动通道探测（完整验证待终态）
+
+- da7582 exit1：新增12项红灯，旧relay没有probe、旧CLI拒绝选项。6952/680a51 exit0：31项及pnpm typecheck/git diff --check通过；覆盖上游空请求、状态/类型/JSON/响应超限拒绝、头/正文挂起超时、断开、权限及超时范围，默认旧路径仍兼容。
+- 19337/47abcf：生产relay显式开启probeUpstream，两个无网络/非root/只读临时Colima容器经既有master私有Unix通道完成真实Astra/medium合成请求，完成元数据与错误模型拒绝通过；中间仅取消本次转发，守护恢复后第二次探测/调用成功，connections=2，临时资源清理通过。不等于实际群服务、主机重启或常驻装配。
+- c6e15d exit0：指定context缓存镜像临时容器验证setpriv最小权限，UID/GID501、无额外附加组，Inh/Prm/Eff/Amb能力均零和NoNewPrivs=1；无挂载，不影响原试点。
+- 19337完整验证会话仍运行，8907c1主集发现既有steer-e2e排队用例失败；最终详细原因待该会话终态。82679/c8b5eb独立复测2项通过不抵消该失败，不宣称根因已修复。本批代码/测试固定，尚未提交；后续继续原19337，不重复启动全量，终态失败时其后&&链未执行。新打包smoke代码已启用显式probe，但尚未取得本批打包验证通过证据。
+
 ## 2026-09-07 已有SSH master桥接守护
 
 - 48bfef为新模块缺失TDD；45997/257911 exit0为15项与typecheck。066333两项真实本地shell负例发现set-e不能保护&&列表早期失败；改显式guard后同一测试通过，未变更用户路径。8cdf3f为bridge/CLI缺失红灯；8743/96891a exit0（61项/typecheck/原两模式和headless打包smoke）。0885df为缺少/proc/net/unix监听校验红灯，随后实现。

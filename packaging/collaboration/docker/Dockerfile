@@ -26,8 +26,10 @@ RUN groupadd --gid 10001 openmausbot-agent \
   && install -d -m 0755 /opt/openmausbot
 
 COPY --from=build /src/dist-server/collaboration-headless.js /opt/openmausbot/collaboration-headless.js
+COPY --from=build /src/dist-server/collaboration-docker.js /opt/openmausbot/collaboration-docker.js
+COPY --from=build /src/dist-server/collaboration/operations/opencodex-model-channel.js /opt/openmausbot/collaboration/operations/opencodex-model-channel.js
 COPY --from=build /src/dist-server/collaboration/operations/docker-apply-patch.js /opt/openmausbot/docker-apply-patch.js
 
 WORKDIR /opt/openmausbot
 ENV NODE_ENV=production
-ENTRYPOINT ["node", "/opt/openmausbot/collaboration-headless.js"]
+ENTRYPOINT ["node", "/opt/openmausbot/collaboration-docker.js"]
