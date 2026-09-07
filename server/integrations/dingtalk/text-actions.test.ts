@@ -23,6 +23,51 @@ function message(text: string): DingTalkInboundMessage {
 }
 
 describe("DingTalk Owner text actions", () => {
+  it.each([
+    "示例： {command}", "不要 {command}", "如果测试通过， {command}",
+    "> {command}", "```text\n{command}\n```", "引用上一条\n{command}",
+    "@研发助手 示例： {command}", "@测试同事 {command}",
+    "\"{command}\"", "“{command}”",
+  ])("does not execute commands embedded in discussion: %s", template => {
+    for (const text of ["暂停 WI-A1B2C3D4E5F6", "批准 WI-A1B2C3D4E5F6", "退回 WI-A1B2C3D4E5F6 提示不清楚"]) {
+      expect(parseDingTalkOwnerTextCommand(message(template.replace("{command}", text)))).toBeNull();
+    }
+    for (const text of [`接受 ${token}`, `拒绝 ${token} 提示不清楚`]) {
+      expect(parseDingTalkOwnerTextAction(message(template.replace("{command}", text)))).toBeNull();
+    }
+  });
+
+  it.each(["如果测试通过", "可以吗？", "然后部署到生产", "但先别执行", "\n取消 WI-ABCDEF123456"])("does not discard approval qualifiers: %s", suffix => {
+    expect(parseDingTalkOwnerTextCommand(message(`批准 WI-A1B2C3D4E5F6 ${suffix}`))).toBeNull();
+    expect(parseDingTalkOwnerTextAction(message(`接受 ${token} ${suffix}`))).toBeNull();
+  });
+
+  it("requires a direct bot address and no resources for both control protocols", () => {
+    for (const overrides of [
+      { addressedToBot: false },
+      { resources: [{ capabilityRef: "a".repeat(64), kind: "file" as const }] },
+    ]) {
+      expect(parseDingTalkOwnerTextCommand({ ...message("批准 WI-A1B2C3D4E5F6"), ...overrides })).toBeNull();
+      expect(parseDingTalkOwnerTextAction({ ...message(`接受 ${token}`), ...overrides })).toBeNull();
+    }
+  });
+
+  it("leaves missing rejection feedback for the control core to deny, never invents an Owner reason", () => {
+    const action = parseDingTalkOwnerTextAction(message(`拒绝 ${token}`));
+    expect(action).toMatchObject({ actionToken: token });
+    expect(action).not.toHaveProperty("reason");
+    const command = parseDingTalkOwnerTextCommand(message("退回 WI-A1B2C3D4E5F6"));
+    expect(command).toMatchObject({ command: "reject_candidate" });
+    expect(command).not.toHaveProperty("reason");
+  });
+
+  it("keeps directly addressed single-line commands usable with polite wording and punctuation", () => {
+    expect(parseDingTalkOwnerTextCommand(message("请批准 WI-A1B2C3D4E5F6。"))).toMatchObject({ command: "approve_candidate" });
+    expect(parseDingTalkOwnerTextAction(message(`@研发助手 请接受 ${token}。`))).toMatchObject({ actionToken: token });
+    expect(parseDingTalkOwnerTextCommand(message("@研发助手 请暂停 WI-A1B2C3D4E5F6！"))).toMatchObject({ command: "pause" });
+    expect(parseDingTalkOwnerTextAction(message(`请拒绝 ${token} 登录页仍然报错。`))).toMatchObject({ reason: "登录页仍然报错。" });
+  });
+
   it("does not turn quoted, negated, attachment-bearing or unaddressed text into requirement recovery", () => {
     expect(parseDingTalkRequirementRecoveryRequest(message("请继续整理需求。"))).toBe(true);
     for (const text of ["不要继续整理需求", "“继续整理需求”", "文档说继续整理需求", "是否继续整理需求？", "继续整理需求\n并部署生产"]) {

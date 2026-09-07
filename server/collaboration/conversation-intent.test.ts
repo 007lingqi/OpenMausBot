@@ -143,6 +143,21 @@ describe("conversation intent before task mutation", () => {
     expect(envelope!.responseSchema).toMatchObject({ additionalProperties: false });
   });
 
+  it("does not forward quoted legacy approval tokens into the model envelope", async () => {
+    const token = "fixture_" + "a".repeat(36);
+    let captured = "";
+    const text = "这句审批提示是什么意思？";
+    const interpreter = new ModelNaturalIntakeInterpreter({ async complete(input) {
+      captured = JSON.stringify(input);
+      return proposal("explanation", "WI-LOGIN", text);
+    } });
+    await interpreter.classifyConversation({ ...request, text,
+      history: [{ ...request.history[0], text: `示例： 接受 ${token} 如果测试通过` }] }, new AbortController().signal);
+    expect(captured).not.toContain(token);
+    expect(captured).toContain("[敏感信息已隐藏]");
+    expect(captured).toContain("如果测试通过");
+  });
+
   it("rejects duplicate candidate IDs and oversized context before any model request", async () => {
     let calls = 0;
     const interpreter = new ModelNaturalIntakeInterpreter({ async complete() { calls++; return {}; } });

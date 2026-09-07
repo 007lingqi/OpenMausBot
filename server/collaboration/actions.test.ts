@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { DingTalkInboundMessage, DingTalkSender } from "../integrations/dingtalk/types.ts";
 import { startCollaborationService, type CollaborationService } from "./service.ts";
+import { parseDingTalkOwnerTextAction } from "../integrations/dingtalk/text-actions.ts";
 
 const scratch: string[] = [];
 const CANDIDATE_SHA = "a".repeat(40);
@@ -191,6 +192,32 @@ function item(databaseFile: string, workItemId: string): Record<string, unknown>
 }
 
 describe("Owner action tokens and Work Item controls", () => {
+  it("denies a reasonless parsed rejection durably without inventing feedback or changing the candidate", () => {
+    const context = harness();
+    seedExecution(context.databaseFile, context.workItemId, { candidateState: "target_tests_passed", evidence: true });
+    const issued = context.service.issueOwnerAction({ action: "reject", workItemId: context.workItemId,
+      expectedVersion: 1, candidateSha: CANDIDATE_SHA, now: 2000 });
+    const parsed = parseDingTalkOwnerTextAction(message({ sourceEventId: "no-rejection-reason",
+      text: `拒绝 ${issued.token}`, sender: ownerSender() }));
+    expect(parsed).not.toBeNull();
+    const input = { actionToken: parsed!.actionToken, sender: parsed!.sender, reason: parsed!.reason,
+      request: { sourceEventId: "no-rejection-reason", origin: "text" as const, conversationId: "control-conversation" }, now: 2100 };
+    const before = item(context.databaseFile, context.workItemId);
+    try {
+      const result = context.service.performOwnerAction(input);
+      expect(result).toMatchObject({ allowed: false, duplicate: false, reason: "Reject requires a reason" });
+      expect(context.service.performOwnerAction(input)).toMatchObject({ allowed: false, duplicate: true });
+      expect(item(context.databaseFile, context.workItemId)).toEqual(before);
+      const db = new DatabaseSync(context.databaseFile);
+      try {
+        expect(db.prepare("SELECT count(*) AS n FROM collaboration_control_events").get()).toEqual({ n: 0 });
+        expect(db.prepare("SELECT count(*) AS n FROM collaboration_owner_text_commands WHERE source_event_id='no-rejection-reason'").get()).toEqual({ n: 1 });
+        const persisted = JSON.stringify(db.prepare("SELECT * FROM collaboration_owner_text_commands").all()) +
+          JSON.stringify(db.prepare("SELECT * FROM collaboration_outbox").all());
+        expect(persisted).not.toContain(issued.token);
+      } finally { db.close(); }
+    } finally { context.service.close(); }
+  });
   it("denies contributors without consuming the opaque token and returns the Owner's decision on replay", () => {
     const context = harness();
     const issued = context.service.issueOwnerAction({

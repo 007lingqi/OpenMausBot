@@ -1,5 +1,13 @@
 # Meta 协作验证记录
 
+## 2026-09-08 对话控制防误触（完整验证通过，未部署）
+
+- 先行红灯：0a0491中text-actions共24项，16失败（讨论/否定/引用后缀、批准条件被忽略、附件/未寻址输入、虚构退回原因及新增礼貌标点）；181d94中inbound/sensitive-text的2项失败证明普通对话的旧token明文保存。均为本批测试先行，不是环境故障。
+- 7918ea确认session43965退出0：9文件179项，涵盖text-actions、stream-adapter、session-message、sender、actions、inbound、sensitive-text、conversation-intent及outbox-dispatcher；同链pnpm typecheck及git diff --check通过。Stream中讨论不会调用Owner sink，失败落库不ACK；重启/重放不重复入账；缺退回原因无控制事件、仅单次回执；模型输入和普通持久记录不含合成验收token。
+- 首次完整`pnpm test && pnpm typecheck && git diff --check`由4f85ac确认f79186/session61360退出1：35文件失败/279通过/1跳过；98项失败/3407通过/247跳过，16个未捕获错误。TCP/Unix socket监听多处EPERM及相关hook超时；后续broker/桌面/打包链因失败未执行。03444f独立沙箱回环探针同样EPERM，首次宿主诊断权限审核超时未执行，获准重试的2d86c1已返回loopbackListen=true。
+- 501d9c确认409e73/session13431获准在宿主以相同源码/断言完整复测exit0：b75a44记录主集314文件通过/1跳过、3734项通过/18跳过（3752注册，数量门禁通过），broker7项、桌面15+5+2+10项通过，打包服务脱离node_modules启动、9代理路径通过。501d9c记录headless及合成模型/文档通道启动退出、pnpm typecheck及git diff --check通过。未修改无关测试/门槛，首次环境失败保留。
+- 本批仅使用受控夹具与本地数据库，不是真实Astra/真实群/新版Docker验证；全部会话终态。已有上一批模型及Docker证据不重跑，也不扩大为本批已部署。
+
 ## 2026-09-08 具名追问与只读回答用途（完整验证通过，未部署）
 
 - 先行证据：a450da复现缺业务名称；b23f29复现已有多个需求澄清时，新的已发送查询问题被合并成association，缺少只读保护；671837为新连续评测场景缺失红灯。未通过降低关联/身份门槛解决。

@@ -114,6 +114,36 @@ class FakeSdk implements DingTalkStreamSdkPort {
 }
 
 describe("DingTalk Stream adapter", () => {
+  it.each([
+    "示例： 批准 WI-A1B2C3D4E5F6",
+    "不要 暂停 WI-A1B2C3D4E5F6",
+    "批准 WI-A1B2C3D4E5F6 如果检查通过",
+    "```text\n批准 WI-A1B2C3D4E5F6\n```",
+    "接受 accept_code_12345678901234567890123456789012 可以吗？",
+    "好的，同意。",
+  ])("keeps discussion out of Owner control and persists before ACK: %s", async text => {
+    const sdk = new FakeSdk();
+    const perform = vi.fn(() => ownerOutcome());
+    const performCommand = vi.fn();
+    const ingest = vi.fn().mockRejectedValueOnce(new Error("fixture_ledger_unavailable"))
+      .mockImplementation((input: DingTalkInboundMessage) => inboundOutcome(input));
+    const adapter = new DingTalkStreamAdapter(sdk, { ingest }, { perform, performCommand }, new DingTalkSessionReplyRegistry());
+    await adapter.start();
+    try {
+      const packet = envelope("bot-message-text.json", "discussion-only");
+      const payload = JSON.parse(packet.data) as { text: { content: string } };
+      payload.text.content = text;
+      const input = { ...packet, data: JSON.stringify(payload) };
+      await sdk.emit("robot", input);
+      expect(sdk.acknowledgements).toEqual([]);
+      await sdk.emit("robot", input);
+      expect(sdk.acknowledgements).toEqual(["discussion-only"]);
+      expect(ingest).toHaveBeenCalledTimes(2);
+      expect(perform).not.toHaveBeenCalled();
+      expect(performCommand).not.toHaveBeenCalled();
+    } finally { adapter.stop(); }
+  });
+
   it("routes natural delivery review to its durable sink, ACKs only on success and creates no task", async () => {
     const sdk = new FakeSdk();
     const ingest = vi.fn((message: DingTalkInboundMessage) => inboundOutcome(message));

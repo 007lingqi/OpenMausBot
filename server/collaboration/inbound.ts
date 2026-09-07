@@ -19,6 +19,7 @@ import {
   type CollaborationOutboxEntry,
 } from "./outbox.ts";
 import { assertLedgerArmed } from "./restore-guard.ts";
+import { redactOwnerActionTokens } from "./sensitive-text.ts";
 
 type PersistedAssociationState = "created" | "associated" | "ambiguous" | "invalid_reference";
 
@@ -101,7 +102,7 @@ export class InboundMessageProcessor {
     const sourceEventId = requiredText(message.sourceEventId, "sourceEventId", 256);
     const transportMessageId = requiredText(message.transportMessageId, "transportMessageId", 256);
     const externalConversationId = requiredText(message.conversationId, "conversationId", 256);
-    const text = requiredText(message.text, "message text", 8_000);
+    const text = redactOwnerActionTokens(requiredText(message.text, "message text", 8_000));
     const now = message.receivedAt ?? Date.now();
 
     this.database.exec("BEGIN IMMEDIATE");

@@ -8,9 +8,14 @@ const QUERY_CREDENTIAL =
   /([?&](?:client_secret|app_secret|api_key|access_token|refresh_token|password|secret|token)=)[^&#\s]+/giu;
 const JWT = /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b/gu;
 
+/** Quoted legacy commands are data, but their bearer values must not enter the Ledger. */
+export function redactOwnerActionTokens(value: string): string {
+  return value.replace(/((?:接受|拒绝)\s+)[A-Za-z0-9_-]{32,}/gu, `$1${HIDDEN}`);
+}
+
 /** Redacts common credential representations before user-controlled text leaves the Ledger boundary. */
 export function redactSensitiveText(value: string): string {
-  return value
+  return redactOwnerActionTokens(value)
     .replace(/-----BEGIN [^-]+-----[\s\S]*?-----END [^-]+-----/gu, HIDDEN)
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/giu, `Bearer ${HIDDEN}`)
     .replace(/\b(?:sk|pk|rk|gh[pousr]|xox[baprs])[-_][A-Za-z0-9_-]{6,}\b/giu, HIDDEN)

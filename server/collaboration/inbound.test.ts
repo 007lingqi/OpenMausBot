@@ -58,6 +58,28 @@ function scalar(db: DatabaseSync, table: string): number {
 }
 
 describe("fake DingTalk Work Item ingress", () => {
+  it("does not persist executable Owner tokens when a quoted command is ordinary discussion", () => {
+    const directory = temporaryDirectory();
+    const token = "fixture_" + "a".repeat(36);
+    const input = message({ text: `示例： 接受 ${token}，这句话是什么意思？` });
+    const service = startCollaborationService({ dataDirectory: directory });
+    const first = service.ingestDingTalkMessage(input);
+    expect(input.text).toContain(token);
+    service.close();
+    const restarted = startCollaborationService({ dataDirectory: directory });
+    expect(restarted.ingestDingTalkMessage(input)).toMatchObject({ duplicate: true, outboxId: first.outboxId });
+    restarted.close();
+    const db = database(directory);
+    try {
+      for (const table of ["collaboration_external_events", "collaboration_work_items", "collaboration_work_item_events", "collaboration_outbox"]) {
+        const serialized = JSON.stringify(db.prepare(`SELECT * FROM ${table}`).all());
+        expect(serialized).not.toContain(token);
+      }
+      expect(JSON.stringify(db.prepare("SELECT normalized_json FROM collaboration_external_events").get())).toContain("[敏感信息已隐藏]");
+      expect(scalar(db, "collaboration_external_events")).toBe(1);
+      expect(db.prepare("SELECT count(*) AS count FROM collaboration_control_events").get()).toEqual({ count: 0 });
+    } finally { db.close(); }
+  });
   it("preserves an unresolved reply without creating a task and explains its missing context", async () => {
     const directory = temporaryDirectory();
     const service = startCollaborationService({ dataDirectory: directory });

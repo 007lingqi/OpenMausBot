@@ -5,9 +5,9 @@ import type {
   DingTalkOwnerTextCommandName,
 } from "./types.ts";
 
-const TEXT_ACTION = /(?:^|\s)(接受|拒绝)\s+([A-Za-z0-9_-]{32,128})(?:\s+([\s\S]{1,2000}))?\s*$/u;
-const TEXT_COMMAND = /(?:^|\s)(状态|暂停|恢复|重试|取消|刷新验收码)\s+(WI-[A-F0-9]{12})\s*$/iu;
-const CANDIDATE_COMMAND = /(?:^|\s)(批准|退回)\s+(WI-[A-F0-9]{12})(?:\s+([\s\S]{1,2000}))?\s*$/iu;
+const TEXT_ACTION = /^(?:请)?(接受|拒绝)[ \t]+([A-Za-z0-9_-]{32,128})(?:[ \t]+(.{1,2000}))?[。！!]?$/u;
+const TEXT_COMMAND = /^(?:请)?(状态|暂停|恢复|重试|取消|刷新验收码)[ \t]+(WI-[A-F0-9]{12})[。！!]?$/iu;
+const CANDIDATE_COMMAND = /^(?:请)?(批准|退回)[ \t]+(WI-[A-F0-9]{12})(?:[ \t]+(.{1,2000}))?[。！!]?$/iu;
 const COMMANDS: Readonly<Record<string, DingTalkOwnerTextCommandName>> = {
   状态: "status",
   暂停: "pause",
@@ -16,6 +16,15 @@ const COMMANDS: Readonly<Record<string, DingTalkOwnerTextCommandName>> = {
   取消: "cancel",
   刷新验收码: "refresh_approval",
 };
+
+/** Match a whole direct utterance, never a command-looking suffix in source material.
+ * The optional label is the one our replies render; arbitrary @people are not stripped.
+ * This is intent parsing only. Identity, candidate and replay gates remain in the core.
+ */
+function directControlText(message: DingTalkInboundMessage): string | null {
+  if (!message.addressedToBot || message.resources?.length || /[\r\n\u2028\u2029\p{Cf}]/u.test(message.text)) return null;
+  return message.text.trim().replace(/^@研发助手[ \t]+/u, "");
+}
 
 export function parseDingTalkDeliveryReviewRequest(message: DingTalkInboundMessage): boolean {
   return message.addressedToBot && !message.resources?.length && /^(?:请)?(?:查看|核查)(?:待核查|未确认|未送达)(?:的)?回复[。！!]?$/u.test(message.text.trim());
@@ -42,19 +51,21 @@ export function parseDingTalkProjectionRecoveryRequest(message: DingTalkInboundM
  * privilege, Work Item or candidate claim is trusted from visible text.
  */
 export function parseDingTalkOwnerTextAction(message: DingTalkInboundMessage): DingTalkCardAction | null {
-  const matched = TEXT_ACTION.exec(message.text.trim());
+  const text = directControlText(message);
+  if (text === null) return null;
+  const matched = TEXT_ACTION.exec(text);
   if (!matched) return null;
   const reject = matched[1] === "拒绝";
   const suppliedReason = matched[3]?.trim();
+  // Never silently discard conditions, questions or additional requested actions.
+  if (!reject && suppliedReason) return null;
   return {
     conversationId: message.conversationId,
     transportEventId: message.sourceEventId,
     transportMessageId: message.transportMessageId,
     actionToken: matched[2]!,
     sender: message.sender,
-    ...(reject
-      ? { reason: suppliedReason || "Owner rejected candidate via DingTalk text command" }
-      : {}),
+    ...(reject && suppliedReason ? { reason: suppliedReason } : {}),
     receivedAt: message.receivedAt ?? Date.now(),
     origin: "text",
   };
@@ -62,8 +73,11 @@ export function parseDingTalkOwnerTextAction(message: DingTalkInboundMessage): D
 
 /** Parses WI-addressed control commands without delegating their meaning to the Planner. */
 export function parseDingTalkOwnerTextCommand(message: DingTalkInboundMessage): DingTalkOwnerTextCommand | null {
-  const candidate = CANDIDATE_COMMAND.exec(message.text.trim());
+  const text = directControlText(message);
+  if (text === null) return null;
+  const candidate = CANDIDATE_COMMAND.exec(text);
   if (candidate) {
+    if (candidate[1] === "批准" && candidate[3]?.trim()) return null;
     return {
       conversationId: message.conversationId,
       transportEventId: message.sourceEventId,
@@ -75,7 +89,7 @@ export function parseDingTalkOwnerTextCommand(message: DingTalkInboundMessage): 
       receivedAt: message.receivedAt ?? Date.now(),
     };
   }
-  const matched = TEXT_COMMAND.exec(message.text.trim());
+  const matched = TEXT_COMMAND.exec(text);
   if (!matched) return null;
   const command = COMMANDS[matched[1]!];
   if (!command) return null;
