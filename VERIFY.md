@@ -1,5 +1,10 @@
 # Meta 协作验证记录
 
+## 2026-09-07 在线文档契约核对（非业务读取）
+
+- 403f42：本机 DWS `doc +fetch` 与 `sheet +read` 精确 leaf Schema 查询 exit0；确认 read/not_required 和完整性字段。没有真实节点/正文回执，故在线读取、权限绑定、来源持久化及群回复验收均未通过。
+- 静态接线核对发现在线正文连接器缺失，现有 document-resource 恢复仅用于文件解析容器。此阶段仅更新状态/决策，无产品代码改动，不重跑此前终态测试或真实模型脚本。
+
 ## 2026-09-07 247f99a固定版本真实非生产切换通过
 
 - 1b8947：新controller固定摘要1f53b346ebf8…，四个非controller bundle逐字节等于原受测组件；806258：真实新镜像init+CAP_CHOWN/CAP_SETUID/CAP_SETGID、空合成repo/库/通道下ready，真实Docker自身份proof登记，执行/群/模型0，SIGTERM干净退出。证据/private/tmp/omb-cap-fixed-247f99a-kgRYyT，启动尝试事前独占记录，不重复脚本。

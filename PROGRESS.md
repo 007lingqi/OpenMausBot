@@ -1,5 +1,14 @@
 # Meta 协作实施进度
 
+## 接续检查点：在线正文仍是实现缺口（2026-09-07）
+
+- 以本节修正此前“真实在线文档仅待验收”的描述：下载文件的 attachment-ingestion 已存在，但尚无在线 URL → 资源类型 → 正文 → 持久来源 → Spec 的接线；当前不能宣称支持直接读取在线文档/表格。
+- 已读取钉钉 doc/shared/misc 技能、sheet/devdoc/schema/url 参考，并实际查询 `doc +fetch`、`sheet +read` leaf Schema（403f42，exit0）。这只是契约证据，没有查询业务文档、选择账号、调用模型或发群消息。
+- 已知契约：adoc 用 `doc +fetch --node … --scope full`；axls 用 `sheet +read`，必须显式选择真实工作表，不能把默认第一张或局部范围当整本。后者要求 complete=true、hasMore=false、truncationReasons=[]，保留 rowIndices/colIndices/returnedRange。未知节点类型需先解析，分享短链不自动猜节点或绕过权限。
+- 下一实现批优先补未读取链接的确定性 completeness 门禁，再装配受限只读连接器。来源须绑定白名单群、原消息、当前事项、固定授权 profile 和正文快照；群成员提供 URL 不能扩大到宿主账号可读的全部私人文档。实际授权身份/本次非生产材料未明确前不发业务查询。
+- 恢复位置：snapshot.ts 的权威 attachmentCompletenessGates、plan-reviser.ts 的入站投影、natural-intake.ts 的模型上下文/来源校验；不能只添加未接线的解析器，也不能仅靠模型提示阻止虚报已读。
+- 本检查点无行为代码改动、无运行中命令。承接上一压缩前13轮，本批20工具轮内收束契约核对与记录；后续工作作为新的实现批继续。Goal仍active，不冒充最终完成；当前运行镜像及历史失败禁重试边界沿用下节。
+
 ## 最新部署：CAP_修复版247f99a已启用独立任务容器（2026-09-07）
 
 - 33c655确认68060完整顺序链exit0（147定向/typecheck/CAP_真实Docker恢复/完整pnpm test/打包/typecheck/diff），9340ae保存本地commit247f99a，用户AGENTS.md/outputs不动、不push。所有此前测试句柄终态，不再轮询。
