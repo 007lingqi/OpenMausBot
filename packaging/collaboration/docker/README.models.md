@@ -1,6 +1,10 @@
 # 非生产模型配置（显式启用）
 
-## 宿主用户级常驻模板（尚未正式安装）
+## 宿主用户级常驻通道（2026-09-07已安装，群服务未切换）
+
+当前宿主已安装专用`com.openmausbot.opencodex-pilot-channel`用户LaunchAgent，固定版本f294357；18101连接既有Colima master，VM目录`/tmp/omb-model-channel-18101`。私有安装根目录为`/Users/mac/Library/Application Support/OpenMausBot/ModelChannel`，installation.json保存版本/发布目录/摘要，state/channel.json为稳定预算；不得清空或改路径重试。已用隔离临时容器通过常驻通道真实调用Astra/medium，原钉钉服务尚未切换。
+
+只停止此次通道的回滚入口为`launchctl bootout gui/501/com.openmausbot.opencodex-pilot-channel`；保留plist、固定发布副本和checkpoint，不删除身份/凭据或其他服务。重新加载前核对原状态，不同时运行第二个同端口bridge。此服务仅用户加载/登录，不等于Linux systemd或主机/VM重启验收。下述模板用于受控安装，不应再次覆盖现有安装。
 
 专用`com.openmausbot.opencodex-pilot-channel.plist`与`opencodex-launch-agent.mjs`配套：安装时把已验证通道bundle复制为同目录`opencodex-model-channel.mjs`，替换HOME/NODE/ROOT/RELEASE占位符并校验plist；发布目录固定，不能使用构建中的dist-server。ROOT/state须当前用户/0700，稳定channel.json不得清空换预算；默认固定宿主18101，VM socket随该端口固定。安装前检查runtime、端口和既有服务，不能覆盖未知配置。
 

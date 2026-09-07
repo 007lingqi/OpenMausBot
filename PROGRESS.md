@@ -1,5 +1,14 @@
 # Meta 协作实施进度
 
+## 当前接续：宿主常驻已安装，真实隔离模型调用通过（2026-09-07）
+
+- a685b9 exit0：f294357已本地提交启动器7文件，不push；随后单次安装成功，专用用户LaunchAgent已加载，宿主18101已connected，持久checkpoint attempts=0，空请求拒绝协议正确。安装固定bundle摘要c1b0866634e027e15108d1665d4f1977e5591d77924876e02aaf8782ffa2acdc；状态和安装清单位于/Users/mac/Library/Application Support/OpenMausBot/ModelChannel，plist位于该用户Library/LaunchAgents。不得盲目再次运行只允许首次安装的脚本。
+- 19335/a66f50 exit0：新的无网络/只读/非root/cap-drop ALL临时容器，经已安装私有通道和生产relay真实调用Astra/medium，完成元数据、合成JSON和错误模型拒绝均通过；临时容器已清理，宿主常驻保留。不是群业务六场景或OS重启验收。4f328f只读launchd为running/runs1；此前临时74200/c70108已验证SIGKILL恢复。
+- dfa52a核对原容器配置：原目标命令仍只有tests/source-contract.test.mjs，无assertionReporter/acceptanceSourceFiles；其测试仅源码规则/安全检查，不覆盖具体UI行为。切换前须补受信任测试证据映射及试点实际业务回归，不能仅启用模型便声称可自动确定性完成。
+- 原账本只读首次e85c05因列名错误失败，无写入；6986f3核对表结构后d40b87成功：activeOwner=1/liveLease=1；runs needs_configuration5/succeeded4，无running；items accepted3/cancelled2/collecting1；Outbox sent39/superseded10，无pending/claimed；活动节点0。保留全部既有事项和失败，不迁移或清理。切换时仍需重新查快照。
+- 11697/ad3185 exit0：离线独立镜像openmausbot-collaboration-pilot:opencodex-f294357构建完成，摘要sha256:5a5ffa5fab271cef19678e7e2f76e545fc318ee0edb6e746d61aa7ba0e405dce；脚本只基于原缓存复制已验证产物，临时base标签/构建目录已清理，不覆盖原local标签、不启动群服务。所有本批工具/执行句柄均终态，不再轮询456/11697。
+- 下一步：补试点业务测试/结构化证据及TSX实现上下文适配（51ff35确认quality-gate.ts:115拒绝tsx），必要代码变更后需重建候选镜像；准备数据库备份和唯一服务切换/回滚（包括systemd启动使用新overlay），再完成真实文档、六类群场景、独立supervisor、VM/主机恢复和Owner签字。Goal active，宿主模型通道是进展，不是完整交付。本批20工具轮收束，只保存本批状态说明；用户文件不动。
+
 ## 当前检查点：常驻启动器完整验证通过，准备安装（2026-09-07）
 
 - 上轮progress，本轮接续97440/375b64已终态exit0：6项定向、完整pnpm test、typecheck、diff全链通过，包含打包/独立通道/wrapper烟测。代码与测试在运行期间固定，全部验证句柄终态；74200/c70108临时launchd真实SIGKILL恢复和清理此前已通过。

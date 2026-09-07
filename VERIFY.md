@@ -1,5 +1,14 @@
 # Meta 协作验证记录
 
+## 2026-09-07 常驻安装与隔离容器真实模型验证
+
+- 11697/ad3185 exit0：独立离线候选镜像opencodex-f294357构建完成，sha256:5a5ffa5fab271cef19678e7e2f76e545fc318ee0edb6e746d61aa7ba0e405dce，临时标签/目录清理成功。该镜像尚未部署到原服务，也未单独做固定镜像业务验收，不用构建成功替代运行测试。所有构建/测试句柄终态。
+- 51ff35只读确认正式checkpoint及plist均当前用户/0600，且quality-gate.ts:115的实现上下文扩展名白名单排除TSX；当前试点代码为TSX，需要下一批先补支持和相关测试，不能绕过验收证据。
+
+- a685b9 exit0：本地f294357提交后首次安装已验证固定bundle，私有目录/文件、稳定stateFile、plist校验、bootstrap/connected/attempts0和400明确拒绝通过。原群容器不切换，永久用户级服务首次安装成功，不代表登录/主机重启通过。
+- 19335/a66f50 exit0：从当前源码重新bundle的生产relay+Responses适配器置于指定context临时无网络/只读/非root容器；通过已安装宿主通道得到真实Astra/medium合成JSON，核验完成元数据及错误模型拒绝。临时容器清理成功，无业务/文档/身份请求，常驻通道保留。
+- dfa52a只读原环境确认未配置assertionReporter或acceptanceSourceFiles；固定目标仅源码规则测试，不足以支持新任务具体行为完成结论。d40b87只读原账本聚合成功且唯一Owner/租约、无在途任务/Outbox；前次e85c05误用列名经6986f3核对后修正，未修改数据库。
+
 ## 2026-09-07 常驻启动器完整验证终态
 
 - 97440/375b64 exit0：6项定向、完整pnpm test、typecheck、git diff --check通过，普通包/独立模型通道/原headless及Docker wrapper启动退出均通过。输出截断不补造总数；源码/测试固定，97440终态不再轮询。
