@@ -1,5 +1,12 @@
 # Meta 协作验证记录
 
+## 2026-09-07 已授权宿主模型与Docker执行路径
+
+- 83385/659985 exit0：直接宿主运行生产ResponsesNaturalIntakeModel；回环10100、OpenCodex gpt-6-astra/medium，严格JSON schema要求connected=true并核对；生产SSE解析器验证模型与推理强度。无密钥、无工具、无文件输入、store=false。首次cell264权限审核超时未启动，随后唯一重试成功。
+- 1c3b01 exit0：显式colima-openmausbot-pilot只读查询，旧服务healthy，固定镜像sha256:2ae332cd23df93e5bb6a4339e4190d2ad0416d016c618a586d89702f0646af58。首次cell263超时未启动，后续唯一重试成功。
+- 002f2d exit0：`OMB_CANCEL_SMOKE_CONTEXT=colima-openmausbot-pilot OMB_CANCEL_SMOKE_IMAGE=sha256:2ae332cd23df93e5bb6a4339e4190d2ad0416d016c618a586d89702f0646af58 node --experimental-strip-types server/collaboration/operations/docker-command-cancel.smoke.ts`在宿主执行；before_gate未产生心跳、running_tree心跳停止，容器均停止，所有脚本隔离断言和本次临时资源清理完成。仅使用自生成可信夹具、缓存镜像与生产执行器，不下载镜像、不处理用户材料。
+- 两个独立smoke不是集成headless部署：未证明开发Provider接入OpenCodex、真实钉钉消息处理、账本迁移、文档镜像、独立supervisor或六类验收。没有代码/测试变化；原88277完整回归仍保留，不声称本轮重新跑全量。Goal恢复后不可继续引用旧“未授权”作为阻碍。
+
 ## 2026-09-06 当前产品验收范围审计（文档批次）
 
 - 代码基线469de46无业务改动。核对SPEC、旧试点手册及scripts/collaboration-pilot/report-schema.ts：旧v1报告没有当前六类单独门禁；标明旧报告不能证明PMO目标完成，不更改旧数据或补造证据。

@@ -1,5 +1,13 @@
 # Meta 协作实施进度
 
+## 最新恢复：已授权并验证宿主OpenCodex调用（2026-09-07）
+
+- Owner明确授权本机受限模型通道及网络问题时宿主执行；原生Goal已active，旧blocked状态失效，恢复后重新审计阻碍。仍使用OpenCodex gpt-6-astra/medium，无需密钥。本轮有真实执行证据，不重复询问同一授权。
+- cell263 Docker只读首次审核超时未启动；后续唯一重试1c3b01成功，旧试点仍healthy/固定镜像2ae332cd23df。cell264模型首次审核超时未启动；唯一重试83385/659985 exit0，生产ResponsesNaturalIntakeModel在宿主回环完成真实Astra/medium结构化请求，无凭据、无工具。
+- cell270/002f2d exit0：宿主直接运行已有docker-command-cancel.smoke.ts，显式colima-openmausbot-pilot和固定缓存镜像，启动门前取消、运行中父子进程停止、网络/非root/只读约束断言及本次临时容器和目录清理通过。无运行中句柄。
+- 采用宿主headless控制面 + Docker隔离执行的优先路径；现有runtime明确支持darwin/docker_linux，但现有钉钉服务尚未切换。下一步核对单账本/租约/Owner、daemon共享路径、Linux VM启动代次与既有containment引用、CodexReadOnlyPatchProvider的OpenCodex模型路由，再切换非生产服务。不要把仅自然解释/验收模型配置当开发Provider也已切换；不要复制第二个Owner或盲启动第二个Stream。
+- 仅记录与说明变更，无业务/测试代码修改，不重复完整回归；先前88277全量证据仍对应当前业务代码。未读模型密钥、改全局网络/认证、迁移身份/凭据、发群消息、启停旧服务或操作其他context；用户AGENTS.md/outputs保持不动。六类真实试点、文档隔离镜像与真实正文、supervisor/主机恢复、Owner签字仍保留。
+
 ## 当前暂停点：等待真实试点前置条件（2026-09-06，优先于下方）
 
 - 原生Goal已标blocked，未完成；保留完整目标。模型容器通道待Owner明确授权在运行配置收束、验收手册审计、本次复核连续三轮存在。此前两轮有提交进展，本轮仅复核，不把状态记录当产品进展。
