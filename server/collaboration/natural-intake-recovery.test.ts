@@ -163,10 +163,10 @@ describe("Owner-bound natural requirement recovery", () => {
     const h = await fixture();
     const jobs = h.db.prepare("SELECT * FROM collaboration_natural_intake_jobs").all();
     h.service.close();
-    h.db.exec("DROP TABLE collaboration_online_read_receipts; DROP TABLE collaboration_online_read_jobs; DROP TABLE collaboration_coordinator_proofs; DROP VIEW collaboration_mapping_all_results; DROP VIEW collaboration_mapping_all_attempts; DROP TABLE collaboration_mapping_recovery_results; DROP TABLE collaboration_mapping_recovery_attempts; DROP TABLE collaboration_verification_runtime_policies; DROP TABLE collaboration_delivery_queries; DROP TABLE collaboration_document_resources; DROP TABLE collaboration_natural_intake_recoveries; DROP TABLE collaboration_natural_intake_recovery_requests; DELETE FROM collaboration_schema_migrations WHERE version>=25; PRAGMA user_version=24");
+    h.db.exec("DROP VIEW collaboration_natural_all_jobs; DROP TABLE collaboration_natural_material_jobs; DROP TABLE collaboration_online_read_receipts; DROP TABLE collaboration_online_read_jobs; DROP TABLE collaboration_coordinator_proofs; DROP VIEW collaboration_mapping_all_results; DROP VIEW collaboration_mapping_all_attempts; DROP TABLE collaboration_mapping_recovery_results; DROP TABLE collaboration_mapping_recovery_attempts; DROP TABLE collaboration_verification_runtime_policies; DROP TABLE collaboration_delivery_queries; DROP TABLE collaboration_document_resources; DROP TABLE collaboration_natural_intake_recoveries; DROP TABLE collaboration_natural_intake_recovery_requests; DELETE FROM collaboration_schema_migrations WHERE version>=25; PRAGMA user_version=24");
     h.db.close();
     const upgraded = openCollaborationLedger(join(h.directory, "collaboration"));
-    expect(upgraded.migrationState).toEqual({ schemaVersion: 32, appliedMigrations: 32 }); upgraded.close();
+    expect(upgraded.migrationState).toEqual({ schemaVersion: 33, appliedMigrations: 33 }); upgraded.close();
     const db = new DatabaseSync(h.file);
     try {
       expect(db.prepare("SELECT * FROM collaboration_natural_intake_jobs").all()).toEqual(jobs);

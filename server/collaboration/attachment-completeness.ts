@@ -5,8 +5,9 @@ import type { BlockingAmbiguity } from "./snapshot.ts";
 import { redactSensitiveText } from "./sensitive-text.ts";
 import { readAttachmentReplacements } from "./attachment-replacements.ts";
 import { ONLINE_DOCUMENT_GATE_ID, onlineDocumentCompletenessGates, readOnlineDocumentReferences } from "./online-document-completeness.ts";
+import { MATERIAL_INTAKE_GATE, materialInterpretationGates } from "./natural-material-intake.ts";
 
-export const ATTACHMENT_GATE_IDS = new Set(["attachment-content-pending", "attachment-content-incomplete", "attachment-context-incomplete", "attachment-replacement-unclear", ONLINE_DOCUMENT_GATE_ID]);
+export const ATTACHMENT_GATE_IDS = new Set(["attachment-content-pending", "attachment-content-incomplete", "attachment-context-incomplete", "attachment-replacement-unclear", ONLINE_DOCUMENT_GATE_ID, MATERIAL_INTAKE_GATE]);
 
 export function attachmentReceipt(evidence: AttachmentEvidenceNotification) {
   return { source: evidence.source, format: evidence.format, chunks: evidence.chunks.map(({ text: _text, ...chunk }) => chunk) };
@@ -63,7 +64,7 @@ export function attachmentExcerpts(displayName: string, chunk: { ordinal: number
 }
 
 /** Recomputed from durable evidence, not from conversation claims or editable ambiguity lists. */
-export function attachmentCompletenessGates(database: DatabaseSync, workItemId: string, facts: readonly string[]): BlockingAmbiguity[] {
+export function attachmentCompletenessGates(database: DatabaseSync, workItemId: string, facts: readonly string[], completingMaterialJobId?: string): BlockingAmbiguity[] {
   const replacement = readAttachmentReplacements(database, workItemId);
   const rows = database.prepare("SELECT a.id,a.ingest_state FROM collaboration_attachments a JOIN collaboration_external_events e ON e.id=a.external_event_id " +
     "WHERE e.work_item_id=? ORDER BY e.received_at,e.id,a.ordinal LIMIT 101").all(workItemId) as unknown as Array<{ id: string; ingest_state: string }>;
@@ -85,7 +86,7 @@ export function attachmentCompletenessGates(database: DatabaseSync, workItemId: 
       }
     } catch { incomplete = true; }
   }
-  const gates: BlockingAmbiguity[] = onlineDocumentCompletenessGates(database, workItemId, facts);
+  const gates: BlockingAmbiguity[] = [...onlineDocumentCompletenessGates(database, workItemId, facts), ...materialInterpretationGates(database, workItemId, completingMaterialJobId)];
   if (replacement.needsClarification) gates.push({ id: "attachment-replacement-unclear", dependsOn: [],
     ...(replacement.selectionQuestion ?? { question: "附件替换关系还不明确，请确认原材料和要采用的新文件。",
       recommendedAnswer: "请原材料提供者回复原附件消息，确认要替换的文件；涉及多人材料或已经使用的内容，需要先核对影响。" }) });

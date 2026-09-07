@@ -16,6 +16,7 @@ import { attachmentCompletenessGates, attachmentExcerpts, readNaturalAttachmentC
 import { readAttachmentEvidenceNotification } from "./attachment-ingestion.ts";
 import { durableOnlineSources, readOnlineBody, onlineBodyExcerpts } from "./online-document-evidence.ts";
 import { recheckPlanMaterials } from "./plan-material-readiness.ts";
+import { enqueueMaterialInterpretation, materialInterpretationSourceCurrent, naturalJobStorage, pendingOnlineMaterialSources } from "./natural-material-intake.ts";
 import {
   appendWorkItemSnapshot,
   readLatestWorkItemSnapshot,
@@ -55,6 +56,7 @@ export interface AcceptedAttachmentEvidence {
 }
 
 interface DefinitionProjectionInput {
+  materialSourceId?: string;
   onlineJobId?: string;
   onlineExpectedRevision?: number;
   attachmentId?: string;
@@ -175,6 +177,8 @@ export class PlanningCoordinator {
     let snapshots: { previous: WorkItemSnapshot | null; current: WorkItemSnapshot };
     try {
       assertLedgerArmed(this.database);
+      if (projection?.materialSourceId && !enqueueMaterialInterpretation(this.database, workItemId, projection.materialSourceId,
+        readLatestWorkItemSnapshot(this.database, workItemId)!.revision, now)) { this.database.exec("COMMIT"); return null; }
       if (projection?.onlineJobId && !this.database.prepare("SELECT 1 FROM collaboration_online_read_jobs WHERE id=? AND work_item_id=? AND status='ready' AND projected_revision IS NULL")
         .get(projection.onlineJobId, workItemId)) { this.database.exec("COMMIT"); return null; }
       if (projection?.onlineJobId && readLatestWorkItemSnapshot(this.database, workItemId)?.revision !== projection.onlineExpectedRevision) {
@@ -189,11 +193,14 @@ export class PlanningCoordinator {
       if (projection?.natural) {
         const natural = projection.natural;
         const current = readLatestWorkItemSnapshot(this.database, workItemId);
-        const claim = this.database.prepare("SELECT 1 FROM collaboration_natural_intake_jobs j " +
-          "JOIN collaboration_work_items w ON w.id=j.work_item_id WHERE j.source_event_id=? AND j.work_item_id=? " +
-          "AND j.claim_token=? AND j.status='running' AND j.lease_until > ? AND w.status NOT IN ('cancelled','accepted') AND w.version=?")
-          .get(natural.sourceEventId, workItemId, natural.claimToken, now, current?.sourceWorkItemVersion ?? -1);
+        const storage = naturalJobStorage({ job_kind: natural.materialJobId ? "material" : "event" });
+        const claim = this.database.prepare(`SELECT 1 FROM ${storage.table} j ` +
+          `JOIN collaboration_work_items w ON w.id=j.work_item_id WHERE j.${storage.key}=? AND j.source_event_id=? AND j.work_item_id=? ` +
+          "AND j.claim_token=? AND j.status='running' AND j.lease_until > ? AND w.status NOT IN ('cancelled','accepted') AND w.version=? " +
+          (natural.materialJobId ? "AND w.control_state='active'" : ""))
+          .get(natural.materialJobId ?? natural.sourceEventId, natural.sourceEventId, workItemId, natural.claimToken, now, current?.sourceWorkItemVersion ?? -1);
         if (!claim || current?.revision !== natural.expectedRevision ||
+          (natural.materialJobId && !materialInterpretationSourceCurrent(this.database, workItemId, natural.materialJobId)) ||
           readNaturalAttachmentContext(this.database, workItemId).fingerprint !== natural.attachmentContextHash) {
           this.database.exec("COMMIT");
           return null;
@@ -213,7 +220,9 @@ export class PlanningCoordinator {
           recommendedAnswer: "不需要重复发送；整理遇到问题时会说明。",
         }] };
       }
-      snapshots = appendWorkItemSnapshot(this.database, workItemId, patch, now);
+      if (projection?.onlineJobId && this.naturalIntake) enqueueMaterialInterpretation(this.database, workItemId, projection.onlineJobId,
+        readLatestWorkItemSnapshot(this.database, workItemId)!.revision, now);
+      snapshots = appendWorkItemSnapshot(this.database, workItemId, patch, now, projection?.natural?.materialJobId);
       if (projection?.onlineJobId) this.database.prepare("UPDATE collaboration_online_read_jobs SET projected_revision=? WHERE id=? AND projected_revision IS NULL")
         .run(snapshots.current.revision, projection.onlineJobId);
       if (projection?.enqueueNaturalEvent) {
@@ -221,9 +230,11 @@ export class PlanningCoordinator {
           "VALUES (?,?,'pending',?,?)").run(projection.enqueueNaturalEvent, workItemId, snapshots.current.revision, now);
       }
       if (projection?.natural) {
-        this.database.prepare("UPDATE collaboration_natural_intake_jobs SET status='applied', result_revision=?, proposal_json=?, claim_token=NULL, lease_until=NULL " +
-          "WHERE source_event_id=? AND claim_token=?").run(snapshots.current.revision,
-          projection.natural.proposalJson, projection.natural.sourceEventId, projection.natural.claimToken);
+        const natural = projection.natural;
+        const storage = naturalJobStorage({ job_kind: natural.materialJobId ? "material" : "event" });
+        this.database.prepare(`UPDATE ${storage.table} SET status='applied', result_revision=?, proposal_json=?, claim_token=NULL, lease_until=NULL ` +
+          `WHERE ${storage.key}=? AND claim_token=?`).run(snapshots.current.revision,
+          natural.proposalJson, natural.materialJobId ?? natural.sourceEventId, natural.claimToken);
       }
       if (projection?.attachmentId) {
         this.database.prepare(
@@ -327,6 +338,15 @@ export class PlanningCoordinator {
     if (this.naturalAssociation) await this.naturalAssociation.processOne(now);
     if (this.closed) return null;
     beforeInterpret?.();
+    if (this.naturalIntake) {
+      const items = this.database.prepare("SELECT DISTINCT j.work_item_id FROM collaboration_online_read_jobs j JOIN collaboration_work_items w ON w.id=j.work_item_id " +
+        "WHERE j.status='ready' AND j.projected_revision IS NOT NULL AND w.control_state='active' AND w.status NOT IN ('accepted','cancelled')")
+        .all() as Array<{ work_item_id: string }>;
+      for (const item of items) for (const source of pendingOnlineMaterialSources(this.database, item.work_item_id)) {
+        if (source.status === "missing") this.reviseDefinition(item.work_item_id, {}, now, { materialSourceId: source.id,
+          contextSummary: "已补充读取正文，正在重新核对其中的要求和验收条件，尚未开始修改。" });
+      }
+    }
     return this.naturalIntake?.processOne(now) ?? Promise.resolve(null);
   }
 

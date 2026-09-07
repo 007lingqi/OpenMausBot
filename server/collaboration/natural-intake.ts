@@ -12,6 +12,7 @@ import { readNaturalAttachmentContext, attachmentReceipt } from "./attachment-co
 import type { AttachmentEvidenceNotification } from "./attachment-ingestion.ts";
 import { readNaturalIntakeContext } from "./natural-intake-context.ts";
 import { naturalIntakeFailureEventId } from "./natural-intake-recovery.ts";
+import { naturalJobStorage, materialInterpretationSourceCurrent, type NaturalJob } from "./natural-material-intake.ts";
 
 export interface NaturalIntakeEvent { sourceEventId: string; principalId: string; text: string }
 export interface NaturalIntakeRequest {
@@ -146,8 +147,8 @@ export function naturalDefinitionPatch(request: NaturalIntakeRequest, proposal: 
 export interface NaturalProjection {
   sourceEventId: string; expectedRevision: number; claimToken: string; proposalJson: string;
   attachmentContextHash: string;
+  materialJobId?: string;
 }
-interface Job { source_event_id: string; work_item_id: string; attempts: number; base_revision: number }
 
 /** Claims and results survive restart; a lease prevents concurrent interpreters applying the same input. */
 export class NaturalIntakeCoordinator {
@@ -169,23 +170,35 @@ export class NaturalIntakeCoordinator {
     assertLedgerArmed(this.db);
     this.db.prepare("UPDATE collaboration_natural_intake_jobs SET status='failed', error_code='natural_intake_unavailable', claim_token=NULL, lease_until=NULL " +
       "WHERE status='running' AND lease_until <= ? AND attempts >= 3").run(now);
+    this.db.prepare("UPDATE collaboration_natural_material_jobs SET status='failed', error_code='natural_intake_unavailable', claim_token=NULL, lease_until=NULL " +
+      "WHERE status='running' AND lease_until <= ? AND attempts >= 3").run(now);
     this.recoverFailureNotices(now);
     const job = this.db.prepare(
-      "SELECT j.source_event_id, j.work_item_id, j.attempts, j.base_revision FROM collaboration_natural_intake_jobs j " +
+      "SELECT j.job_key,j.job_kind,j.source_event_id, j.work_item_id, j.attempts, j.base_revision FROM collaboration_natural_all_jobs j " +
       "JOIN collaboration_external_events source ON source.source='dingtalk' AND source.source_event_id=j.source_event_id AND source.work_item_id=j.work_item_id " +
+      "JOIN collaboration_work_items w ON w.id=j.work_item_id " +
       "WHERE (j.status = 'pending' OR (j.status = 'running' AND j.lease_until <= ?)) AND j.attempts < 3 " +
-      "AND NOT EXISTS (SELECT 1 FROM collaboration_natural_intake_jobs busy WHERE busy.work_item_id=j.work_item_id AND busy.source_event_id<>j.source_event_id AND busy.status='running' AND busy.lease_until>?) " +
+      "AND (j.job_kind='event' OR (w.control_state='active' AND w.status NOT IN ('accepted','cancelled'))) " +
+      "AND NOT EXISTS (SELECT 1 FROM collaboration_natural_all_jobs busy WHERE busy.work_item_id=j.work_item_id AND (busy.job_key<>j.job_key OR busy.job_kind<>j.job_kind) AND busy.status='running' AND busy.lease_until>?) " +
       "AND NOT EXISTS (SELECT 1 FROM collaboration_attachments a JOIN collaboration_external_events e ON e.id=a.external_event_id " +
       "WHERE e.work_item_id=j.work_item_id AND a.ingest_state NOT IN ('ready','unsupported','failed')) " +
       "AND NOT EXISTS (SELECT 1 FROM collaboration_online_read_jobs online WHERE online.work_item_id=j.work_item_id " +
       "AND (online.status IN ('pending','running') OR (online.status='ready' AND online.projected_revision IS NULL))) " +
       "ORDER BY j.created_at, source.rowid LIMIT 1",
-    ).get(now, now) as Job | undefined;
+    ).get(now, now) as NaturalJob | undefined;
     if (!job) return null;
+    if (job.job_kind === "material" && !materialInterpretationSourceCurrent(this.db, job.work_item_id, job.job_key)) {
+      this.db.prepare("UPDATE collaboration_natural_material_jobs SET status='failed',error_code='natural_material_source_changed',claim_token=NULL,lease_until=NULL " +
+        "WHERE id=? AND (status='pending' OR (status='running' AND lease_until<=?))").run(job.job_key, now);
+      this.recoverFailureNotices(now); return null;
+    }
+    const storage = naturalJobStorage(job);
     const claimToken = randomUUID();
-    const claim = this.db.prepare("UPDATE collaboration_natural_intake_jobs SET status='running', claim_token=?, lease_until=?, attempts=attempts+1 " +
-      "WHERE source_event_id=? AND (status='pending' OR (status='running' AND lease_until <= ?)) AND attempts < 3")
-      .run(claimToken, now + 120_000, job.source_event_id, now);
+    const claim = this.db.prepare(`UPDATE ${storage.table} SET status='running', claim_token=?, lease_until=?, attempts=attempts+1 ` +
+      `WHERE ${storage.key}=? AND (status='pending' OR (status='running' AND lease_until <= ?)) AND attempts < 3 ` +
+      "AND NOT EXISTS (SELECT 1 FROM collaboration_natural_all_jobs busy WHERE busy.work_item_id=? AND (busy.job_key<>? OR busy.job_kind<>?) AND busy.status='running' AND busy.lease_until>?) " +
+      (job.job_kind === "material" ? "AND EXISTS(SELECT 1 FROM collaboration_work_items w WHERE w.id=work_item_id AND w.control_state='active' AND w.status NOT IN ('accepted','cancelled'))" : ""))
+      .run(claimToken, now + 120_000, job.job_key, now, job.work_item_id, job.job_key, job.job_kind, now);
     if (!claim.changes) return null;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const controller = new AbortController();
@@ -218,6 +231,7 @@ export class NaturalIntakeCoordinator {
       const result = validateNaturalIntakeProposal(raw, safeRequest);
       const applied = this.apply(job.work_item_id, naturalDefinitionPatch(safeRequest, result), now + Math.max(0, Date.now() - startedAt), {
         sourceEventId: job.source_event_id, expectedRevision: latest.revision, claimToken,
+        ...(job.job_kind === "material" ? { materialJobId: job.job_key } : {}),
         attachmentContextHash: attachmentContext.fingerprint,
         proposalJson: JSON.stringify({ ...sanitize(result) as Record<string, unknown>,
           eventEvidence: context.eventEvidence,
@@ -229,8 +243,8 @@ export class NaturalIntakeCoordinator {
         // An attachment projection may change the Spec without creating a newer message job.
         // Retry against that current revision rather than silently dropping the only pending input.
         if (active) throw new Error("natural_intake_revision_changed");
-        this.db.prepare("UPDATE collaboration_natural_intake_jobs SET status='superseded', claim_token=NULL, lease_until=NULL " +
-          "WHERE source_event_id=? AND claim_token=?").run(job.source_event_id, claimToken);
+        this.db.prepare(`UPDATE ${storage.table} SET status='superseded', claim_token=NULL, lease_until=NULL ` +
+          `WHERE ${storage.key}=? AND claim_token=?`).run(job.job_key, claimToken);
       }
       return applied ? job.work_item_id : null;
     } catch {
@@ -238,9 +252,9 @@ export class NaturalIntakeCoordinator {
       // Never retain raw provider errors or proposals, which can contain secrets or injected control text.
       this.db.exec("BEGIN IMMEDIATE");
       try {
-        this.db.prepare("UPDATE collaboration_natural_intake_jobs SET status=CASE WHEN attempts >= 3 THEN 'failed' ELSE 'pending' END, " +
-          "error_code='natural_intake_unavailable', claim_token=NULL, lease_until=NULL WHERE source_event_id=? AND claim_token=?")
-          .run(job.source_event_id, claimToken);
+        this.db.prepare(`UPDATE ${storage.table} SET status=CASE WHEN attempts >= 3 THEN 'failed' ELSE 'pending' END, ` +
+          `error_code='natural_intake_unavailable', claim_token=NULL, lease_until=NULL WHERE ${storage.key}=? AND claim_token=?`)
+          .run(job.job_key, claimToken);
         this.db.exec("COMMIT");
       } catch (error) { this.db.exec("ROLLBACK"); throw error; }
       this.recoverFailureNotices(now);
@@ -252,6 +266,19 @@ export class NaturalIntakeCoordinator {
     this.db.exec("BEGIN IMMEDIATE");
     try {
       assertLedgerArmed(this.db);
+      const materialJobs = this.db.prepare("SELECT j.id,j.work_item_id FROM collaboration_natural_material_jobs j " +
+        "JOIN collaboration_work_items w ON w.id=j.work_item_id WHERE j.status='failed' AND w.control_state='active' AND w.status NOT IN ('cancelled','accepted') " +
+        "AND NOT EXISTS(SELECT 1 FROM collaboration_outbox o WHERE o.source_event_id='material-intake-failed:'||j.id) ORDER BY j.created_at LIMIT 20")
+        .all() as Array<{ id: string; work_item_id: string }>;
+      for (const job of materialJobs) {
+        const snapshot = readLatestWorkItemSnapshot(this.db, job.work_item_id); if (!snapshot) continue;
+        enqueueInboundCard(this.db, { sourceEventId: `material-intake-failed:${job.id}`, aggregateType: "plan", aggregateId: job.work_item_id,
+          aggregateVersion: snapshot.revision, supersessionKey: `work-item:${job.work_item_id}:planning-status`, now,
+          card: renderClarificationCard({ workItemId: job.work_item_id, snapshotRevision: snapshot.revision,
+            contextSummary: "正文已读取，但尚未能可靠地核对新增要求，已停止自动重试，还没有开始修改。",
+            questions: [{ id: "material-intake", title: "需要处理", question: "请负责人检查这次正文核对的问题后再继续。",
+              recommendedAnswer: "原消息、正文和此前整理结果都已保留；不需要重复上传材料。" }] }) });
+      }
       const jobs = this.db.prepare("SELECT j.source_event_id,j.work_item_id FROM collaboration_natural_intake_jobs j " +
         "JOIN collaboration_work_items w ON w.id=j.work_item_id WHERE j.status='failed' AND w.status NOT IN ('cancelled','accepted') " +
         "AND j.source_event_id=(SELECT failed.source_event_id FROM collaboration_natural_intake_jobs failed WHERE failed.work_item_id=j.work_item_id AND failed.status='failed' ORDER BY failed.created_at DESC,failed.rowid DESC LIMIT 1) " +

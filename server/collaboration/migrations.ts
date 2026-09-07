@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { OPENMAUSBOT_SOURCE_BASELINE } from "./config.ts";
 
-export const COLLABORATION_SCHEMA_VERSION = 32;
+export const COLLABORATION_SCHEMA_VERSION = 33;
 
 interface Migration {
   version: number;
@@ -1451,6 +1451,38 @@ const migrations: readonly Migration[] = [
           BEGIN SELECT RAISE(ABORT,'online source and budget are immutable'); END;
         CREATE TRIGGER online_read_jobs_no_delete BEFORE DELETE ON collaboration_online_read_jobs
           BEGIN SELECT RAISE(ABORT,'online read history is immutable'); END;
+      `);
+    },
+  },
+  {
+    version: 33, name: "source-bound-material-interpretations", checksum: "v33:immutable-original-and-bounded-material-intake",
+    apply(database) {
+      database.exec(`
+        CREATE TABLE collaboration_natural_material_jobs (
+          id TEXT PRIMARY KEY REFERENCES collaboration_online_read_receipts(job_id),
+          source_event_id TEXT NOT NULL, work_item_id TEXT NOT NULL REFERENCES collaboration_work_items(id),
+          receipt_hash TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('pending','running','applied','failed','superseded')),
+          attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts BETWEEN 0 AND 3),
+          claim_token TEXT, lease_until INTEGER, base_revision INTEGER NOT NULL,
+          result_revision INTEGER, proposal_json TEXT, error_code TEXT, created_at INTEGER NOT NULL,
+          FOREIGN KEY (work_item_id,base_revision) REFERENCES collaboration_work_item_snapshots(work_item_id,revision),
+          FOREIGN KEY (work_item_id,result_revision) REFERENCES collaboration_work_item_snapshots(work_item_id,revision)
+        ) STRICT;
+        CREATE TRIGGER natural_material_source BEFORE INSERT ON collaboration_natural_material_jobs
+          WHEN NOT EXISTS (SELECT 1 FROM collaboration_online_read_jobs j JOIN collaboration_online_read_receipts r ON r.job_id=j.id
+            JOIN collaboration_natural_intake_jobs n ON n.source_event_id=j.source_event_id AND n.work_item_id=j.work_item_id AND n.status='applied'
+            WHERE j.id=NEW.id AND j.work_item_id=NEW.work_item_id AND j.source_event_id=NEW.source_event_id
+              AND r.receipt_hash=NEW.receipt_hash AND j.status='ready')
+          BEGIN SELECT RAISE(ABORT,'material interpretation source mismatch'); END;
+        CREATE TRIGGER natural_material_immutable BEFORE UPDATE ON collaboration_natural_material_jobs
+          WHEN OLD.status='applied' OR NEW.id<>OLD.id OR NEW.source_event_id<>OLD.source_event_id OR NEW.work_item_id<>OLD.work_item_id
+            OR NEW.receipt_hash<>OLD.receipt_hash OR NEW.base_revision<>OLD.base_revision OR NEW.created_at<>OLD.created_at OR NEW.attempts<OLD.attempts
+          BEGIN SELECT RAISE(ABORT,'material interpretation history is immutable'); END;
+        CREATE TRIGGER natural_material_no_delete BEFORE DELETE ON collaboration_natural_material_jobs
+          BEGIN SELECT RAISE(ABORT,'material interpretation history is immutable'); END;
+        CREATE VIEW collaboration_natural_all_jobs AS
+          SELECT source_event_id AS job_key,'event' AS job_kind,source_event_id,work_item_id,status,attempts,claim_token,lease_until,base_revision,result_revision,proposal_json,error_code,created_at FROM collaboration_natural_intake_jobs
+          UNION ALL SELECT id AS job_key,'material' AS job_kind,source_event_id,work_item_id,status,attempts,claim_token,lease_until,base_revision,result_revision,proposal_json,error_code,created_at FROM collaboration_natural_material_jobs;
       `);
     },
   },

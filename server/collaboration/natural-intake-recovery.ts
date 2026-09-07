@@ -74,6 +74,11 @@ export function naturalIntakeFailureEventId(db: DatabaseSync, sourceEventId: str
 }
 
 export function isCurrentNaturalIntakeFailureNotice(db: DatabaseSync, row: { source_event_id: string; aggregate_id: string; aggregate_version: number }): boolean {
+  if (row.source_event_id.startsWith("material-intake-failed:")) return !!db.prepare(
+    "SELECT 1 FROM collaboration_natural_material_jobs j JOIN collaboration_work_items w ON w.id=j.work_item_id " +
+    "WHERE j.id=? AND j.work_item_id=? AND j.status='failed' AND w.control_state='active' AND w.status NOT IN ('accepted','cancelled') " +
+    "AND ?=(SELECT max(revision) FROM collaboration_work_item_snapshots WHERE work_item_id=w.id)")
+    .get(row.source_event_id.slice("material-intake-failed:".length), row.aggregate_id, row.aggregate_version);
   if (!row.source_event_id.startsWith("natural-intake-failed:")) return true;
   const jobs = db.prepare("SELECT j.source_event_id FROM collaboration_natural_intake_jobs j JOIN collaboration_work_items w ON w.id=j.work_item_id " +
     "WHERE j.work_item_id=? AND j.status='failed' AND w.control_state='active' AND w.status NOT IN ('accepted','cancelled') " +

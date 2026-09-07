@@ -148,6 +148,7 @@ export function appendWorkItemSnapshot(
   workItemId: string,
   patch: WorkItemSnapshotPatch,
   now: number,
+  completingMaterialJobId?: string,
 ): { previous: WorkItemSnapshot | null; current: WorkItemSnapshot } {
   const item = database
     .prepare("SELECT version FROM collaboration_work_items WHERE id = ?")
@@ -173,7 +174,7 @@ export function appendWorkItemSnapshot(
   };
   current.blockingAmbiguities = ambiguities([
     ...current.blockingAmbiguities.filter(question => !ATTACHMENT_GATE_IDS.has(question.id)),
-    ...attachmentCompletenessGates(database, workItemId, current.facts),
+    ...attachmentCompletenessGates(database, workItemId, current.facts, completingMaterialJobId),
   ]);
   database
     .prepare(
