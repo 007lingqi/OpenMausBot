@@ -1,5 +1,15 @@
 # Meta 协作验证记录
 
+## 2026-09-07 固定schema31镜像、迁移回退与Compose权限差异
+
+- 33c655最终exit0：823f42/session68060的147项定向、typecheck、真实CAP_ Docker coordinator烟测、完整pnpm test、末尾typecheck/diff通过。完整链包括主集、broker、桌面和打包/9代理路径/headless/channel；代码/测试固定。新合成控制器实际inspect为CAP_三项，旧epoch停止/原生Git稳定/无假finalization/同ID新epoch区分全部通过。原真实试点失败证据仍保留，本结果仅支持重新打包验证，不冒充线上验收。
+
+- 新CAP_修复验证句柄823f42/session68060，最后读取797a11，仍运行，完整pnpm test/打包及最终typecheck尚未终态；先继续此句柄，不重复启动，不commit或部署；f9946a已先行精确复现coordinator_self_unconfirmed。原回退真实数据库已比对post-rollback.json：七历史表逐值不变/schema31/integrity ok/外键0，Owner/事件/Outbox未变。当前没有真实模型调用、任务重试或群发送；本轮源码/测试在新完整链启动后固定。
+
+- d08b82最终确认67854完整链exit0并保存1fcda45。5a1519：候选141f…/回退e585…固定离线镜像构建、schema30→31及回退保留所有原始合成表行和升级后新增记录通过；66e13f新完整镜像的真实coordinator登记与干净关闭通过，模型/群0。旧Astra worker/channel字节不变，不重跑已消费组件测试。
+- 4bcbc4/582b3d：首次发布在Compose解析前发现重复NNP，未停机，修成单一解析后的固定配置。180d00发布前/停机后无在途检查、备份后迁移；00474a观察新服务unhealthy/restarts8；32b5fe最终健康超时，自动回退e585并保留当前schema31数据库，fa65a4 healthy/restarts0。原失败部署不能记成通过。
+- 77b065实际HostConfig.CapAdd为CAP_CHOWN/CAP_SETGID/CAP_SETUID；coordinator原有限白名单只识别简写，proofCount0与错误路径一致。cef2fc定向先行复现；新增coordinator等价名及危险/畸形名测试后实现，真实Docker烟测也改为CAP_形式并核对实际inspect，当前新验证链尚待终态。
+
 ## 2026-09-07 未获执行授权的启动恢复
 
 - 最终终态（续跑核验）：6181c2/session67854全部exit0。0d29c4：主集299文件通过/1跳过，3412项通过/18跳过（3430登记），broker7、桌面32、打包启动/9代理路径/headless/channel验证均通过；末尾typecheck/diff通过。该链此前的181项定向和真实Docker两场景同样通过，期间源码/测试保持固定，仅文档更新。已取得终态，不再轮询或重跑此句柄；失败历史仍按原回执保留。

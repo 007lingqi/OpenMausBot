@@ -18,6 +18,9 @@ async function main() {
   const authority = new DockerCoordinatorAuthority({ docker: new NodeDockerCommandPort(), container: process.env.OMB_COORDINATOR_SMOKE_NAME!,
     image: process.env.OMB_COORDINATOR_SMOKE_IMAGE!, hostGeneration: readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim(),
     verifierKey: Buffer.from(process.env.OMB_COORDINATOR_SMOKE_KEY!, "hex") });
+  const actualController = await new NodeDockerCommandPort().run(["inspect", process.env.OMB_COORDINATOR_SMOKE_NAME!]);
+  assert.equal(actualController.exitCode, 0);
+  assert.deepEqual(JSON.parse(actualController.stdout.toString())[0].HostConfig.CapAdd.slice().sort(), ["CAP_CHOWN", "CAP_SETGID", "CAP_SETUID"]);
   const git = (...args: string[]) => execFileSync("git", ["-C", repo, "-c", "core.hooksPath=/dev/null", "-c", "user.name=Synthetic", "-c", "user.email=test@example.invalid", ...args], { stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
   if (process.env.OMB_COORDINATOR_SMOKE_MODE === "observe") {
     const db = new DatabaseSync(database), proof = JSON.parse(readFileSync("/probe/proof.json", "utf8"));

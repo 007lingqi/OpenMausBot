@@ -17,7 +17,7 @@ try {
   assert.equal((await docker.run(['volume', 'create', '--label', `com.openmausbot.coordinator-probe=${name}`, volume])).exitCode, 0); hasVolume = true;
   async function create(suffix, mode) {
     const made = await docker.run(['create', '--name', name + suffix, '--label', `com.openmausbot.coordinator-probe=${name}`, '--network', 'none', '--read-only', '--restart', 'no',
-      '--user', '0:0', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true', '--pids-limit', '128', '--memory', '512m', '--cpus', '1', '--tmpfs', '/tmp:rw,nosuid,nodev,noexec,size=32m',
+      '--user', '0:0', '--cap-drop', 'ALL', '--cap-add', 'CAP_CHOWN', '--cap-add', 'CAP_SETUID', '--cap-add', 'CAP_SETGID', '--security-opt', 'no-new-privileges:true', '--pids-limit', '128', '--memory', '512m', '--cpus', '1', '--tmpfs', '/tmp:rw,nosuid,nodev,noexec,size=32m',
       '--mount', `type=volume,src=${volume},dst=/probe`, '--mount', 'type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock',
       '--env', 'DOCKER_API_VERSION=1.44', '--env', `OMB_COORDINATOR_SMOKE_NAME=${name}`, '--env', `OMB_COORDINATOR_SMOKE_IMAGE=${image}`,
       '--env', `OMB_COORDINATOR_SMOKE_KEY=${key}`, '--env', `OMB_COORDINATOR_SMOKE_MODE=${mode}`, '--entrypoint', 'node', image, '/probe/worker.cjs']);

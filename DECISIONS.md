@@ -1,5 +1,10 @@
 # Meta 协作决策记录
 
+## D-118 — 固定版本回退必须保留当前schema，权限等价名不扩大权限
+
+- schema31候选切换前须有schema31兼容的固定回退镜像，并用合成原始行及升级后新行验证回退不丢数据；真实试点停机前后确认无在途任务、保存离线备份。健康失败回退只换兼容镜像/配置，不覆盖CURRENT数据库。1fcda45真实启动未达验收，已回退旧0f33d5a逻辑/schema31镜像；不能称新版已部署成功。
+- Compose会将CHOWN/SETUID/SETGID规范化为CAP_CHOWN/CAP_SETUID/CAP_SETGID；两组是同一内核权限，只允许明确的六种字符串，不通用删除前缀、不允许额外capability、不削弱NNP/cap-drop等隔离条件。真实Docker验证必须覆盖实际Compose归一化后的inspect形态。
+
 ## D-117 — 创建中断只能用持久拒绝门禁证明未获执行授权
 
 - 严格限于事前登记旧coordinator且其epoch已停止、execution ordinal1无commandId/无proof/无后续command的新contained v2启动；finalization不能授权文件或kill mutation。当前ledger/租约/session及原command快照在每个动作边界复查。历史无proof事项不得倒填身份或刷新模型重试次数。

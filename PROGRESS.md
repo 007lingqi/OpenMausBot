@@ -1,5 +1,18 @@
 # Meta 协作实施进度
 
+## 最新现场：schema31试点回退健康，Compose权限等价名修复验证中（2026-09-07）
+
+- CAP_修复最终终态：33c655确认823f42/session68060完整顺序链exit0，147项定向、typecheck、真实CAP_ coordinator/原生Git强杀与重启烟测、完整pnpm test（主集/broker/桌面/打包9代理路径/headless/channel）、末尾typecheck/diff全部通过。验证期间源码/测试固定，仅文档更新。此句柄已完成，不再轮询。保存本批10文件为本地commit；随后从同一受测dist构建新固定镜像，不复用失败141f镜像。
+
+- 本轮接续句柄：823f42/session68060（CAP_修复定向→typecheck→真实CAP_ Docker烟测→完整pnpm test→typecheck→diff）。最后读取797a11，仍运行，完整pnpm test/打包及最终typecheck尚未终态；先继续此句柄，不重复启动，不commit或部署。源码/测试自823f42启动后冻结，仅状态文档更新。新增root修复依据f9946a coordinator精确红灯，不是放宽危险权限。post-rollback.json另已核验并保存七历史表逐值哈希与停机前一致、schema31完整性ok；原失败candidate141f不再部署，兼容e585服务健康。Goal active，本轮实际完成固定构建、迁移/回退和根因修复，非无进展。
+
+- 上一批全部通过并本地提交1fcda45（20文件，用户AGENTS.md/outputs未动），d08b82确认67854最终exit0；不再轮询该句柄。当前新CAP_修复未提交，待独立完整链终态。
+- 5a1519构建/合成数据升级回退exit0：候选141f22972038…（1fcda45），兼容回退e58584ea4184…（已验证旧0f33d5a，schema31），任务组件原a4cab8c8660c…，命令镜像70087328c759…不变；worker/channel逐字节等于一次性真实Astra组件，未重新调用模型。/private/tmp/omb-schema31-1fcda45-TN3PUy保存images/build-migration/startup收据及打包文件；旧schema30合成事件/Owner等全部原表逐值哈希保留，升级后新coordinator记录回退仍在。66e13f完整镜像synthetic task_container真实启动/自身份登记/干净退出通过，未挂业务数据或真实通道。
+- 4bcbc4第一次仅准备发布文件，582b3d确认多层Compose中的重复security_opt导致raw JSON校验失败，未停机。改为同一release目录的standalone compose.final/rollback-final.json，仅去重相同NNP，深比较完整解析结果后180d00停机并双重确认无在途任务，保存offline-data，再迁移schema31。
+- 实际141f镜像出现启动重启（00474a观察RestartCount8），45秒健康验收失败；32b5fe自动回退到兼容schema31 e585镜像，保留CURRENT数据而非覆盖旧快照。fa65a4确认healthy/restarts0；629034实际schema31/coordinatorProof0/events12/outbox49，无执行proof或新增真实群消息。当前运行是兼容回退版、shared_process模式，不是新版contained已成功部署。不得重新运行已消费的build/startup/deploy脚本或使用旧schema30镜像。
+- 根因证据77b065：真实Compose/daemon返回CAP_CHOWN/CAP_SETGID/CAP_SETUID，而coordinator白名单仅接受简写，误拒等价权限；synthetic旧烟测未覆盖cap_add。cef2fc和新增coordinator测试先行复现。实现仅增加这三项CAP_等价拼写，仍拒CAP_SYS_ADMIN/CAP_KILL/重复前缀/小写，不增加容器权限。真实coordinator烟测现强制使用并断言CAP_形态。
+- VM恢复入口/var/lib/openmausbot-collaboration-pilot/releases/1fcda45：offline-data、offline-snapshot.json、original-release.conf、rollback-final.conf和compose.rollback-final.json；早期compose.release/rollback及release/rollback.conf为失败诊断工件，不能使用。接续先取得当前CAP_定向/typecheck/Docker/完整pnpm test链终态，再commit/新固定镜像；再次切换必须保留原失败记录并限制启动失败重试，不复用失败candidate镜像。完整业务引擎、六真实群/在线文档/Mac重启/Owner本人验收仍未完成，Goal active。
+
 ## 当前批次：未获执行授权的创建中断恢复（2026-09-07，完整回归通过，未部署）
 
 - 续跑终态：6181c2/session67854完整顺序链已全部通过；0d29c4主集299文件通过/1跳过、3412项通过/18跳过（3430登记），broker7、桌面32项、打包启动/9代理路径/headless/channel检查通过，末尾typecheck/diff通过。原181项定向和真实Docker两故障场景同链通过；无生产源码或测试在验证中改变，仅状态文档更新。保存完整本地commit，不push；旧群服务未切换。上一轮为实质进展，本轮从同一活句柄取得终态，不重复测试或模型调用。

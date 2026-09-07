@@ -29,7 +29,7 @@ function isolated(value: Snapshot): boolean {
   const config = value.HostConfig;
   return !!config && config.PidMode === "" && config.Privileged === false && config.ReadonlyRootfs === true &&
     Array.isArray(config.CapDrop) && config.CapDrop.includes("ALL") &&
-    (config.CapAdd === null || (Array.isArray(config.CapAdd) && config.CapAdd.every(cap => ["CHOWN", "SETUID", "SETGID"].includes(cap)))) &&
+    (config.CapAdd === null || (Array.isArray(config.CapAdd) && config.CapAdd.every(cap => ["CHOWN", "SETUID", "SETGID", "CAP_CHOWN", "CAP_SETUID", "CAP_SETGID"].includes(cap)))) &&
     Array.isArray(config.SecurityOpt) && config.SecurityOpt.some(opt => opt === "no-new-privileges" || opt === "no-new-privileges:true") &&
     Array.isArray(value.Mounts) && value.Mounts.every(mount => typeof mount.Destination === "string" && !["/usr/bin/readlink", "/proc/self/ns/pid"].some(target =>
       mount.Destination === "/" || target === mount.Destination || target.startsWith(`${mount.Destination}/`)));

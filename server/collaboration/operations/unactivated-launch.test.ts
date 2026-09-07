@@ -30,6 +30,14 @@ function fixture() {
   return { root, binding, directory, launch, image, docker, supervisor, value, context, recovery };
 }
 describe("irreversible denial of a never-activated contained launch", () => {
+  it("accepts the same narrow capabilities normalized by Compose to CAP_ names", async () => {
+    const f = fixture(); f.value.HostConfig.CapAdd = ["CAP_CHOWN", "CAP_SETUID", "CAP_SETGID"];
+    expect(await f.recovery.recover(f.binding, f.context)).toMatchObject({ state: "aborted_before_activation" });
+  });
+  it("still rejects privileged capabilities with Compose CAP_ spelling", async () => {
+    const f = fixture(); f.value.HostConfig.CapAdd = ["CAP_CHOWN", "CAP_SYS_ADMIN"];
+    expect(await f.recovery.recover(f.binding, f.context)).toMatchObject({ state: "blocked" });
+  });
   it("seals the model gate, preserves the journal and returns a distinct non-execution receipt", async () => {
     const f = fixture(), original = readFileSync(join(f.directory, "launch.json"), "utf8");
     expect(await f.recovery.recover(f.binding, f.context)).toMatchObject({ state: "aborted_before_activation", containerId: "c".repeat(64) });

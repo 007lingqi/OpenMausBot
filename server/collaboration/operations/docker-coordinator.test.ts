@@ -14,6 +14,15 @@ function fixture() {
   return { state, value, docker, options, authority, exited() { Object.assign(state, { Running: false, Status: "exited", Pid: 0, FinishedAt: later }); } };
 }
 describe("Docker coordinator startup epoch authority", () => {
+  it("accepts Compose-normalized names for the same three allowed capabilities", async () => {
+    const f = fixture(); f.value.HostConfig.CapAdd = ["CAP_CHOWN", "CAP_SETUID", "CAP_SETGID"];
+    const proof = await f.authority.capture(instance);
+    expect(await f.authority.inspect(proof, instance)).toMatchObject({ state: "active" });
+  });
+  it.each(["CAP_SYS_ADMIN", "CAP_KILL", "CAP_CAP_CHOWN", "cap_chown"])("still rejects additional or malformed capability %s", async cap => {
+    const f = fixture(); f.value.HostConfig.CapAdd = [cap];
+    await expect(f.authority.capture(instance)).rejects.toThrow("coordinator_self_unconfirmed");
+  });
   it("captures current PID namespace and binds the real container epoch to owner and fence", async () => {
     const f = fixture(), lease = { ...instance, expiresAt: Date.now() + 60000, version: 1 }, proof = await f.authority.capture(lease);
     expect(proof).toMatchObject({ containerId: id, image, startedAt: first, pidNamespace: "pid:[12345]", instance });

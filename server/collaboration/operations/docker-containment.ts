@@ -268,7 +268,7 @@ export class DockerCliContainmentSupervisor implements ContainmentPort {
       JSON.stringify(actual.Config?.Entrypoint) !== '["node"]' || JSON.stringify(actual.Config?.Cmd) !== '["/opt/openmausbot/contained-patch-worker.js"]' ||
       actual.HostConfig?.NetworkMode !== "none" || actual.HostConfig.ReadonlyRootfs !== true || actual.HostConfig.Privileged !== false || actual.HostConfig.PidMode !== "" ||
       !Array.isArray(drop) || drop.length !== 1 || drop[0] !== "ALL" ||
-      !Array.isArray(capabilities) || capabilities.some(cap => !["CHOWN", "SETUID", "SETGID"].includes(cap)) ||
+      !Array.isArray(capabilities) || capabilities.some(cap => !["CHOWN", "SETUID", "SETGID", "CAP_CHOWN", "CAP_SETUID", "CAP_SETGID"].includes(cap)) ||
       !Array.isArray(security) || security.length !== 1 || !["no-new-privileges", "no-new-privileges:true"].includes(security[0]) ||
       !Array.isArray(environment) || environment.filter(value => value === workerPath).length !== 1 ||
       environment.some(value => typeof value !== "string" || !/^(?:PATH|NODE_VERSION|YARN_VERSION|NODE_ENV|OMB_OPENCODEX_RELAY_UID|OMB_OPENCODEX_RELAY_GID)=/u.test(value) ||
