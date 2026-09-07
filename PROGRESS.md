@@ -1,5 +1,14 @@
 # Meta 协作实施进度
 
+## 最新接续：开发Provider本机路由已验证（2026-09-07）
+
+- 上轮progress，本轮progress；基线8845dea。新增CodexReadOnlyPatchProvider.openCodexEndpoint及headless显式环境配置，私有临时CODEX_HOME、忽略用户配置、固定本机Responses provider；既有隔离路径不变。不是OpenCode，不改用户全局配置。9个本任务文件验证后本地提交，不push，实际提交以Git为准。
+- TDD83962/480adf exit1：4项失败复现未传路由/未提前校验。90272/c76344 exit0（21项/typecheck/diff），扩展路径/模型/推理/临时配置清理断言后79034/aaeeb8 exit0（25项/typecheck/diff）。
+- 29364/f4ce98 exit0：/tmp/openmausbot-opencodex-provider-probe.mjs通过真实宿主Codex 0.146.0和新生产Provider，显式请求Astra/medium、无原登录配置，得到准确合成文件修改建议且原文件仍before。仅建议，不是Docker应用或真实业务完成；脚本临时工作区已清理。
+- 47234/c3ff86 exit0：完整pnpm test/typecheck/独立编译至/tmp/openmausbot-opencodex-provider-typecheck/diff通过，含普通和headless打包无node_modules启动。运行期间业务/测试代码固定；所有会话终态，不再轮询。
+- 29548c只读inspect确认旧服务数据/仓库/工作区和既有凭据挂载在Colima虚拟机目录，不是宿主同名路径已可用的证明。下一步验证宿主访问与单账本/租约连续性、VM代次/containment引用和实际Provider环境，再切换非生产服务；不得新建Owner、复制第二个活跃账本或盲启动第二个Stream。
+- Goal active。用户已授权本机模型通道，不再重复索要授权；尚未启用此路由到旧群服务，未改凭据/身份/网络、未发送群消息、未启停旧容器。真实文档/附件隔离、六场景、独立supervisor/主机恢复和Owner验收仍保留。用户AGENTS.md/outputs不动。
+
 ## 最新恢复：已授权并验证宿主OpenCodex调用（2026-09-07）
 
 - Owner明确授权本机受限模型通道及网络问题时宿主执行；原生Goal已active，旧blocked状态失效，恢复后重新审计阻碍。仍使用OpenCodex gpt-6-astra/medium，无需密钥。本轮有真实执行证据，不重复询问同一授权。

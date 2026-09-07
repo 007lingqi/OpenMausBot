@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -58,6 +58,38 @@ const proof: ContainmentProof = {
 };
 
 describe("Docker patch Agent", () => {
+  it("routes an explicitly configured local provider without inheriting user configuration or credentials", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "docker-provider-local-"));
+    const executable = join(directory, "capture.mjs"), captured = join(directory, "captured.json");
+    writeFileSync(executable, ["#!/usr/bin/env node", "import {writeFileSync} from 'node:fs';",
+      "const args=process.argv.slice(2);",
+      `writeFileSync(${JSON.stringify(captured)},JSON.stringify({args,home:process.env.CODEX_HOME,key:process.env.OPENAI_API_KEY}));`,
+      "writeFileSync(args[args.indexOf('--output-last-message')+1],JSON.stringify({status:'completed',summary:'done',changes:[]}));"].join("\n"), {mode:0o700});
+    const provider = new CodexReadOnlyPatchProvider({ executable, exchangeRoot: join(directory,"exchange"),
+      model: "gpt-6-astra", reasoningEffort: "medium", openCodexEndpoint: "http://127.0.0.1:10100/v1/responses" });
+    await provider.propose(request());
+    const value = JSON.parse(readFileSync(captured,"utf8"));
+    expect(value.args).toContain('--ignore-user-config');
+    expect(value.args).toContain('model_provider="omb_opencodex"');
+    expect(value.args).toContain('model_providers.omb_opencodex.base_url="http://127.0.0.1:10100/v1"');
+    expect(value.args).toContain('model_providers.omb_opencodex.requires_openai_auth=false');
+    expect(value.args[value.args.indexOf('--sandbox')+1]).toBe('read-only');
+    expect(value.home).toContain(join(directory,'exchange'));
+    expect(existsSync(value.home)).toBe(false);
+    expect(value.key).toBeUndefined();
+  });
+  it.each(['http://remote.invalid/v1/responses','http://user:secret@127.0.0.1/v1/responses','http://127.0.0.1/v1/responses?q=x','http://127.0.0.1/v1/responses#fragment','http://127.0.0.1/other',''])('rejects unsafe local provider endpoint %s', endpoint => {
+    const root = join(mkdtempSync(join(tmpdir(),'docker-provider-invalid-')),'unused');
+    expect(() => new CodexReadOnlyPatchProvider({ exchangeRoot: root, model:'gpt-6-astra',
+      openCodexEndpoint:endpoint })).toThrow('opencodex_patch_configuration_invalid');
+    expect(existsSync(root)).toBe(false);
+  });
+  it("requires an explicit model and rejects unsupported effort for local routing", () => {
+    for (const options of [{}, {model:'gpt-6-astra',reasoningEffort:'bogus'}]) {
+      expect(() => new CodexReadOnlyPatchProvider({exchangeRoot:join(tmpdir(),'not-created-provider'),
+        openCodexEndpoint:'http://127.0.0.1:10100/v1/responses',...options})).toThrow('opencodex_patch_configuration_invalid');
+    }
+  });
   it("keeps the provider read-only and delegates only validated writes to Docker", async () => {
     const provider: ReadOnlyPatchProvider = {
       propose: vi.fn(async () => ({

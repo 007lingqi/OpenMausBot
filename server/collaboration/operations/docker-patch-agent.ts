@@ -253,6 +253,7 @@ export class CodexReadOnlyPatchProvider implements ReadOnlyPatchProvider {
   private readonly executable: string;
   private readonly model: string | undefined;
   private readonly reasoningEffort: string | undefined;
+  private readonly openCodexBaseUrl: string | undefined;
   private readonly exchangeRoot: string;
   private readonly timeoutMs: number;
   private readonly providerUid: number | undefined;
@@ -266,6 +267,7 @@ export class CodexReadOnlyPatchProvider implements ReadOnlyPatchProvider {
     executable?: string;
     model?: string;
     reasoningEffort?: string;
+    openCodexEndpoint?: string;
     exchangeRoot: string;
     timeoutMs?: number;
     providerUid?: number;
@@ -276,7 +278,17 @@ export class CodexReadOnlyPatchProvider implements ReadOnlyPatchProvider {
   }) {
     this.executable = input.executable?.trim() || "codex";
     this.model = input.model?.trim() || undefined;
-    this.reasoningEffort = input.reasoningEffort?.trim() || undefined;
+    this.reasoningEffort = input.reasoningEffort?.trim() || (input.openCodexEndpoint !== undefined ? "medium" : undefined);
+    if (input.openCodexEndpoint !== undefined) {
+      try {
+        const url = new URL(input.openCodexEndpoint);
+        if (url.protocol !== "http:" || !["127.0.0.1", "[::1]"].includes(url.hostname) ||
+          url.pathname !== "/v1/responses" || url.username || url.password || url.search || url.hash ||
+          !this.model || !["low", "medium", "high", "xhigh", "max", "ultra"].includes(this.reasoningEffort!)) throw new Error();
+        url.pathname = "/v1";
+        this.openCodexBaseUrl = url.href;
+      } catch { throw new Error("opencodex_patch_configuration_invalid"); }
+    }
     this.exchangeRoot = resolve(input.exchangeRoot);
     this.timeoutMs = input.timeoutMs ?? 15 * 60_000;
     this.providerUid = input.providerUid;
@@ -306,6 +318,8 @@ export class CodexReadOnlyPatchProvider implements ReadOnlyPatchProvider {
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     const schema = join(directory, "schema.json");
     const output = join(directory, "output.json");
+    const localCodexHome = this.openCodexBaseUrl ? join(directory, "codex-home") : undefined;
+    if (localCodexHome) mkdirSync(localCodexHome, { mode: 0o700 });
     writeFileSync(schema, JSON.stringify(OUTPUT_SCHEMA), { mode: 0o600 });
     writeFileSync(output, "", { mode: 0o600 });
     if (this.providerUid !== undefined && this.providerGid !== undefined) {
@@ -316,6 +330,7 @@ export class CodexReadOnlyPatchProvider implements ReadOnlyPatchProvider {
       chmodSync(schema, 0o640);
       chownSync(output, supervisorUid, this.providerGid);
       chmodSync(output, 0o660);
+      if (localCodexHome) chownSync(localCodexHome, this.providerUid, this.providerGid);
     }
     const taskContext = {
       objective: redactSensitiveText(request.objective),
@@ -352,9 +367,17 @@ export class CodexReadOnlyPatchProvider implements ReadOnlyPatchProvider {
       "--output-schema", schema, "--output-last-message", output, "-C", request.cwd,
       ...(this.model ? ["--model", this.model] : []),
       ...(this.reasoningEffort ? ["-c", `model_reasoning_effort=${JSON.stringify(this.reasoningEffort)}`] : []),
+      ...(this.openCodexBaseUrl ? [
+        "--ignore-user-config",
+        "-c", 'model_provider="omb_opencodex"',
+        "-c", 'model_providers.omb_opencodex.name="OpenCodex"',
+        "-c", `model_providers.omb_opencodex.base_url=${JSON.stringify(this.openCodexBaseUrl)}`,
+        "-c", 'model_providers.omb_opencodex.wire_api="responses"',
+        "-c", "model_providers.omb_opencodex.requires_openai_auth=false",
+      ] : []),
     ];
     try {
-      await this.runProcess(request.runId, args, prompt, request.signal);
+      await this.runProcess(request.runId, args, prompt, request.signal, localCodexHome);
       const raw = readFileSync(output);
       if (raw.length < 2 || raw.length > 2 * 1024 * 1024) throw new Error("provider_patch_output_size_invalid");
       const parsed = JSON.parse(raw.toString("utf8")) as PatchProposal;
@@ -383,14 +406,14 @@ export class CodexReadOnlyPatchProvider implements ReadOnlyPatchProvider {
     forceKill.unref?.();
   }
 
-  private async runProcess(runId: string, args: string[], prompt: string, signal: AbortSignal): Promise<void> {
+  private async runProcess(runId: string, args: string[], prompt: string, signal: AbortSignal, localCodexHome?: string): Promise<void> {
     await new Promise<void>((resolvePromise, rejectPromise) => {
       const executable = this.launcher?.executable ?? this.executable;
       const commandArgs = this.launcher ? [...this.launcher.args, this.executable, ...args] : args;
       const environment: NodeJS.ProcessEnv = {
         PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
         HOME: this.providerHome,
-        CODEX_HOME: process.env.CODEX_HOME ?? join(this.providerHome, ".codex"),
+        CODEX_HOME: localCodexHome ?? process.env.CODEX_HOME ?? join(this.providerHome, ".codex"),
         LANG: process.env.LANG ?? "C.UTF-8",
         LC_ALL: process.env.LC_ALL ?? "C.UTF-8",
         TMPDIR: process.env.TMPDIR ?? "/tmp",

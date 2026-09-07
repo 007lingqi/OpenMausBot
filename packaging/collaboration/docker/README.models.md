@@ -1,5 +1,19 @@
 # 非生产模型配置（显式启用）
 
+## 开发Provider的本机OpenCodex路由
+
+开发阶段使用Codex CLI执行只读检查，但模型服务可以显式选择本机OpenCodex；这不是OpenCode。宿主控制面可设置：
+
+```sh
+OMB_CODEX_OPENCODEX_ENDPOINT=http://127.0.0.1:10100/v1/responses
+OMB_CODEX_MODEL=gpt-6-astra
+OMB_CODEX_REASONING_EFFORT=medium
+```
+
+端点只允许HTTP字面回环地址及精确`/v1/responses`路径，不接受远端、URL凭据、查询或片段；模型必须明确，推理省略时使用medium。开发器以CLI配置覆盖选择OpenCodex Responses provider，并在每次运行的私有临时CODEX_HOME中执行`--ignore-user-config`，不继承原CODEX_HOME登录文件或模型密钥环境变量；结束时随本次Provider目录清理。未配置此端点时保持原CLI路径，不隐式改变其他Provider。
+
+既有只读sandbox或已配置的独立UID/外部文件权限约束不变；没有添加绕过sandbox的标志。需要支持`--ignore-user-config`的Codex CLI，已用宿主0.146.0验证；不兼容时失败，不自动降级或借用认证。此路由不取消上下文与写范围校验，也不代替Docker写入和独立测试证据。真实合成文件已验证CLI提出准确修改且原文件不变，尚未在现有群服务中启用。
+
 ## 2026-09-07：已授权本机直连，优先宿主控制面
 
 Owner 已明确授权受限本机 OpenCodex 调用，并允许网络问题时直接在宿主机执行诊断和模型请求。宿主机生产适配器已真实验证 `http://127.0.0.1:10100/v1/responses`、`gpt-6-astra`、`medium`、无密钥请求；宿主调用现有 Docker 生产执行器的启动前取消和运行中父子进程终止也通过。两项验证独立完成，不是整个 headless/钉钉链路已上线。

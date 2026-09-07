@@ -476,6 +476,8 @@ function dockerExecutionOptions(environment: NodeJS.ProcessEnv): Partial<Collabo
   const agent = new DockerPatchAgent({
     provider: new CodexReadOnlyPatchProvider({
       exchangeRoot: providerRoot,
+      ...(environment.OMB_CODEX_OPENCODEX_ENDPOINT !== undefined
+        ? { openCodexEndpoint: environment.OMB_CODEX_OPENCODEX_ENDPOINT.trim() } : {}),
       ...(environment.OMB_CODEX_EXECUTABLE?.trim() ? { executable: environment.OMB_CODEX_EXECUTABLE.trim() } : {}),
       ...(environment.OMB_CODEX_MODEL?.trim() ? { model: environment.OMB_CODEX_MODEL.trim() } : {}),
       ...(environment.OMB_CODEX_REASONING_EFFORT?.trim()

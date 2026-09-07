@@ -1,5 +1,12 @@
 # Meta 协作验证记录
 
+## 2026-09-07 开发Provider OpenCodex路由验证
+
+- 83962/480adf exit1：新增4项预期失败，CLI未收到路由覆盖/临时配置选项，非法端点仍走目录创建而非提前配置拒绝。实现后90272/c76344 exit0：2文件21项/typecheck/diff通过；增加空/片段/错误路径、显式模型、推理及清理覆盖后79034/aaeeb8 exit0：2文件25项/typecheck/diff通过。
+- 29364/f4ce98 exit0：真实宿主Codex CLI 0.146.0经生产CodexReadOnlyPatchProvider，显式设置OpenCodex回环Responses provider、gpt-6-astra/medium、临时CODEX_HOME及--ignore-user-config；合成src/value.txt建议精确为after换行，实际文件仍before，未执行应用。该证据验证请求路由/CLI兼容与合成建议，不宣称独立核验模型端返回元数据或完整业务语义。
+- 47234/c3ff86 exit0：`pnpm test && pnpm typecheck && pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-opencodex-provider-typecheck && git diff --check`，主集、broker、桌面、普通及headless打包运行全部通过。全部句柄终态，业务/测试代码在全量运行期间固定。输出截断不补造全量总数。
+- 29548c exit0仅查询指定旧容器的挂载路径；未读取挂载文件内容、模型密钥或现有账本，不执行迁移。新路由尚未在真实群服务启用；本批不能替代单账本切换、Docker代码应用、真实六场景或Owner签字。
+
 ## 2026-09-07 已授权宿主模型与Docker执行路径
 
 - 83385/659985 exit0：直接宿主运行生产ResponsesNaturalIntakeModel；回环10100、OpenCodex gpt-6-astra/medium，严格JSON schema要求connected=true并核对；生产SSE解析器验证模型与推理强度。无密钥、无工具、无文件输入、store=false。首次cell264权限审核超时未启动，随后唯一重试成功。

@@ -1,5 +1,7 @@
 # 内部研发助手 Meta 协作规范
 
+开发模型路由（2026-09-07）：headless新增显式OMB_CODEX_OPENCODEX_ENDPOINT，将现有CodexReadOnlyPatchProvider指向本机OpenCodex Responses；必须配置模型，推理默认medium。仅HTTP字面回环和精确/v1/responses，无URL凭据/查询/片段；错误在创建Provider目录前拒绝。CLI每次使用私有临时CODEX_HOME及--ignore-user-config，固定Provider覆盖、不继承原模型密钥环境变量；结束后清理。本机常规只读模式和已有独立UID权限模式不变，不增加绕过隔离的开关。真实合成建议通过不等于实际代码应用或群服务已切换；旧路径未配置时保持兼容。
+
 本机执行授权更新（2026-09-07，优先于下方历史待授权状态）：Owner允许受限本机通道调用宿主OpenCodex，网络问题时直接在宿主执行诊断/模型请求。首选宿主控制面回环调用Astra/medium，Docker保持不可信候选代码与附件的隔离边界，不以无沙箱模型HTTP请求扩展为代码任意执行。生产模型适配器直连及宿主Docker取消smoke分别已验证；现有钉钉服务尚未迁移，开发Provider模型路由、共享路径、VM代次/既有containment引用和单账本租约需先验证。完整目标及六类真实验收不变。
 
 当前真实验收入口（2026-09-06）：以 [PMO 六场景手册](docs/pilot/pmo-six-scenario-runbook.md) 核对原完整目标。旧里程碑手册与v1报告保留历史用途，其要求编号/普通结果人工接受及部分并发不适用规则不得作为当前产品验收标准。新手册不是通过报告，六类及其文档/表格/附件、未@/引用子项和跨场景隔离/恢复/权限证据须分别核验；自动证据采集和新报告契约仍待补齐，不以文档完善替代真实执行。

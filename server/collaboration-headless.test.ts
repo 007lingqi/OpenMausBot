@@ -118,6 +118,9 @@ describe("secure collaboration headless CLI", () => {
     expect(seen[0].acceptanceMapping?.policyId).toMatch(/^mapping-v1:/);
     expect(seen[0].acceptanceMapping?.proposer).not.toBe(seen[0].acceptanceMapping?.verifier);
     await expect(runCollaborationHeadless(["--health", "--data-dir", root], { ...environment,
+      OMB_CODEX_MODEL: "gpt-6-astra", OMB_CODEX_OPENCODEX_ENDPOINT: "http://remote.invalid/v1/responses",
+    }, dependencies)).rejects.toThrow("opencodex_patch_configuration_invalid");
+    await expect(runCollaborationHeadless(["--health", "--data-dir", root], { ...environment,
       OMB_EXECUTION_TARGET_COMMANDS_JSON: JSON.stringify({ cases: { ...command, assertionReporter: "arbitrary" } }) }, dependencies)).rejects.toThrow("assertion reporter");
     expect(seen).toHaveLength(1);
     for (const acceptanceSourceFiles of ["src/save.mjs", ["../outside.mjs"], ["src/*.mjs"], ["src/save.mjs", "src/save.mjs"]]) {
