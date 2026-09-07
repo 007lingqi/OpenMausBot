@@ -5,6 +5,7 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { ContainmentProof } from "../containment.ts";
 import type { AgentRunPort, AgentRunRequest, AgentRunResult } from "../provider-runner.ts";
 import { redactSensitiveText } from "../sensitive-text.ts";
+import { clearProviderOwnedHome } from "./provider-home-cleanup.ts";
 import {
   DockerCliContainmentSupervisor,
   type DockerCommandPort,
@@ -346,6 +347,8 @@ export class CodexReadOnlyPatchProvider implements ReadOnlyPatchProvider {
     const prompt = [
       "You are the read-only planning half of a controlled code-change agent.",
       "Inspect only the supplied Git worktree. Do not modify files, run network tools, install dependencies, commit, or push.",
+      "Your JSON is an unexecuted patch proposal, not a verified candidate. The trusted executor applies your proposal and runs the required tests in isolated containers; an independent verifier then repeats them before Meta acceptance.",
+      "Project instructions requiring tests before a candidate is delivered are enforced by those later stages, not by this read-only proposal stage. Preserve and update the required tests in your proposed changes, but do not request extra command permissions merely to perform delegated validation. Other missing capabilities or unclear requirements still require needs_configuration.",
       "Git metadata is intentionally inaccessible. Do not run git commands; inspect files directly with read-only tools such as rg, sed, and cat.",
       [
         "Authority and scope rules:",
@@ -390,6 +393,14 @@ export class CodexReadOnlyPatchProvider implements ReadOnlyPatchProvider {
       }
       return { ...parsed, readOnlyEnforced: true };
     } finally {
+      if (localCodexHome && this.providerUid !== undefined && this.providerGid !== undefined) {
+        await clearProviderOwnedHome({ home: localCodexHome, uid: this.providerUid, gid: this.providerGid,
+          ...(this.launcher ? { launcher: this.launcher } : {}) });
+        // Its supervisor-owned parent is not group-writable, so the provider
+        // cannot replace this entry. Reclaim only the emptied root for removal.
+        chownSync(localCodexHome, typeof process.getuid === "function" ? process.getuid() : 0,
+          typeof process.getgid === "function" ? process.getgid() : 0);
+      }
       rmSync(directory, { recursive: true, force: true });
     }
   }
@@ -434,6 +445,7 @@ export class CodexReadOnlyPatchProvider implements ReadOnlyPatchProvider {
       this.active.set(runId, child);
       let stderr = Buffer.alloc(0);
       let settled = false;
+      let inputFailed = false;
       const stop = () => void this.interrupt(runId);
       signal.addEventListener("abort", stop, { once: true });
       const timer = setTimeout(stop, this.timeoutMs);
@@ -455,9 +467,14 @@ export class CodexReadOnlyPatchProvider implements ReadOnlyPatchProvider {
         clearTimeout(timer);
         signal.removeEventListener("abort", stop);
         this.active.delete(runId);
-        if (code === 0) resolvePromise();
+        if (inputFailed) rejectPromise(new Error("codex_patch_provider_input_failed"));
+        else if (code === 0) resolvePromise();
         else rejectPromise(new Error(`codex_patch_provider_failed:${stderr.toString("utf8").slice(0, 500)}`));
       });
+      // An early CLI exit must reject this run, not raise an unhandled EPIPE in
+      // the shared headless process. Even a valid-looking output is unusable if
+      // the complete prompt was not delivered. Wait for close before settling.
+      child.stdin?.on("error", () => { inputFailed = true; stop(); });
       child.stdin?.end(prompt);
     });
   }

@@ -1,5 +1,20 @@
 # Meta 协作验证记录
 
+## 2026-09-07 Provider 修复验证收束
+
+- 72060/d45bb6：主集3184 passed/18 skipped（3202登记），287文件通过/1跳过；broker7、桌面32项通过。原链在打包编译遇 smoke fixture 缺 containmentBinding，exit2，不是完整成功。
+- 79246/82a922 exit0：修正夹具后依次通过 pnpm typecheck、固定缓存镜像的真实Linux清理烟测、pnpm test:packaged-server、git diff --check。普通包无node_modules启动、9个代理路径和model-channel/headless生命周期通过。该分段补验覆盖先前未完成部分，无业务/单测变动。
+- Linux清理证据：providerUid10001、privateStateRemoved=true、outsideSymlinkTargetUnchanged=true、modelCalls=0、isolationInspected=true。指定context colima-openmausbot-pilot、原固定镜像70087328c759…；无主机业务挂载，/tmp保持noexec，仅可信夹具使用独立root-owned可执行tmpfs，结束清理仅本次随机标记容器。
+- 62888/b5e184 exit0：docker-patch-agent及provider-home-cleanup共20项再次通过，含提前退出CLI的两个独立Node进程回归。51530、61768、72060均已终态，当前无运行中验证。
+- 15ec31只读原合成账本：command1/finalization1，proof0/settlement0；不允许将运行标签或外层容器停止当成缺失的命令隔离凭据。尚未执行原事项重试、修复后真实Provider调用或新部署。
+
+## 2026-09-07 真实执行链失败及修复中证据
+
+- 30944/395b10终态exit1：合成入站/身份/出站，真实Astra/medium理解和生产Docker装配；解释applied、Spec可执行、run启动后provider_sandbox_unavailable。不是实际钉钉群测试，也不是执行成功。独立容器Exited1/Pid0/无OOM，数据保留于PROGRESS所列VM根。
+- 1ec1a4读取仅合成任务Provider结果，显示因只读建议阶段不能亲自运行项目要求的测试而needs_configuration；4cc0f7同cap-drop只读诊断确认私有CLI目录EACCES。真实Provider本轮无完成代码，不能把模型输出或自然理解当交付。
+- TDD27287/2b4bd3缺清理模块及分工提示红灯；48807/7cec7a的18项单测/typecheck/diff通过。真实Linux微探测先EACCES，再暴露夹具umask不可执行；3170f9在修正权限后出现未处理stdin EPIPE，尚未验证清理绿色。顶层chown改动晚于本地绿灯，需重新验证；无当前全仓通过或修复后真实模型通过的声明。
+- 当前全部句柄终态，无后台模型/测试。原群服务及权限未改、未推送，未提交未完成修复。下一步先隔离复现并修复stdin关闭崩溃及完成受限UID清理验证，再全仓回归和同一合成事项有界复测。
+
 ## 2026-09-07 固定新镜像、旧账本升级与唯一试点切换
 
 - 7927ce exit0：已验证dist-server离线构建opencodex-def5f17，image sha256:70087328c7590f1775d64fcde3706e4b52b865cc019688d11042c00024d92bdb；原镜像/tag未覆盖。

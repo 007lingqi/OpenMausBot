@@ -1,5 +1,22 @@
 # Meta 协作实施进度
 
+## 当前检查点：Provider 修复与分段完整验证通过，原失败事项仍受恢复门禁保护（2026-09-07）
+
+- 72060/d45bb6 已终态 exit2：主集287文件、3184通过/18跳过，broker及桌面测试通过；仅新增 smoke fixture 缺 containmentBinding 阻断打包。补合成 binding 后，79246/82a922 的 typecheck、真实Linux清理、完整 test:packaged-server 和 diff 全部 exit0；62888/b5e184 的20项定向测试再通过。验证分两段完成，不称原 pnpm test 命令 exit0；业务源码/单测从72060启动起未变，只修夹具类型。
+- stdin提前关闭现以静态错误结束该Provider，不再因未处理EPIPE崩溃共享进程；即使CLI exit0及合法输出也拒绝不完整输入。清理由同一受限UID执行，保持原cap/drop、无网络及/tmp noexec；外部软链接目标不变。正式烟测入口为 scripts/smoke-docker-provider-cleanup.mjs，旧/private/tmp微探测不再使用。
+- 15ec31只读核查原合成事项：session a88ac867-8f1f-4329-bcd9-6406c91debf9 的attempt1、command1、finalization intent count1均保留，但proof/settlement均为空。不能凭原容器Exited直接释放占用或伪造凭据，原事项不做自动执行重试。可在原证据根登记一次只读Provider复查，以原任务/工作树验证建议，不应用代码、不修改账本、不称引擎恢复。
+- 原真实群服务仍使用def5f17、healthy；其他旧容器仍Exited，未删除。真实六场景、在线文档/表格、解析镜像、独立supervisor、VM/宿主恢复和Owner最终验收未完成。Goal active。先保存本批验证通过的修复，再进行有界只读复查；不push，不提交用户AGENTS.md或outputs。
+
+## 当前检查点：真实引擎复现执行阻塞，修复尚未完成（2026-09-07）
+
+- 上轮为部署/恢复progress；本轮也是实际诊断及TDD进展。原群仍12事件/49Outbox/Owner1，新群消息未到；原def5f17服务未再次切换。Goal active，不宣称完成。
+- 真实引擎合成入站探测30944/395b10已exit1：Astra/medium自然理解applied，Spec ready_for_execution并启动run，随后needs_configuration/provider_sandbox_unavailable。合成事项WI-EA2FD321158E、VM证据根/var/lib/openmausbot-engine-probe-188ebd46-1b0b-4f6d-8887-1969df34dffd；合成Owner/出站与真实群分离。命名容器omb-engine-probe-188ebd46-1b0b-4f6d-8887-1969df34dffd已Exited1/Pid0/无OOM，保留证据和固定镜像，不能重跑随机根driver刷新预算。
+- 1ec1a4/4cc0f7证明两因：真实Provider output.json为needs_configuration，因为它将项目AGENTS要求候选前测试误用于只读建议阶段；其次codex-home由10001拥有/0700，cap-drop root访问EACCES，finally清理错误覆盖了该业务理由。没有扩大Provider权限。
+- 已补角色分工提示及provider-home-cleanup源码/4项测试：固定清理代码在Provider身份下清空私有状态，不跟随链接、不chmod文件、不删除顶层；Supervisor再回收受保护父目录下的空顶层。27287/2b4bd3为先行红灯，48807/7cec7a的18项本地测试/typecheck/diff通过，但不覆盖随后顶层chown调整。当前4个代码/测试文件未提交，PROGRESS/VERIFY随此记录变更；用户AGENTS.md/outputs不动。
+- 真实Linux清理微探测尚未绿色：72bf7c EACCES；b7bb9c发现夹具umask导致fake CLI不可执行；显式chmod夹具后3170f9出现未处理stdin EPIPE，因fake CLI不消费prompt便退出。下一步先修夹具读取stdin，再验证同cap-drop/setpriv的清理；同时为生产runProcess的stdin提前关闭补隔离子进程回归，不能让EPIPE崩溃主进程。临时撤去的顶层chown已恢复，最终源码还需重新验证。
+- 文档镜像仍受阻：宿主system/DirectoryServices可解析，host超时；已存在7897代理的进程级TLS请求及docker manifest仍失败。未改系统DNS/Clash/代理或凭据，不再重复拉取，不改为宿主解析真实附件。network技能是绘图工具，不适用；只采用clash-dns-diagnose的只读诊断部分。
+- 恢复入口：/private/tmp/openmausbot-provider-cleanup-smoke.ts为清理微探测；/private/tmp/openmausbot-engine-probe-def5f17.ts及run-engine-probe driver为已消费的一次性引擎探测，后续需保留同一合成事项失败后有界复测，不新建账本清零。所有句柄终态，无运行中测试/模型；未运行当前全仓回归，不自动commit。真实六群场景、文档接入、独立supervisor、VM/宿主重启和Owner最终验收全部保留。
+
 ## 当前检查点：新版本已切换唯一 Docker 试点，等待真实群验收（2026-09-07）
 
 - 本任务25文件已本地提交def5f17，无push，用户AGENTS.md/outputs未动。9754/d9a563完整回归和授权第4次固定候选映射均终态通过，不再运行旧恢复脚本或重置预算；原生Goal active，未完成。

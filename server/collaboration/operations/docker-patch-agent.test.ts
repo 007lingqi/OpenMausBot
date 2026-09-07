@@ -1,5 +1,6 @@
 import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
@@ -58,12 +59,28 @@ const proof: ContainmentProof = {
 };
 
 describe("Docker patch Agent", () => {
+  it.each([0, 7])("rejects a provider that closes stdin early without crashing the host (exit %s)", exitCode => {
+    const directory=mkdtempSync(join(tmpdir(),'docker-provider-early-exit-'));
+    const executable=join(directory,'early-exit.mjs');
+    writeFileSync(executable,`#!/usr/bin/env node\nimport{writeFileSync}from'node:fs';const args=process.argv.slice(2);writeFileSync(args[args.indexOf('--output-last-message')+1],JSON.stringify({status:'completed',summary:'must not be accepted',changes:[]}));process.exit(${exitCode});`,{mode:0o700});
+    chmodSync(executable,0o700);
+    const source=new URL('./docker-patch-agent.ts',import.meta.url).href;
+    const input=request();
+    const script=`import{CodexReadOnlyPatchProvider}from ${JSON.stringify(source)};
+      const provider=new CodexReadOnlyPatchProvider({executable:${JSON.stringify(executable)},exchangeRoot:${JSON.stringify(join(directory,'exchange'))}});
+      let error;try{await provider.propose({...${JSON.stringify(input)},objective:'x'.repeat(2*1024*1024),signal:new AbortController().signal,emit(){},registerContainment(){}});}catch(e){error=e.message;}
+      console.log(JSON.stringify({hostAlive:true,error}));`;
+    const result=spawnSync(process.execPath,['--experimental-strip-types','--input-type=module','--eval',script],{encoding:'utf8',timeout:10000,maxBuffer:65536});
+    expect(result.status,result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({hostAlive:true,error:'codex_patch_provider_input_failed'});
+  });
   it("routes an explicitly configured local provider without inheriting user configuration or credentials", async () => {
     const directory = mkdtempSync(join(tmpdir(), "docker-provider-local-"));
     const executable = join(directory, "capture.mjs"), captured = join(directory, "captured.json");
     writeFileSync(executable, ["#!/usr/bin/env node", "import {writeFileSync} from 'node:fs';",
       "const args=process.argv.slice(2);",
-      `writeFileSync(${JSON.stringify(captured)},JSON.stringify({args,home:process.env.CODEX_HOME,key:process.env.OPENAI_API_KEY}));`,
+      "let prompt='';for await(const chunk of process.stdin)prompt+=chunk;",
+      `writeFileSync(${JSON.stringify(captured)},JSON.stringify({args,prompt,home:process.env.CODEX_HOME,key:process.env.OPENAI_API_KEY}));`,
       "writeFileSync(args[args.indexOf('--output-last-message')+1],JSON.stringify({status:'completed',summary:'done',changes:[]}));"].join("\n"), {mode:0o700});
     const provider = new CodexReadOnlyPatchProvider({ executable, exchangeRoot: join(directory,"exchange"),
       model: "gpt-6-astra", reasoningEffort: "medium", openCodexEndpoint: "http://127.0.0.1:10100/v1/responses" });
@@ -74,6 +91,8 @@ describe("Docker patch Agent", () => {
     expect(value.args).toContain('model_providers.omb_opencodex.base_url="http://127.0.0.1:10100/v1"');
     expect(value.args).toContain('model_providers.omb_opencodex.requires_openai_auth=false');
     expect(value.args).toContain('web_search="disabled"');
+    expect(value.prompt).toContain('Your JSON is an unexecuted patch proposal, not a verified candidate');
+    expect(value.prompt).toContain('The trusted executor applies your proposal and runs the required tests');
     expect(value.args[value.args.indexOf('--sandbox')+1]).toBe('read-only');
     expect(value.home).toContain(join(directory,'exchange'));
     expect(existsSync(value.home)).toBe(false);
