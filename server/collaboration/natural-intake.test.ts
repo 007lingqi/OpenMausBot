@@ -254,7 +254,11 @@ describe("durable source-bound natural requirement intake", () => {
       const outbound = renderDingTalkSessionMessage(card) as { markdown: { text: string }; at: { atUserIds: string[]; isAtAll: boolean } };
       expect(outbound.markdown.text).toContain("@小王，哪些手机系统能复现？");
       expect(outbound.markdown.text).not.toContain("principalId");
-      expect(outbound.at).toEqual({ atUserIds: ["staff-qa", "tester"], isAtAll: false });
+      expect(outbound.at).toEqual({ atUserIds: ["staff-qa"], isAtAll: false });
+      expect(outbound.markdown.text).not.toContain("这项工作必须产生");
+      expect(card).toMatchObject({ questions: expect.arrayContaining([
+        expect.objectContaining({ id: "natural-reproduction", showRecommendedAnswer: false }),
+      ]) });
       h.service.close();
       const restarted = startCollaborationService(h.options);
       try {

@@ -1,5 +1,15 @@
 # Meta 协作实施进度
 
+## 当前批次：真实模型对话评测与通知修复（2026-09-08，本地完整验证通过，未部署）
+
+- 目标按用户最新授权保留纯对话输入，不再等待Bug文档/表格/附件/DWS。原生Goal active，正文暂不可改；准确范围见SPEC与当前对话目标，未完成项仍保留。
+- 首次真实Astra/medium评测8c9dc0确认f1bb1f/session7282退出0，5场景13轮20次真实模型请求；独立临时库、合成消息、静态Planner、模拟Outbox，无真实群发送/执行/Owner。报告位于临时目录omb-conversation-eval-QXqDsl/report.json。旧机器检查passed不是自然性通过：审阅发现补充明确后ready通知被旧澄清版本压掉、具体追问叠加泛化目标、致谢带流程标题。该首次运行中仅补测试配置空acceptanceConditions，生产源码未改，旧报告无源指纹，不回填不存在的证据。
+- 025d37/session18600由2ed56f确认6项预期红灯。planning-status流的通知版本现在统一为snapshot revision，plan revision独立保留；只影响新通知，不改写或重发历史记录。具体自然业务问题优先，保留所有readiness门禁与仓库配置问题；不隐藏恢复指令。普通conversation正文不带流程标题，其余审批/状态卡不变。
+- 新评测要求当前阶段与snapshot对应的实际模拟投递，只有接收/旧通知不能通过；增加源码指纹及运行前后不变检查，报告写checks_passed并明确自然性pending；可选择单场景，连续三模型失败停止。435c8c确认71项通过后类型检查发现目录编码类型错误；补显式utf8后a12b83确认类型/diff通过。
+- abff97确认c2c5fe/session49342终态失败：首个请求等待60秒后natural_model_transport_unavailable，未获得输出；227320固定空请求HTTP400与86d6b4双端口监听表明网关协议正常。没有重启通道或修改超时。3714aa确认df3b9f/session37711后续独立复测终态exit0：2轮4次真实Astra调用，新门槛checks_passed，补充后实际模拟投递当前快照就绪通知。2adc7f确认034055/session76041终态exit0：新需求/进度/致谢3轮4次真实调用全部新检查通过；普通对话无流程标题，不修改需求记录。两次成功运行的源指纹b469b72a…相同，运行前后均未变化。
+- dc4484确认1b9fed/session7498整链exit0：`pnpm test && pnpm typecheck && git diff --check`通过。a8a09d主集314文件通过/1跳过，3684项通过/18跳过；broker7，桌面15+5+2+10通过；无node_modules打包启动/9代理路径、headless与合成通道启动退出通过。首次完整测试权限审核超时未启动，获准重试后通过；不是测试失败。所有模型与测试会话已终态，无在途操作。
+- 本批未部署、未发送真实群消息、未改Owner/凭据/模型常驻配置；只提交本任务文件到当前codex分支，不push。真实模型评测审阅见docs/pilot/conversation-eval-20260908.md：通知和重复泛化追问已改善，但较长进度复述、短回答/多未决上下文/自然Owner决策/失败恢复和真实群平台行为仍待完成。原生Goal保持active，不冒充最终交付或最终人工验收。
+
 ## 当前批次：持久化对话分流接入（2026-09-08，本地完整验证通过，未部署）
 
 - 用户最新授权仍为纯对话目标；不再请求Bug文档、表格或DWS账号。原生Goal active且正文不可改，由SPEC顶部及docs/pilot/pmo-conversation-goal.md记录当前范围，不虚标完成；用户未指定token/20轮/4小时硬预算。

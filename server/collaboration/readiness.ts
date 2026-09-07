@@ -10,6 +10,7 @@ export interface ClarificationQuestion {
   title: string;
   question: string;
   recommendedAnswer: string;
+  showRecommendedAnswer?: boolean;
   blocker: ReadinessBlocker;
   role?: BlockingAmbiguity["role"];
   respondent?: BlockingAmbiguity["respondent"];
@@ -88,8 +89,18 @@ export function evaluateDefinitionReadiness(
     });
   });
 
-  const contextual = candidates.filter(q => q.id.startsWith("natural-") && q.id !== "natural-input-pending");
+  const contextual = candidates.filter(q => q.id.startsWith("natural-") &&
+    !["natural-input-pending", "natural-context-incomplete"].includes(q.id));
+  for (const question of contextual) question.showRecommendedAnswer = false;
   const unreadDocuments = candidates.filter(q => q.id === ONLINE_DOCUMENT_GATE_ID);
-  return { ready: blockers.length === 0, blockers, frontier: [...unreadDocuments, ...contextual,
-    ...candidates.filter(q => !contextual.includes(q) && !unreadDocuments.includes(q))].slice(0, 3) };
+  if (!contextual.length) return { ready: blockers.length === 0, blockers,
+    frontier: [...unreadDocuments, ...candidates.filter(q => !unreadDocuments.includes(q))].slice(0, 3) };
+  const configuration = candidates.filter(q => q.blocker === "repository");
+  // Ask the concrete business gap first, without weakening the underlying goal
+  // or acceptance gates. Generic questions return once that gap is resolved.
+  const remaining = candidates.filter(q => !contextual.includes(q) && !unreadDocuments.includes(q) &&
+    !configuration.includes(q) && !(contextual.length && ["goal", "acceptance"].includes(q.blocker)));
+  return { ready: blockers.length === 0, blockers, frontier: [...unreadDocuments,
+    ...contextual.slice(0, Math.max(0, 3 - unreadDocuments.length - configuration.length)),
+    ...configuration, ...remaining].slice(0, 3) };
 }

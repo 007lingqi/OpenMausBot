@@ -36,6 +36,7 @@ export interface ClarificationCard {
     title: string;
     question: string;
     recommendedAnswer: string;
+    showRecommendedAnswer?: boolean;
     requestedResponder?: { targetId?: string; displayName?: string };
   }>;
   requestedResponders?: Array<{ targetId?: string; displayName?: string }>;
@@ -252,6 +253,7 @@ export function renderPlanStatusCard(input: {
       headline: "计划生成失败",
       workItemId: input.workItemId,
       planRevision: input.planRevision,
+      snapshotRevision: input.snapshotRevision,
       status: input.status,
       failures: input.failures ?? ["修改方案还没整理完成，具体原因还需核查；目前没有开始修改。"],
     };
@@ -304,6 +306,7 @@ export function renderPlanStatusCard(input: {
     headline: "计划已发布",
     workItemId: input.workItemId,
     planRevision: input.planRevision,
+    snapshotRevision: input.snapshotRevision,
     status: input.status,
     summary: input.summary,
     sequence: ["analyze", "modify", "validate", "report"],

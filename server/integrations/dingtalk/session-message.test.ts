@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { renderPlanStatusCard, renderPrimaryStatusCard } from "../../collaboration/message-renderer.ts";
+import { renderPlanStatusCard, renderPrimaryStatusCard, renderConversationReplyCard } from "../../collaboration/message-renderer.ts";
 import { renderDingTalkSessionMessage } from "./session-message.ts";
 
 function markdown(payload: unknown): { title: string; text: string } {
@@ -17,6 +17,16 @@ function expectBusinessOnly(value: string) {
 }
 
 describe("natural DingTalk session replies", () => {
+  it("answers ordinary conversation directly without a workflow heading", () => {
+    expect(markdown(renderConversationReplyCard("不客气，有需要继续说。")).text).toBe("不客气，有需要继续说。");
+  });
+  it("omits explicitly hidden explanatory boilerplate but retains the actual question and person", () => {
+    const reply = markdown({ type: "clarification_card", questions: [{ id: "natural-login", question: "希望显示什么提示？",
+      requestedResponder: { displayName: "产品同事" }, recommendedAnswer: "为了形成可观察业务结果，需要明确提示。", showRecommendedAnswer: false }] });
+    expect(reply.text).toContain("@产品同事，希望显示什么提示？");
+    expect(reply.text).not.toContain("建议回答");
+    expect(reply.text).not.toContain("为了形成可观察");
+  });
   it("distinguishes receipt of a new request from an associated contribution without claiming execution", () => {
     const created = markdown(renderPrimaryStatusCard({ workItemId: "WI-INTERNAL", status: "collecting", version: 1, association: "created" }));
     const associated = markdown(renderPrimaryStatusCard({ workItemId: "WI-INTERNAL", status: "collecting", version: 2, association: "associated" }));

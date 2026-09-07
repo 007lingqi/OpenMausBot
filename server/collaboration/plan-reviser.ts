@@ -269,6 +269,7 @@ export class PlanningCoordinator {
           const { id, title, recommendedAnswer } = question;
           const recipient = clarificationRecipient(this.database, workItemId, question);
           return { id, title, question: question.question, recommendedAnswer,
+            ...(question.showRecommendedAnswer === false ? { showRecommendedAnswer: false } : {}),
             ...(recipient ? { requestedResponder: recipient } : {}) };
         });
         const responders = [...new Map(questions.flatMap(question => question.requestedResponder
@@ -596,13 +597,14 @@ export class PlanningCoordinator {
         workItemId,
         planRevision: revision,
         status: "planning_failed",
+        snapshotRevision: snapshot.revision,
         failures,
       });
       enqueueInboundCard(this.database, {
         sourceEventId: `plan:${workItemId}:revision:${revision}`,
         aggregateType: "plan",
         aggregateId: workItemId,
-        aggregateVersion: revision,
+        aggregateVersion: snapshot.revision,
         card,
         supersessionKey: `work-item:${workItemId}:planning-status`,
         now,
@@ -750,13 +752,14 @@ export class PlanningCoordinator {
         workItemId,
         planRevision: revision,
         status: "ready_for_execution",
+        snapshotRevision: snapshot.revision,
         summary: plan.summary,
       });
       enqueueInboundCard(this.database, {
         sourceEventId: `plan:${workItemId}:revision:${revision}`,
         aggregateType: "plan",
         aggregateId: workItemId,
-        aggregateVersion: revision,
+        aggregateVersion: snapshot.revision,
         card,
         supersessionKey: `work-item:${workItemId}:planning-status`,
         now,

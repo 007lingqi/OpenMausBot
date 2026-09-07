@@ -157,7 +157,7 @@ export function renderDingTalkSessionMessage(payload: unknown): Record<string, u
         const name = typeof recipient?.displayName === "string" && recipient.displayName.trim()
           ? `@${text(recipient.displayName, "相关同事", 128)}，` : "";
         lines.push(`- ${name}${text(item?.question, "需要补充信息")}`);
-        if (typeof item?.recommendedAnswer === "string" && item.recommendedAnswer.trim()) {
+        if (item?.showRecommendedAnswer !== false && typeof item?.recommendedAnswer === "string" && item.recommendedAnswer.trim()) {
           lines.push(`  - 建议回答：${text(item.recommendedAnswer, "请给出明确答案", 500)}`);
         }
       }
@@ -242,7 +242,8 @@ export function renderDingTalkSessionMessage(payload: unknown): Record<string, u
     : [];
   return {
     msgtype: "markdown",
-    markdown: { title: headline, text: lines.join("\n") },
+    markdown: { title: headline, text: type === "command_status_card" && card?.command === "conversation" && card?.presentation === "business"
+      ? text(card.summary, "任务状态已更新。", 1_000) : lines.join("\n") },
     ...(atUserIds.length ? { at: { atUserIds, isAtAll: false } } : {}),
   };
 }

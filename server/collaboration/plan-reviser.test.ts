@@ -10,6 +10,8 @@ import type { DingTalkInboundMessage } from "../integrations/dingtalk/types.ts";
 import type { PlannerProposal } from "./planner.ts";
 import { policy, validProposal } from "./planner.test-fixtures.ts";
 import { startCollaborationService } from "./service.ts";
+import { OutboxDispatcher } from "./outbox-dispatcher.ts";
+import { InstanceLeaseCoordinator } from "./leases.ts";
 
 const scratch: string[] = [];
 
@@ -87,6 +89,25 @@ const definition = (repository: string) => ({
 });
 
 describe("definition readiness and immutable plan revisions", () => {
+  it.each(["ready", "failed"])("delivers the %s plan result after previously delivered higher-numbered clarification snapshots", async outcome => {
+    const h = createHarness(outcome === "ready" ? validProposal : () => ({}));
+    const db = database(h.directory);
+    const lease = new InstanceLeaseCoordinator(db, "delivery-test").acquire(1000, 60000)!;
+    const sent: Array<{ status?: string; snapshotRevision?: number }> = [];
+    const dispatcher = new OutboxDispatcher(db, { async deliver(message) { sent.push(message.payload as { status?: string; snapshotRevision?: number }); return { outcome: "sent" }; } },
+      { maxAttempts: 3, claimTtlMs: 1000, baseBackoffMs: 100, maxBackoffMs: 1000 });
+    try {
+      h.service.reviseWorkItemDefinition(h.workItemId, { goal: "登录提示友好一点" }, 2000);
+      h.service.reviseWorkItemDefinition(h.workItemId, { goal: "只改失败提示" }, 3000);
+      for (let i=0;i<10;i++) if (!await dispatcher.dispatchOne(lease, 3001)) break;
+      expect(sent.some(card => card.snapshotRevision === 2)).toBe(true);
+      h.service.reviseWorkItemDefinition(h.workItemId, definition(h.repository), 4000);
+      for (let i=0;i<10;i++) if (!await dispatcher.dispatchOne(lease, 4001)) break;
+      expect(sent.some(card => card.status === (outcome === "ready" ? "ready_for_execution" : "planning_failed"))).toBe(true);
+      expect(sent.find(card => card.status === (outcome === "ready" ? "ready_for_execution" : "planning_failed"))).toMatchObject({ snapshotRevision: 3 });
+      expect(db.prepare("SELECT aggregate_version FROM collaboration_outbox WHERE source_event_id=?").get(`plan:${h.workItemId}:revision:1`)).toEqual({ aggregate_version: 3 });
+    } finally { h.service.close(); db.close(); }
+  });
   it("keeps production defaults behind explicit goal confirmation and task-level acceptance", () => {
     const directory = temporaryDirectory();
     const repository = join(directory, "fixture-repo");
