@@ -1,5 +1,7 @@
 # 内部研发助手 Meta 协作规范
 
+已有SSH连接守护（2026-09-07）：独立通道增加bridge模式，先占用显式非零宿主回环端口，才允许管理由端口派生的/tmp/omb-model-channel-<port>/model.sock；退出先撤销/清理转发再释放端口，不与另一同端口桥接进程争抢。仅支持已授权colima-openmausbot-pilot，使用当前用户拥有且不可被组/其他人写的ssh.config；只复用已有SSH master，所有调用禁用新连接回退，单次5秒/4KiB有界。master PID与VM启动代次共同标识连接代次；目录/socket需当前SSH UID及0700/0600、无链接/别名，清理拒绝普通文件。使用/proc/net/unix确认真正监听，不信任残留socket文件。同代次连续三次恢复失败后停止修改，仅继续观察master，代次变化后可重新恢复；不重放模型请求。该计数是进程内计数，不声称跨进程失败预算持久化。SIGTERM等待在途操作后清理，清理不确定显式失败。真实同master转发取消/恢复和前后模型请求已验证；OS自启、真实master/VM重启、Docker常驻接线和群服务切换仍未完成。
+
 通道进程与容器中继（2026-09-07）：新增独立opencodex-model-channel入口，显式选择host/relay、监听端口和对应上游/私有socket；不从环境变量推断身份或凭据。host仅宿主回环；relay仅本容器回环，经Unix socket连接，不作TCP回退。启动及每次请求复查socket为当前UID所有的0600 socket，父目录为同UID的0700真实目录，无路径别名/符号链接；由受信任专用身份拥有和管理路径，不授予不可信候选进程该身份或挂载。断开/超时取消流，socket消失或权限变化明确失败；上游重建后新请求重新连接，不重放旧请求。SIGTERM/SIGINT关闭监听并取消活跃请求。启动JSON仅表示监听就绪，不证明模型、SSH通道或业务完成。两模式已加入独立发布包和无node_modules打包烟测，真实临时容器回环relay已验证；尚未加入Docker运行镜像/Compose或常驻SSH守护，不代表原服务切换或主机重启恢复完成。
 
 本机模型私有通道（2026-09-07，优先于下方“优先迁移宿主控制面”）：保留Colima内原账本、Owner和服务路径，通过宿主回环网关与既有SSH master的私有Unix socket提供模型请求能力。网关仅POST /v1/responses，固定gpt-6-astra/medium、stream=true、store=false，无会话续接；拒绝Origin/认证/Cookie头及服务端内建工具，仅允许客户端function/custom/单层namespace定义。只向固定本机上游发送新建Content-Type，不透传调用者请求头、不执行工具、不记录正文。输入1MiB、输出8MiB、并发4、默认60秒可取消；超限或不完整输出不能当作完整成功。开发CLI显式web_search=disabled，避免其默认cached搜索能力。网关不是身份认证服务器，私有目录/socket访问控制与指定容器挂载仍必须由装配层保证，不得开放到网络。宿主自然解释、CLI建议和无网络临时容器私有通道分别真实验证；常驻进程、容器回环relay、旧服务接线及重启恢复仍未实现，不能宣称群服务已切换。

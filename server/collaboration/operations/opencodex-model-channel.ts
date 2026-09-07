@@ -3,23 +3,31 @@ import {pathToFileURL} from 'node:url';
 import {realpathSync} from 'node:fs';
 import {startLocalOpenCodexGateway} from './opencodex-local-gateway.ts';
 import {startLocalOpenCodexRelay} from './opencodex-local-relay.ts';
+import {startLocalOpenCodexBridge} from './opencodex-local-bridge.ts';
 
-type Configuration={mode:'host';port:number;endpoint:string}|{mode:'relay';port:number;socketPath:string};
+type Configuration={mode:'host';port:number;endpoint:string}|{mode:'relay';port:number;socketPath:string}|
+  {mode:'bridge';port:number;endpoint:string;sshConfig:string};
 export function parseModelChannelArgs(args:readonly string[]):Configuration {
   const invalid=():never=>{throw new Error('model_channel_configuration_invalid');};
   const values=new Map<string,string>();
   for(let i=0;i<args.length;i+=2){
     const key=args[i],value=args[i+1];
-    if(!['--mode','--port','--endpoint','--socket'].includes(key)||values.has(key)||!value)invalid();
+    if(!['--mode','--port','--endpoint','--socket','--ssh-config'].includes(key)||values.has(key)||!value)invalid();
     values.set(key,value);
   }
   const portText=values.get('--port')??'',port=Number(portText),mode=values.get('--mode');
-  if(!/^\d+$/.test(portText)||!Number.isSafeInteger(port)||port>65535||values.size!==3)invalid();
-  if(mode==='host'){
+  if(!/^\d+$/.test(portText)||!Number.isSafeInteger(port)||port>65535||values.size!==(mode==='bridge'?4:3))invalid();
+  if(mode==='host'||mode==='bridge'){
     const endpoint=values.get('--endpoint');if(!endpoint)invalid();
     let url:URL;try{url=new URL(endpoint!);}catch{return invalid();}
     if(url.protocol!=='http:'||!['127.0.0.1','[::1]'].includes(url.hostname)||url.pathname!=='/v1/responses'||
       url.username||url.password||url.search||url.hash)invalid();
+    if(mode==='bridge'){
+      const sshConfig=values.get('--ssh-config');
+      if(port===0||!sshConfig||!sshConfig.startsWith('/')||posix.normalize(sshConfig)!==sshConfig||
+        !sshConfig.endsWith('/colima-openmausbot-pilot/ssh.config'))invalid();
+      return {mode,port,endpoint:endpoint!,sshConfig:sshConfig!};
+    }
     return {mode,port,endpoint:endpoint!};
   }
   const socketPath=values.get('--socket');
@@ -34,7 +42,8 @@ export async function runModelChannel(args:readonly string[]):Promise<void> {
   process.once('SIGTERM',terminate);process.once('SIGINT',terminate);
   let channel:Awaited<ReturnType<typeof startLocalOpenCodexGateway>>|undefined;
   try {
-    channel=config.mode==='host'?await startLocalOpenCodexGateway(config):await startLocalOpenCodexRelay(config);
+    channel=config.mode==='host'?await startLocalOpenCodexGateway(config):config.mode==='relay'?await startLocalOpenCodexRelay(config):
+      await startLocalOpenCodexBridge({...config,onState:state=>process.stdout.write(JSON.stringify({event:'model_channel_state',...state})+'\n')});
     if(!stop.signal.aborted){
       // Readiness means the local listener exists, not model/business success.
       process.stdout.write(JSON.stringify({event:'model_channel_ready',mode:config.mode,url:channel.url})+'\n');
@@ -48,6 +57,6 @@ export async function runModelChannel(args:readonly string[]):Promise<void> {
 if(process.argv[1]&&import.meta.url===pathToFileURL(realpathSync(process.argv[1])).href){
   runModelChannel(process.argv.slice(2)).catch(()=>{
     // Never print upstream messages or caller configuration on startup errors.
-    process.stderr.write('model_channel_start_failed\n');process.exitCode=1;
+    process.stderr.write('model_channel_failed\n');process.exitCode=1;
   });
 }

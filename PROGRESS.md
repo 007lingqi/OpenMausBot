@@ -1,5 +1,13 @@
 # Meta 协作实施进度
 
+## 最新接续：已有SSH转发守护恢复与完整回归均通过（2026-09-07）
+
+- 上轮progress；本轮先取得63105/28d0d8完整终态并提交上一批24f6d01，未重启测试。随后新增SSH适配器、串行恢复状态机、独占本机端口的bridge生命周期和CLI模式。本批8个代码/测试文件及5份说明，用户AGENTS.md/outputs不动。
+- 48bfef新模块不存在是初始TDD红灯；45997/257911的15项/typecheck通过。066333真实shell负例复现set-e/&&导致普通文件清理与链接父目录检查失效，显式guard修复后通过；8cdf3f复现bridge未实现/CLI不支持，8743/96891a的61项/typecheck/原打包smoke通过。0885df复现缺少内核活监听检查，已补/proc/net/unix路径限定校验。
+- 69856/13f69e exit0：62项/typecheck/diff及/tmp/openmausbot-managed-channel-probe.mjs真实通过。仅本次新建私有转发：固定缓存镜像的两个无网络非root只读临时容器经生产relay/bridge分别完成Astra/medium合成请求，中间取消本次forward后守护自动重新接通（connections=2），内核监听核对与临时资源清理通过。未重启Colima或原群服务，不能当真实master/主机恢复验收。
+- 1f8745新增负例复现超时/其他失败退出错误地按诊断文本当作取消成功；已改为仅完整退出255可匹配精确良性诊断，Node超时/被杀/输出超限等非正常结果编码-1。90291/1391b6 exit0：64项定向/typecheck、真实恢复复测、完整pnpm test/typecheck/独立编译至/tmp/openmausbot-managed-bridge-typecheck/diff全链通过。主集3099通过/18跳过（3117登记），含broker/桌面、普通与通道/headless打包smoke。运行期间源码/测试固定，所有句柄终态，不再轮询。本批13文件保存本地提交，不push；实际提交以Git为准。
+- ff9700只读核对ssh.config为当前用户600、原试点healthy、既有master运行。上一只读核对345审核超时未启动，唯一重试已成功；不重试旧会话。下一步：收束当前完整验证并提交，再补Docker镜像/启动接线及OS服务生命周期；真实文档/六场景、独立supervisor/VM或主机恢复、Owner本人签字仍待验收。Goal active。
+
 ## 最新接续：独立通道进程/生产容器relay完整验证通过（2026-09-07）
 
 - 上轮progress（01f29aa），本轮progress。新增opencodex-local-relay与opencodex-model-channel及测试，独立bundle入口和默认headless打包烟测。保持同UID私有socket、仅回环、无TCP回退、不自动重放；SIGTERM取消并收束。未改Docker镜像/Compose或原群服务。

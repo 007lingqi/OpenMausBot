@@ -6,6 +6,11 @@ it('requires an explicit role and listener port',()=>{
  expect(parseModelChannelArgs(['--mode','relay','--port','0','--socket','/run/channel/model.sock']))
   .toEqual({mode:'relay',port:0,socketPath:'/run/channel/model.sock'});
 });
+it('supports an explicit existing-pilot bridge but never an ephemeral bridge port',()=>{
+ const base=['--mode','bridge','--endpoint','http://127.0.0.1:10100/v1/responses','--ssh-config','/private/colima-openmausbot-pilot/ssh.config'];
+ expect(parseModelChannelArgs([...base,'--port','12345'])).toEqual({mode:'bridge',port:12345,endpoint:'http://127.0.0.1:10100/v1/responses',sshConfig:'/private/colima-openmausbot-pilot/ssh.config'});
+ expect(()=>parseModelChannelArgs([...base,'--port','0'])).toThrow('model_channel_configuration_invalid');
+});
 it.each([
  [],['--mode','host'],['--mode','other','--port','1'],
  ['--mode','host','--port','1','--port','2','--endpoint','http://127.0.0.1/v1/responses'],

@@ -1,5 +1,21 @@
 # 非生产模型配置（显式启用）
 
+## 已有Colima SSH master的守护桥接（代码已接线，尚未部署）
+
+通道入口新增`bridge`模式，它包含宿主网关和SSH转发守护，替代手工维护临时forward。只支持此次授权的`colima-openmausbot-pilot`，例如：
+
+```sh
+node dist-server/collaboration/operations/opencodex-model-channel.js --mode bridge --port 10101 --endpoint http://127.0.0.1:10100/v1/responses --ssh-config /Users/mac/.colima/_lima/colima-openmausbot-pilot/ssh.config
+```
+
+上例是当前宿主路径示例，不是已安装服务。端口必须非零并独占；对应VM socket固定为`/tmp/omb-model-channel-10101/model.sock`。先绑定宿主端口再变更转发，退出先清理转发再释放端口。目录保留以支持同路径bind mount上的socket重建，不复制账本或Owner。
+
+仅复用已存在SSH master；缺失时继续观察，不建立新登录连接、不读私钥或修改SSH认证。SSH每次调用有5秒/4KiB上限，禁止回退连接；master PID加VM boot ID作为代次。目录/socket由当前SSH UID拥有且为0700/0600，拒绝链接和普通文件；Linux内核监听表确认转发仍在监听，残留socket文件不能冒充健康。取消只认可正常成功，或完整退出255且精确返回“未转发”；超时/其他失败保持清理不确定。
+
+守护每10秒串行检查，同代次连续三次恢复失败后不再修改，只观察代次变化；不重放模型请求。状态JSON区分waiting/connected/retrying/failed，ready仍只表示本机监听。收到SIGTERM/SIGINT等待在途有界操作后清理；无法确认清理时退出失败，不伪报成功。此三次计数只在当前进程内，OS自启/跨进程预算和真实VM重启尚需实现验证，不应通过无条件重启循环重置失败预算。
+
+真实临时通道已验证同一master下取消转发后自动恢复，前后两次隔离容器模型请求均通过并清理。本节不表示launchd/systemd、Dockerfile/Compose或原群服务已切换；后续仍需完成受控常驻装配和真实群六场景。
+
 ## 独立通道进程（已打包，尚未部署）
 
 此节更新下方“尚无入口/relay”的历史状态。`pnpm build:server`现在输出自包含`dist-server/collaboration/operations/opencodex-model-channel.js`。可由受控进程管理器显式启动两种角色：

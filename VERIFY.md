@@ -1,5 +1,11 @@
 # Meta 协作验证记录
 
+## 2026-09-07 已有SSH master桥接守护
+
+- 48bfef为新模块缺失TDD；45997/257911 exit0为15项与typecheck。066333两项真实本地shell负例发现set-e不能保护&&列表早期失败；改显式guard后同一测试通过，未变更用户路径。8cdf3f为bridge/CLI缺失红灯；8743/96891a exit0（61项/typecheck/原两模式和headless打包smoke）。0885df为缺少/proc/net/unix监听校验红灯，随后实现。
+- 69856/13f69e exit0：62项/typecheck/diff和真实/tmp/openmausbot-managed-channel-probe.mjs通过。生产SSH命令经当前既有master运行，profile固定；新私有目录事前确认不存在，固定回环端口绑定后创建通道。两个指定缓存镜像的临时network=none/read-only/UID501容器分别得到Astra/medium合成JSON，完成元数据与错误模型拒绝均核验；中间取消此次forward，守护重新connect后再确认活监听，connections=2。最终撤销forward/删除本次socket、临时容器退出、事前确认新建的空目录rmdir和网关退出全部通过。不等于真实SSH master消失/VM重启或群业务交付。
+- 1f8745为新增超时/其他退出取消判定的两项红灯；已收紧完整SSH退出255与精确良性诊断组合，非正常子进程结果为-1。90291/1391b6 exit0：最终64项定向/typecheck、相同真实恢复复测、完整pnpm test/typecheck/独立编译至/tmp/openmausbot-managed-bridge-typecheck/diff全链通过。主集283文件通过/1文件跳过、3099项通过/18项跳过（3117登记），broker 7项及桌面/打包链均通过。独立通道bundle约20.1KiB；打包smoke执行host/relay，不把它说成bridge模式的OS服务重启验证。源码/测试在运行期间固定；所有本批句柄终态，13文件本地提交，不push。原群服务、Docker常驻接线、真实master/VM重启与Owner验收仍未完成。
+
 ## 2026-09-07 独立模型通道进程和容器回环relay
 
 - 3ee706 exit1：TDD两个新模块尚不存在，未运行行为测试。首次宿主测试cell332权限审核超时、未启动；唯一重试82678/c32b81为38通过1失败，来自新增it.each数组展开夹具，修复参数传递后验证。14473/22eefd typecheck exit0。
