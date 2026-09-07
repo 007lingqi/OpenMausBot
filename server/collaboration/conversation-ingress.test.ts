@@ -264,8 +264,8 @@ describe("durable conversational ingress before Work Item mutation", () => {
       h.service.ingestDingTalkMessage(message("new", "修正登录提示。")); await h.service.processNaturalIntake(); h.service.close();
       const before = taskState(h.db), events = h.db.prepare("SELECT * FROM collaboration_external_events").all();
       const migrations = h.db.prepare("SELECT * FROM collaboration_schema_migrations WHERE version<=35 ORDER BY version").all();
-      h.db.exec("DROP TABLE collaboration_conversation_intents; DELETE FROM collaboration_schema_migrations WHERE version=36; PRAGMA user_version=35");
-      expect(applyCollaborationMigrations(h.db)).toEqual({ schemaVersion: 36, appliedMigrations: 36 });
+      h.db.exec("DROP TABLE collaboration_approval_presentations; DROP TABLE collaboration_conversation_intents; DELETE FROM collaboration_schema_migrations WHERE version>=36; PRAGMA user_version=35");
+      expect(applyCollaborationMigrations(h.db)).toEqual({ schemaVersion: 37, appliedMigrations: 37 });
       expect(taskState(h.db)).toEqual(before);
       expect(h.db.prepare("SELECT * FROM collaboration_external_events").all()).toEqual(events);
       expect(h.db.prepare("SELECT * FROM collaboration_schema_migrations WHERE version<=35 ORDER BY version").all()).toEqual(migrations);

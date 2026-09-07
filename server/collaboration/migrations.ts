@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { OPENMAUSBOT_SOURCE_BASELINE } from "./config.ts";
 
-export const COLLABORATION_SCHEMA_VERSION = 36;
+export const COLLABORATION_SCHEMA_VERSION = 37;
 
 interface Migration {
   version: number;
@@ -1587,6 +1587,36 @@ const migrations: readonly Migration[] = [
           OR NEW.projection_attempts<OLD.projection_attempts
           OR (OLD.proposal_json IS NOT NULL AND NEW.proposal_json IS NOT OLD.proposal_json)
         BEGIN SELECT RAISE(ABORT,'conversation intent source, result and budget are immutable'); END;
+    `); },
+  },
+  {
+    version: 37, name: "fixed-approval-presentation", checksum: "v37:owner-candidate-and-actual-delivery-bound-presentation",
+    apply(database) { database.exec(`
+      CREATE TABLE collaboration_approval_presentations (
+        outbox_id TEXT PRIMARY KEY REFERENCES collaboration_outbox(id),
+        work_item_id TEXT NOT NULL REFERENCES collaboration_work_items(id), work_item_version INTEGER NOT NULL CHECK(work_item_version>0),
+        conversation_id TEXT NOT NULL REFERENCES collaboration_conversations(id), plan_revision INTEGER NOT NULL CHECK(plan_revision>0),
+        snapshot_revision INTEGER NOT NULL CHECK(snapshot_revision>0), run_id TEXT NOT NULL REFERENCES collaboration_runs(id),
+        candidate_sha TEXT NOT NULL, spec_hash TEXT NOT NULL,
+        verifier_review_id TEXT NOT NULL REFERENCES collaboration_candidate_reviews(id), meta_review_id TEXT NOT NULL REFERENCES collaboration_candidate_reviews(id),
+        owner_binding_id TEXT NOT NULL REFERENCES collaboration_owner_bindings(id), owner_generation INTEGER NOT NULL CHECK(owner_generation>0),
+        payload_hash TEXT NOT NULL CHECK(length(payload_hash)=64), created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL CHECK(expires_at=created_at+900000), sent_at INTEGER, source_event_id TEXT, delivery_sequence INTEGER,
+        CHECK((sent_at IS NULL AND source_event_id IS NULL AND delivery_sequence IS NULL) OR
+          (sent_at IS NOT NULL AND source_event_id IS NOT NULL AND delivery_sequence IS NOT NULL AND
+           sent_at>=created_at AND sent_at<expires_at AND length(source_event_id) BETWEEN 1 AND 512 AND delivery_sequence>0))
+      ) STRICT;
+      CREATE TRIGGER approval_presentation_binding BEFORE UPDATE ON collaboration_approval_presentations
+        WHEN NEW.outbox_id<>OLD.outbox_id OR NEW.work_item_id<>OLD.work_item_id OR NEW.work_item_version<>OLD.work_item_version
+          OR NEW.conversation_id<>OLD.conversation_id OR NEW.plan_revision<>OLD.plan_revision OR NEW.snapshot_revision<>OLD.snapshot_revision
+          OR NEW.run_id<>OLD.run_id OR NEW.candidate_sha<>OLD.candidate_sha OR NEW.spec_hash<>OLD.spec_hash
+          OR NEW.verifier_review_id<>OLD.verifier_review_id OR NEW.meta_review_id<>OLD.meta_review_id
+          OR NEW.owner_binding_id<>OLD.owner_binding_id OR NEW.owner_generation<>OLD.owner_generation
+          OR NEW.payload_hash<>OLD.payload_hash OR NEW.created_at<>OLD.created_at OR NEW.expires_at<>OLD.expires_at
+          OR (OLD.sent_at IS NOT NULL AND (NEW.sent_at IS NOT OLD.sent_at OR NEW.source_event_id IS NOT OLD.source_event_id OR NEW.delivery_sequence IS NOT OLD.delivery_sequence))
+        BEGIN SELECT RAISE(ABORT,'approval presentation binding is immutable'); END;
+      CREATE TRIGGER approval_presentation_no_delete BEFORE DELETE ON collaboration_approval_presentations
+        BEGIN SELECT RAISE(ABORT,'approval presentation history is immutable'); END;
     `); },
   },
 ];

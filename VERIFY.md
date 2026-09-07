@@ -1,5 +1,12 @@
 # Meta 协作验证记录
 
+## 2026-09-08 固定审批展示依据（完整验证通过，未部署）
+
+- 2827eb：先行candidate-approval测试缺approval-presentation模块而退出1。实现后628d19的15通过/1失败及70c0c1的99通过/2失败分别指出夹具试图修改不可变快照/删除不可变复核、旧schema数量断言未更新；保留真实触发器，改用追加新版本/失败复核，并更新迁移断言。未删除测试或放松约束。
+- da7d64：4文件104项及typecheck通过。698458的新增单项红灯准确复现“外层查无回执→sender内层恢复历史发送”仍错误生成新展示证明；加入端到端recovered来源标记后修复。
+- a602c7：10文件186项/typecheck/diff通过，包含候选、消息接收、Owner控制、Ledger迁移、Outbox、真实适配器合成投递、业务错误与渲染链。a8d5b8：补齐原群Owner命令来源、缺来源不借最新群及替代旧通知原子回滚后，candidate-approval33项/typecheck/diff通过。
+- b815c8确认f6b26c/session65791获准宿主完整`pnpm test && pnpm typecheck && git diff --check`退出0；8e96f9显示主集/broker/桌面之后已进入打包，脱离node_modules启动及9代理路径通过，b815c8确认headless与合成通道启动退出、typecheck/diff终态。仅合成夹具/本机测试，未用真实凭据发送群消息、未调用Astra、未操作Docker或迁移真实账本。
+
 ## 2026-09-08 对话控制防误触（完整验证通过，未部署）
 
 - 先行红灯：0a0491中text-actions共24项，16失败（讨论/否定/引用后缀、批准条件被忽略、附件/未寻址输入、虚构退回原因及新增礼貌标点）；181d94中inbound/sensitive-text的2项失败证明普通对话的旧token明文保存。均为本批测试先行，不是环境故障。

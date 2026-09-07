@@ -10,6 +10,7 @@ import { isCurrentDeliveryReviewNotice } from "./delivery-review.ts";
 import { isCurrentMaterialDelivery } from "./plan-material-readiness.ts";
 import { reconcileOutboxOne } from "./outbox-reconciler.ts";
 import { refreshConversationStatusReply } from "./conversation-context.ts";
+import { confirmApprovalPresentation } from "./approval-presentation.ts";
 
 interface DispatchRow {
   id: string;
@@ -230,6 +231,9 @@ export class OutboxDispatcher {
       if (state === "sent") {
         this.database.prepare("UPDATE collaboration_outbox SET sent_at=?,delivery_sequence=(SELECT COALESCE(MAX(delivery_sequence),0)+1 FROM collaboration_outbox) WHERE id=?")
           .run(deliveredAt, row.id);
+        if (result.outcome === "sent" && result.approvalDelivery) {
+          confirmApprovalPresentation(this.database, row.id, result.approvalDelivery, deliveredAt);
+        }
       }
       if (state === "sent" && row.kind === "association_choice_card" && row.aggregate_type === "association") {
         // Save exactly the payload handed to transport, never a subsequently reordered candidate list.

@@ -39,6 +39,8 @@ export interface DingTalkStreamSdkPort {
 export interface DingTalkHttpResult {
   ok: boolean;
   status: number;
+  /** Existing accepted send recovered by query, not a fresh transmission. */
+  recovered?: true;
   code?: string;
   deliveryState?: "not_sent" | "unknown";
 }
@@ -56,7 +58,7 @@ export interface DingTalkActiveSendPort {
 }
 
 export type DingTalkDeliveryResult =
-  | { kind: "sent"; channel: "session" | "proactive" }
+  | { kind: "sent"; channel: "session" | "proactive"; recovered?: true }
   | { kind: "retryable"; code: string }
   | { kind: "unknown"; code: string }
   | { kind: "permanent"; code: string };

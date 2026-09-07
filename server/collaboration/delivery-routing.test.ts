@@ -19,6 +19,8 @@ import { CollaborationHeadlessRuntime } from "./operations/runtime.ts";
 import { parseDingTalkOwnerTextCommand, parseDingTalkOwnerTextAction } from "../integrations/dingtalk/text-actions.ts";
 import { ModelNaturalIntakeInterpreter } from "./natural-intake.ts";
 import { validProposal, policy } from "./planner.test-fixtures.ts";
+import { approvalPayloadHash } from "./approval-presentation.ts";
+import { FetchDingTalkInteractiveCardSender } from "../integrations/dingtalk/interactive-card-sender.ts";
 
 const roots: string[] = [];
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -52,6 +54,49 @@ function fixture(environment: NodeJS.ProcessEnv) {
 }
 
 describe("production delivery group routing", () => {
+  it("does not attest a cached receipt discovered between the outer query and sender query", async () => {
+    const f = fixture({ OMB_DINGTALK_ALLOWED_CONVERSATION_IDS: "group-a", OMB_DINGTALK_PROACTIVE_OPEN_CONVERSATION_ID: "open-a" });
+    try {
+      vi.spyOn(FetchDingTalkInteractiveCardSender.prototype, "queryAccepted").mockResolvedValueOnce(null)
+        .mockResolvedValue({ ok: true, status: 200, recovered: true });
+      expect(await f.delivery.deliver({ ...f.message("event-group-a"), aggregateType: "plan", kind: "plan_status_card",
+        payload: { type: "plan_status_card", status: "candidate_ready", headline: "修改完成，需要负责人确认",
+          workItemId: f.message("event-group-a").aggregateId, workItemVersion: 1, candidateSha: "2".repeat(40), approvalRequired: true } }))
+        .toEqual({ outcome: "sent" });
+      expect(f.destinations).toEqual([]);
+    } finally { f.db.close(); }
+  });
+  it.each(["session", "proactive"])("attests only a confirmed Markdown approval send via %s, never its later receipt query", async channel => {
+    const env = { OMB_DINGTALK_ALLOWED_CONVERSATION_IDS: "group-a,group-b", OMB_DINGTALK_PROACTIVE_CONVERSATION_MAP: '{"group-a":"open-a","group-b":"open-b"}' };
+    const f = fixture(env);
+    try {
+      if (channel === "session") f.sessions.capture({ sourceEventId: "event-group-a", webhookUrl: "https://oapi.dingtalk.com/robot/send?access_token=synthetic", expiresAt: Date.now() + 60000 });
+      const message: Parameters<OutboxDeliveryPort["deliver"]>[0] = { ...f.message("event-group-a"), aggregateType: "plan", kind: "plan_status_card",
+        payload: { type: "plan_status_card", status: "candidate_ready", headline: "修改完成，需要负责人确认",
+          workItemId: f.message("event-group-a").aggregateId, workItemVersion: 1, candidateSha: "2".repeat(40), approvalRequired: true,
+          summary: "登录提示已调整，涉及权限逻辑，需要负责人确认。" } };
+      expect(await f.delivery.deliver(message)).toEqual({ outcome: "sent", approvalDelivery: {
+        sourceEventId: "event-group-a", payloadHash: approvalPayloadHash(message.payload),
+      } });
+      if (channel === "proactive") {
+        expect(await f.delivery.reconcile!(message)).toEqual({ outcome: "sent" });
+        expect(await f.delivery.deliver(message)).toEqual({ outcome: "sent" });
+        expect(f.destinations).toEqual(["open-a"]);
+      }
+    } finally { f.db.close(); }
+  });
+  it("does not attest HTTP success when DingTalk rejects the approval message", async () => {
+    const f = fixture({});
+    try {
+      f.sessions.capture({ sourceEventId: "event-group-a", webhookUrl: "https://oapi.dingtalk.com/robot/send?access_token=synthetic", expiresAt: Date.now() + 60000 });
+      f.fetcher.mockResolvedValue(new Response(JSON.stringify({ errcode: 40035, errmsg: "rejected" })));
+      const result = await f.delivery.deliver({ ...f.message("event-group-a"), aggregateType: "plan", kind: "plan_status_card",
+        payload: { type: "plan_status_card", status: "candidate_ready", headline: "修改完成，需要负责人确认",
+          workItemId: f.message("event-group-a").aggregateId, workItemVersion: 1, candidateSha: "2".repeat(40), approvalRequired: true } });
+      expect(result).toMatchObject({ outcome: "permanent_failure" });
+      expect(result).not.toHaveProperty("approvalDelivery");
+    } finally { f.db.close(); }
+  });
   it("routes a deferred read-only reply to its durable original group without a Work Item or session", async () => {
     const env = { OMB_DINGTALK_ALLOWED_CONVERSATION_IDS: "group-a,group-b", OMB_DINGTALK_PROACTIVE_CONVERSATION_MAP: '{"group-a":"open-a","group-b":"open-b"}' };
     const f = fixture(env);

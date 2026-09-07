@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 
 import { openCollaborationLedger } from "./collaboration/db.ts";
 import { OwnerActionController } from "./collaboration/actions.ts";
+import { approvalPayloadHash, isApprovalPresentationCard } from "./collaboration/approval-presentation.ts";
 import { CollaborationDegradationController } from "./collaboration/degradation.ts";
 import type { OutboxDeliveryPort } from "./collaboration/outbox.ts";
 import { LocalOwnerRegistry } from "./collaboration/owner.ts";
@@ -270,7 +271,12 @@ export function createDingTalkDelivery(
         payload,
         idempotencyKey: JSON.stringify([message.id, message.dedupeKey]),
       });
-      if (result.kind === "sent") return { outcome: "sent" as const };
+      if (result.kind === "sent") return {
+        outcome: "sent" as const,
+        ...(!result.recovered && routedSourceEventId && isApprovalPresentationCard(message.payload) ? {
+          approvalDelivery: { sourceEventId: routedSourceEventId, payloadHash: approvalPayloadHash(message.payload) },
+        } : {}),
+      };
       if (result.kind === "permanent") return { outcome: "permanent_failure" as const, error: result.code };
       if (result.kind === "unknown") return { outcome: "unknown" as const, error: result.code };
       return { outcome: "retryable" as const, error: result.code };

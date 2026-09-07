@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
 import type { InboundCard } from "./message-renderer.ts";
+import { stageApprovalPresentation, type ApprovalDeliveryProof } from "./approval-presentation.ts";
 
 export interface CollaborationOutboxEntry {
   id: string;
@@ -39,7 +40,7 @@ export interface OutboxDeliveryPort {
     kind: CollaborationOutboxEntry["kind"];
     payload: InboundCard;
   }): Promise<
-    | { outcome: "sent"; transportId?: string }
+    | { outcome: "sent"; transportId?: string; approvalDelivery?: ApprovalDeliveryProof }
     | { outcome: "retryable" | "unknown"; error: string }
     | { outcome: "permanent_failure"; error: string }
   >;
@@ -98,34 +99,42 @@ export function enqueueInboundCard(
   },
 ): CollaborationOutboxEntry {
   const id = randomUUID();
-  if (input.supersessionKey) {
+  database.exec("SAVEPOINT enqueue_inbound_card");
+  try {
+    if (input.supersessionKey) {
+      database
+        .prepare(
+          "UPDATE collaboration_outbox SET superseded_at = ?, delivery_state = 'superseded' " +
+            "WHERE supersession_key = ? AND sent_at IS NULL AND superseded_at IS NULL",
+        )
+        .run(input.now, input.supersessionKey);
+    }
     database
       .prepare(
-        "UPDATE collaboration_outbox SET superseded_at = ?, delivery_state = 'superseded' " +
-          "WHERE supersession_key = ? AND sent_at IS NULL AND superseded_at IS NULL",
+        "INSERT INTO collaboration_outbox " +
+          "(id, source, source_event_id, aggregate_type, aggregate_id, aggregate_version, kind, dedupe_key, " +
+          "supersession_key, payload_json, created_at, next_attempt_at) " +
+          "VALUES (?, 'dingtalk', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
-      .run(input.now, input.supersessionKey);
+      .run(
+        id,
+        input.sourceEventId,
+        input.aggregateType,
+        input.aggregateId,
+        input.aggregateVersion,
+        input.card.type,
+        `dingtalk:event:${input.sourceEventId}:ack`,
+        input.supersessionKey ?? null,
+        JSON.stringify(input.card),
+        input.now,
+        input.now,
+      );
+    stageApprovalPresentation(database, id, input.now);
+    database.exec("RELEASE enqueue_inbound_card");
+  } catch (error) {
+    database.exec("ROLLBACK TO enqueue_inbound_card; RELEASE enqueue_inbound_card");
+    throw error;
   }
-  database
-    .prepare(
-      "INSERT INTO collaboration_outbox " +
-        "(id, source, source_event_id, aggregate_type, aggregate_id, aggregate_version, kind, dedupe_key, " +
-        "supersession_key, payload_json, created_at, next_attempt_at) " +
-        "VALUES (?, 'dingtalk', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    .run(
-      id,
-      input.sourceEventId,
-      input.aggregateType,
-      input.aggregateId,
-      input.aggregateVersion,
-      input.card.type,
-      `dingtalk:event:${input.sourceEventId}:ack`,
-      input.supersessionKey ?? null,
-      JSON.stringify(input.card),
-      input.now,
-      input.now,
-    );
   return {
     id,
     source: "dingtalk",

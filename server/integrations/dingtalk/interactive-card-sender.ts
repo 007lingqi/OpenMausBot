@@ -49,7 +49,8 @@ export class FetchDingTalkInteractiveCardSender implements DingTalkActiveSendPor
       if (key === null) throw new Error("receipt_disappeared");
       const token = await this.accessToken(credentials);
       if (!token) return { ok: false, status: 502, deliveryState: "unknown", code: "dingtalk_receipt_token_unavailable" };
-      return this.confirmGroupDelivery(token, credentials.clientId, input.proactiveOpenConversationId.trim(), key);
+      const result = await this.confirmGroupDelivery(token, credentials.clientId, input.proactiveOpenConversationId.trim(), key);
+      return { ...result, recovered: true };
     } catch { return { ok: false, status: 502, deliveryState: "unknown", code: "dingtalk_group_receipt_unavailable" }; }
   }
 

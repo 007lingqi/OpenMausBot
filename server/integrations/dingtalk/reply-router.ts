@@ -91,7 +91,7 @@ export class DingTalkReplyRouter implements DingTalkDeliveryPort {
           payload: input.payload,
           idempotencyKey: input.idempotencyKey,
         });
-        if (response.ok) return { kind: "sent", channel: "proactive" };
+        if (response.ok) return { kind: "sent", channel: "proactive", ...(response.recovered ? { recovered: true } : {}) };
         if (deliveryUncertain(response)) return { kind: "unknown", code: "interactive_card_delivery_unconfirmed" };
         return isRetryableStatus(response.status)
           ? { kind: "retryable", code: response.code ?? "interactive_card_send_failed" }
@@ -105,7 +105,7 @@ export class DingTalkReplyRouter implements DingTalkDeliveryPort {
       try {
         const response = await this.sessionSender.send(channel.webhookUrl, input.payload);
         if (response.ok) {
-          return { kind: "sent", channel: "session" };
+          return { kind: "sent", channel: "session", ...(response.recovered ? { recovered: true } : {}) };
         }
         if (deliveryUncertain(response)) return { kind: "unknown", code: "session_delivery_unconfirmed" };
         if (!input.proactiveOpenConversationId || !this.activeSender) {
@@ -127,7 +127,7 @@ export class DingTalkReplyRouter implements DingTalkDeliveryPort {
         payload: input.payload,
         idempotencyKey: input.idempotencyKey,
       });
-      if (response.ok) return { kind: "sent", channel: "proactive" };
+      if (response.ok) return { kind: "sent", channel: "proactive", ...(response.recovered ? { recovered: true } : {}) };
       if (deliveryUncertain(response)) return { kind: "unknown", code: "proactive_delivery_unconfirmed" };
       return isRetryableStatus(response.status)
         ? { kind: "retryable", code: response.code ?? "proactive_send_failed" }

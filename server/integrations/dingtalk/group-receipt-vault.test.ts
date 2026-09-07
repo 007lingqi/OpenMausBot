@@ -78,7 +78,7 @@ describe("encrypted immutable accepted group receipts", () => {
     expect(await build().queryAccepted(input)).toBeNull(); expect(sends).toBe(0);
     expect(await build().send(input)).toMatchObject({ deliveryState: "unknown" });
     status = "SUCCESS";
-    expect(await build().queryAccepted(input)).toMatchObject({ ok: true });
+    expect(await build().queryAccepted(input)).toMatchObject({ ok: true, recovered: true });
     expect(sends).toBe(1); expect(queries).toBe(2);
     expect(await build().queryAccepted({ ...input, proactiveOpenConversationId: "other" })).toMatchObject({ ok: false, deliveryState: "unknown" });
     expect(sends).toBe(1); expect(queries).toBe(2);
