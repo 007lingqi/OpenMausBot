@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {execFile} from 'node:child_process';
 import {createServer} from 'node:net';
 import {once} from 'node:events';
-import {cpSync,mkdtempSync,writeFileSync,rmSync} from 'node:fs';
+import {cpSync,mkdtempSync,writeFileSync,readFileSync,realpathSync,rmSync} from 'node:fs';
 import {randomUUID} from 'node:crypto';
 import {homedir} from 'node:os';
 import {join} from 'node:path';
@@ -19,7 +19,7 @@ const run=(file,args,timeout=20000)=>new Promise((resolve,reject)=>execFile(file
  error?reject(new Error(`probe_command_failed:${file}:${error.code}`)):resolve(stdout.trim())));
 const docker=(args,timeout)=>run('docker',['--context',context,...args],timeout);
 const remote=command=>run('/usr/bin/ssh',['-F',sshConfig,'-T','-o','ControlMaster=no','-o','ProxyCommand=false','-o','ClearAllForwardings=yes',host,command]);
-const root=mkdtempSync('/tmp/omb-wrapper-build-'),tag=`omb-wrapper-probe:${randomUUID()}`,base=`omb-wrapper-base:${randomUUID()}`;
+const root=mkdtempSync(join(realpathSync('/tmp'),'omb-wrapper-build-')),tag=`omb-wrapper-probe:${randomUUID()}`,base=`omb-wrapper-base:${randomUUID()}`;
 const names=[];let bridge,directory,directoryWasAbsent=false,bridgeStarted=false,tagged=false,built=false;
 const until=async predicate=>{const end=Date.now()+20000;while(!await predicate()){
  if(Date.now()>end)throw new Error('wrapper_probe_timeout');await new Promise(r=>setTimeout(r,100));}};
@@ -35,9 +35,10 @@ try{
  await new Promise(r=>temporary.close(r));directory=`/tmp/omb-model-channel-${port}`;
  await remote(`test ! -e ${directory} && test ! -L ${directory}`);
  directoryWasAbsent=true;
- bridge=await startLocalOpenCodexBridge({port,sshConfig,endpoint:'http://127.0.0.1:10100/v1/responses'});
+ bridge=await startLocalOpenCodexBridge({port,sshConfig,endpoint:'http://127.0.0.1:10100/v1/responses',stateFile:join(root,'bridge-state.json')});
  bridgeStarted=true;
  await until(()=>bridge.snapshot().status==='connected');
+ assert.equal(JSON.parse(readFileSync(join(root,'bridge-state.json'),'utf8')).attempts,0);
  async function start(extra=[]){
   const name=`omb-wrapper-probe-${randomUUID()}`;names.push(name);
   await docker(['run','-d','--name',name,'--init','--network','none','--read-only','--cap-drop','ALL','--cap-add','CHOWN','--cap-add','SETUID','--cap-add','SETGID',

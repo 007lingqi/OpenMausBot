@@ -1,5 +1,5 @@
 import {expect,it,vi} from 'vitest';
-import {createPrivateSshChannel, type PrivateSshOperations} from './opencodex-ssh-channel.ts';
+import {createPrivateSshChannel, type PrivateSshOperations,type SshChannelCheckpoint} from './opencodex-ssh-channel.ts';
 
 function fixture(){
  const operations={master:vi.fn<PrivateSshOperations['master']>(async()=> 'master-1'),prepare:vi.fn(async()=>{}),connect:vi.fn(async()=>{}),
@@ -53,4 +53,43 @@ it('keeps unsafe existing paths untouched when preparation fails',async()=>{
 it('reports unconfirmed cleanup when an owned channel loses its master during shutdown',async()=>{
  const {operations,channel}=fixture();await channel.tick();operations.master.mockResolvedValue(null);
  await expect(channel.close()).rejects.toThrow('ssh_channel_cleanup_unconfirmed');
+});
+function checkpoint(initial:SshChannelCheckpoint|null=null){let value=initial;return {
+ read:()=>value?{...value}:null,write:vi.fn((next:SshChannelCheckpoint)=>{value={...next};}),
+};}
+it('preserves three reserved failures across fresh channel instances',async()=>{
+ const {operations}=fixture(),store=checkpoint();operations.connect.mockRejectedValue(new Error('synthetic'));
+ for(let count=1;count<=3;count++){
+  const channel=createPrivateSshChannel(operations,{checkpoint:store});await channel.tick();await channel.close();
+  expect(store.read()).toEqual({generation:'master-1',attempts:count});
+ }
+ const restarted=createPrivateSshChannel(operations,{checkpoint:store});expect((await restarted.tick()).status).toBe('failed');
+ expect(operations.connect).toHaveBeenCalledTimes(3);await restarted.close();
+});
+it('reserves before the first mutating operation, and persists success only after inspection',async()=>{
+ const {operations}=fixture(),store=checkpoint();
+ operations.prepare.mockImplementation(async()=>{expect(store.read()).toEqual({generation:'master-1',attempts:1});});
+ operations.inspect.mockImplementation(async()=>{expect(store.read()?.attempts).toBe(1);return true;});
+ const channel=createPrivateSshChannel(operations,{checkpoint:store});expect((await channel.tick()).status).toBe('connected');
+ expect(store.read()).toEqual({generation:'master-1',attempts:0});await channel.close();
+});
+it('only a changed observed master generation resets a restored exhausted budget',async()=>{
+ const {operations}=fixture(),store=checkpoint({generation:'master-1',attempts:3});
+ const channel=createPrivateSshChannel(operations,{checkpoint:store});operations.master.mockResolvedValue(null);
+ expect((await channel.tick()).status).toBe('waiting');expect(store.write).not.toHaveBeenCalled();
+ operations.master.mockResolvedValue('master-1');expect((await channel.tick()).status).toBe('failed');
+ operations.master.mockResolvedValue('master-2');expect((await channel.tick()).status).toBe('connected');
+ expect(operations.connect).toHaveBeenCalledOnce();expect(store.read()).toEqual({generation:'master-2',attempts:0});await channel.close();
+});
+it('does not mutate or keep retrying when checkpoint reservation cannot be persisted',async()=>{
+ const {operations}=fixture(),store=checkpoint();store.write.mockImplementation(()=>{throw new Error('private disk diagnostic');});
+ const channel=createPrivateSshChannel(operations,{checkpoint:store});expect((await channel.tick()).status).toBe('failed');
+ operations.master.mockResolvedValue('master-2');await channel.tick();await channel.close();
+ expect(store.write).toHaveBeenCalledOnce();expect(operations.prepare).not.toHaveBeenCalled();
+ expect(operations.disconnect).not.toHaveBeenCalled();
+});
+it('never reports connected if recording a successful recovery fails',async()=>{
+ const {operations}=fixture(),store=checkpoint();store.write.mockImplementation(next=>{if(next.attempts===0)throw new Error('disk');});
+ const channel=createPrivateSshChannel(operations,{checkpoint:store});expect((await channel.tick()).status).toBe('failed');
+ await channel.tick();expect(operations.connect).toHaveBeenCalledOnce();await channel.close();
 });

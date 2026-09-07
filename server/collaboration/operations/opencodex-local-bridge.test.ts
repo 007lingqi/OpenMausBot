@@ -1,5 +1,7 @@
 import {createServer} from 'node:net';
 import {once} from 'node:events';
+import {chmodSync,mkdtempSync,readFileSync,realpathSync,rmSync,writeFileSync} from 'node:fs';
+import {join} from 'node:path';
 import {afterEach,expect,it,vi} from 'vitest';
 import {startLocalOpenCodexBridge} from './opencodex-local-bridge.ts';
 import type {PrivateSshOperations} from './opencodex-ssh-channel.ts';
@@ -32,4 +34,23 @@ it('refuses a busy listener before touching an existing SSH channel',async()=>{
  const address=server.address();if(!address||typeof address==='string')throw new Error('address');const ops=operations();
  await expect(startLocalOpenCodexBridge({port:address.port,endpoint:'http://127.0.0.1:1/v1/responses',sshConfig:'/synthetic',operations:ops})).rejects.toThrow();
  expect(ops.master).not.toHaveBeenCalled();expect(ops.disconnect).not.toHaveBeenCalled();
+});
+it('restores the durable budget while retaining fixed-port ownership across restarts',async()=>{
+ const root=mkdtempSync(join(realpathSync('/tmp'),'omb-bridge-state-'));chmodSync(root,0o700);
+ cleanup.push(async()=>{rmSync(root,{recursive:true,force:true});});
+ const stateFile=join(root,'state.json'),port=await available(),ops=operations();ops.connect.mockRejectedValue(new Error('synthetic'));
+ for(let attempt=1;attempt<=4;attempt++){
+  const bridge=await startLocalOpenCodexBridge({port,stateFile,endpoint:'http://127.0.0.1:1/v1/responses',sshConfig:'/synthetic',operations:ops,intervalMs:60000});
+  await vi.waitFor(()=>expect(['retrying','failed']).toContain(bridge.snapshot().status));await bridge.close();
+  expect(JSON.parse(readFileSync(stateFile,'utf8')).attempts).toBe(Math.min(attempt,3));
+ }
+ expect(ops.connect).toHaveBeenCalledTimes(3);
+});
+it('closes its listener without touching SSH if the durable checkpoint is invalid',async()=>{
+ const root=mkdtempSync(join(realpathSync('/tmp'),'omb-bridge-bad-'));chmodSync(root,0o700);
+ cleanup.push(async()=>{rmSync(root,{recursive:true,force:true});});
+ const stateFile=join(root,'state.json'),port=await available(),ops=operations();writeFileSync(stateFile,'broken',{mode:0o600});
+ await expect(startLocalOpenCodexBridge({port,stateFile,endpoint:'http://127.0.0.1:1/v1/responses',sshConfig:'/synthetic',operations:ops})).rejects.toThrow('ssh_channel_checkpoint_unavailable');
+ expect(ops.master).not.toHaveBeenCalled();expect(readFileSync(stateFile,'utf8')).toBe('broken');
+ const server=createServer();server.listen(port,'127.0.0.1');await once(server,'listening');await new Promise<void>(resolve=>server.close(()=>resolve()));
 });

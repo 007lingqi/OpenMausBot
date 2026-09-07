@@ -1,12 +1,13 @@
 import {startLocalOpenCodexGateway} from './opencodex-local-gateway.ts';
 import {createPilotSshOperations} from './opencodex-pilot-ssh.ts';
 import {createPrivateSshChannel,type PrivateSshOperations,type SshChannelState} from './opencodex-ssh-channel.ts';
+import {createChannelCheckpoint} from './opencodex-channel-checkpoint.ts';
 
 /** One fixed local port owns one deterministic private pilot socket. Acquire
  * the listener before any SSH mutation, and release it only after cleanup.
  * This prevents two live bridge processes from fighting over that forward. */
 export async function startLocalOpenCodexBridge(options:{
-  endpoint:string;port:number;sshConfig:string;intervalMs?:number;
+  endpoint:string;port:number;sshConfig:string;intervalMs?:number;stateFile?:string;
   operations?:PrivateSshOperations;onState?:(state:SshChannelState)=>void;
 }){
   const intervalMs=options.intervalMs??10000;
@@ -14,7 +15,12 @@ export async function startLocalOpenCodexBridge(options:{
     !Number.isSafeInteger(intervalMs)||intervalMs<10||intervalMs>60000)throw new Error('ssh_channel_configuration_invalid');
   const operations=options.operations??createPilotSshOperations(options);
   const gateway=await startLocalOpenCodexGateway({endpoint:options.endpoint,port:options.port});
-  const channel=createPrivateSshChannel(operations);
+  let channel:ReturnType<typeof createPrivateSshChannel>;
+  try{
+    // The fixed listener is acquired before opening this single-writer store.
+    channel=createPrivateSshChannel(operations,options.stateFile!==undefined?
+      {checkpoint:createChannelCheckpoint({path:options.stateFile,port:options.port})}:{});
+  }catch(error){await gateway.close();throw error;}
   let stopped=false,timer:ReturnType<typeof setTimeout>|undefined,closing:Promise<void>|undefined,last='';
   const pump=async()=>{
     try{

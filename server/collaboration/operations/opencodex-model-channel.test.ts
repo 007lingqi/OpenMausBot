@@ -28,6 +28,14 @@ it('supports an explicit existing-pilot bridge but never an ephemeral bridge por
  expect(parseModelChannelArgs([...base,'--port','12345'])).toEqual({mode:'bridge',port:12345,endpoint:'http://127.0.0.1:10100/v1/responses',sshConfig:'/private/colima-openmausbot-pilot/ssh.config'});
  expect(()=>parseModelChannelArgs([...base,'--port','0'])).toThrow('model_channel_configuration_invalid');
 });
+it('supports durable state only for an explicitly configured bridge',()=>{
+ const base=['--mode','bridge','--endpoint','http://127.0.0.1:10100/v1/responses','--ssh-config','/private/colima-openmausbot-pilot/ssh.config','--port','18101'];
+ expect(parseModelChannelArgs([...base,'--state-file','/private/channel/state.json'])).toMatchObject({mode:'bridge',stateFile:'/private/channel/state.json'});
+ for(const args of [[...base,'--state-file','relative'],[...base,'--state-file','/private/../state'],
+  ['--mode','host','--port','0','--endpoint','http://127.0.0.1/v1/responses','--state-file','/private/state'],
+  ['--mode','relay','--port','0','--socket','/run/model.sock','--state-file','/private/state']])
+  expect(()=>parseModelChannelArgs(args)).toThrow('model_channel_configuration_invalid');
+});
 it.each([
  [],['--mode','host'],['--mode','other','--port','1'],
  ['--mode','host','--port','1','--port','2','--endpoint','http://127.0.0.1/v1/responses'],

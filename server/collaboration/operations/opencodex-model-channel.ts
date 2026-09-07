@@ -6,13 +6,13 @@ import {startLocalOpenCodexRelay} from './opencodex-local-relay.ts';
 import {startLocalOpenCodexBridge} from './opencodex-local-bridge.ts';
 
 type Configuration={mode:'host';port:number;endpoint:string}|{mode:'relay';port:number;socketPath:string;probeUpstream?:true;parentStdin?:true}|
-  {mode:'bridge';port:number;endpoint:string;sshConfig:string};
+  {mode:'bridge';port:number;endpoint:string;sshConfig:string;stateFile?:string};
 export function parseModelChannelArgs(args:readonly string[]):Configuration {
   const invalid=():never=>{throw new Error('model_channel_configuration_invalid');};
   const values=new Map<string,string>();
   for(let i=0;i<args.length;i+=2){
     const key=args[i],value=args[i+1];
-    if(!['--mode','--port','--endpoint','--socket','--ssh-config','--probe-upstream','--parent-stdin'].includes(key)||values.has(key)||!value)invalid();
+    if(!['--mode','--port','--endpoint','--socket','--ssh-config','--probe-upstream','--parent-stdin','--state-file'].includes(key)||values.has(key)||!value)invalid();
     values.set(key,value);
   }
   const portText=values.get('--port')??'',port=Number(portText),mode=values.get('--mode');
@@ -20,7 +20,9 @@ export function parseModelChannelArgs(args:readonly string[]):Configuration {
   if(probe&&(mode!=='relay'||values.get('--probe-upstream')!=='1'))invalid();
   const parentStdin=values.has('--parent-stdin');
   if(parentStdin&&(mode!=='relay'||values.get('--parent-stdin')!=='1'))invalid();
-  if(!/^\d+$/.test(portText)||!Number.isSafeInteger(port)||port>65535||values.size!==((mode==='bridge'?4:3)+Number(probe)+Number(parentStdin)))invalid();
+  const stateFile=values.get('--state-file');
+  if(stateFile!==undefined&&(mode!=='bridge'||!stateFile.startsWith('/')||posix.normalize(stateFile)!==stateFile||stateFile.includes('\0')||Buffer.byteLength(stateFile)>512))invalid();
+  if(!/^\d+$/.test(portText)||!Number.isSafeInteger(port)||port>65535||values.size!==((mode==='bridge'?4:3)+Number(probe)+Number(parentStdin)+Number(stateFile!==undefined)))invalid();
   if(mode==='host'||mode==='bridge'){
     const endpoint=values.get('--endpoint');if(!endpoint)invalid();
     let url:URL;try{url=new URL(endpoint!);}catch{return invalid();}
@@ -30,7 +32,7 @@ export function parseModelChannelArgs(args:readonly string[]):Configuration {
       const sshConfig=values.get('--ssh-config');
       if(port===0||!sshConfig||!sshConfig.startsWith('/')||posix.normalize(sshConfig)!==sshConfig||
         !sshConfig.endsWith('/colima-openmausbot-pilot/ssh.config'))invalid();
-      return {mode,port,endpoint:endpoint!,sshConfig:sshConfig!};
+      return {mode,port,endpoint:endpoint!,sshConfig:sshConfig!,...(stateFile!==undefined?{stateFile}:{})};
     }
     return {mode,port,endpoint:endpoint!};
   }

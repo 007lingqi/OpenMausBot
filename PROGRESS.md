@@ -1,5 +1,29 @@
 # Meta 协作实施进度
 
+## 当前检查点：持久预算完整回归通过（2026-09-07）
+
+- 84244/967c3b已终态exit0，完整pnpm test及后续broker、桌面、普通/headless打包链通过，包含独立通道和Docker wrapper启动退出。中间输出截断，不补造总数。当前代码/测试在验证期间固定，结合89940/019bd7真实五类Docker及55193/34d141类型/独立编译，满足本批本地提交条件；不代表常驻安装或真实六业务场景完成。
+
+- 上一交接回复仅重述状态，分类为no progress；本轮已重新核验84244为真实运行中的pnpm test，6dd83b/3803bb持续返回通过项，未重新启动。下方“完整验证未启动/419待回执”均为历史记录，不再代表当前状态。
+- 前轮拆开独立验证后：89940/019bd7 exit0，当前持久checkpoint版本的真实Docker五场景和临时资源清理通过；55193/34d141 exit0，typecheck、独立编译/tmp/openmausbot-checkpoint-typecheck及diff通过。84244仍须取得整个pnpm test终态，不能提前提交。
+- 436c10只读核对指定context：原群容器仍Up 3 days/healthy，其余历史容器Exited；未加载宿主通道LaunchAgent，18101无监听输出。没有修改服务、账本、Owner或其他容器。
+- 当前所有验证句柄终态；仅提交本批14文件，不push。随后推进固定bundle/稳定stateFile的宿主常驻通道和真实恢复验证；最终六类群场景、真实文档、独立supervisor、主机恢复及Owner人工验收不变，Goal active。
+
+## 历史检查点：持久预算定向通过，完整验证未启动（2026-09-07）
+
+- 本轮有实质实现进展，不是完成：9个代码/测试/脚本文件及5份状态说明保留未提交，42项/typecheck/build:server均已通过（54535/c6d111）。上次提交仍b57d8ef，用户AGENTS.md/outputs不动。
+- cell417及其唯一重试cell419均为自动权限审核超时，工具明确没有启动命令。419已终态失败，无exec session；不要轮询或把它写成仍在运行。当前没有测试/探测/提交进程需要等待。此次不是测试失败，也不能据旧证据声明本批真实Docker/完整回归通过。
+- 已使用允许的一次重试，不继续盲目重复同一完整命令；下一次重新发起需用户确认或执行入口状态明确恢复。请求仅涉及本机验证执行，不重新索要已授权的OpenCodex模型能力、模型文件或密钥。未标记Goal blocked：本轮改变实现且仅第一次在当前恢复批次遇到无法启动完整验证的阻碍。
+- 待执行命令仍为：显式opt-in/固定缓存镜像的scripts/smoke-docker-opencodex.mjs（本批新增私有stateFile），随后pnpm test、typecheck、独立编译/tmp/openmausbot-checkpoint-typecheck及diff。通过后才提交本批14文件和开展宿主常驻安装；原服务、Owner、账本及容器权限均未改动。完整目标与全部真实验收项保留。
+
+## 最新接续：跨进程恢复预算已实现，完整验证待回执（2026-09-07）
+
+- 上轮progress，本轮progress。上一末尾cell409已取得4ee6b8终态，b57d8ef文档提交完成；工作区起始仅用户AGENTS.md/outputs。新增opencodex-channel-checkpoint和测试，接入原SSH状态机、bridge与CLI --state-file，真实Docker烟测显式启用私有状态文件。
+- ca8fa5红灯复现重启退款/未预留/写入失败仍连接，checkpoint模块缺失；57ec75为CLI缺选项，dceb06为bridge未装配/损坏状态未释放监听。实现后54535/c6d111 exit0：42项、typecheck、build:server/diff通过；包含真实独立Node进程退出和SIGKILL后预算保留、第四次不恢复、文件权限/链接/腐败/外部改写拒绝及新代次预算。
+- 当前完整命令等待functions cell419回执（先wait获取exec session或终态），依次执行带持久状态的真实五类Docker烟测、完整pnpm test、typecheck、独立编译/tmp/openmausbot-checkpoint-typecheck、diff。前次cell417仅审核超时未启动，419是唯一重试；不可重复启动，不把提交调用当运行/通过。该命令期间业务/测试保持固定。
+- fc7e81只读核对：gui/501/com.openmausbot.opencodex-pilot-channel不存在；其LaunchAgents plist和Application Support/OpenMausBot/ModelChannel目录均不存在；可用Node绝对路径/opt/homebrew/Cellar/node/26.7.0/bin/node。未创建服务或目录、未启动第二个Stream、未替换原群服务。
+- 下一步取419最终证据，完整通过后只提交本批9个代码/测试/脚本和5份说明，不push。随后为已验证固定bundle安装用户级常驻模型通道、实际验证重启/计数连续性，再核对原账本/租约/在途任务及备份回滚并切换唯一非生产群服务。真实文档/六场景、独立cgroup supervisor、主机恢复和Owner签字仍待验收。Goal active，用户文件不动。
+
 ## 最新接续：启动接线已提交，Docker回归脚本已固化（2026-09-07）
 
 - 9089d71已保存18文件本地提交，不push；完整54406/773901与额外冻结中继38168/1681d8均exit0。所有旧验证句柄已终态，不能再重轮询。原ECONNRESET未复现但根因仍未知；原试点不切换，保留全部旧事项。
