@@ -67,6 +67,14 @@ Owner 已明确授权受限本机 OpenCodex 调用，并允许网络问题时直
 
 ## 中继启动前检查
 
+### 可重复的Docker回归
+
+`scripts/smoke-docker-opencodex.mjs`已固化五类临时容器验证：正常关闭、中继异常退出、业务启动失败、冻结中继后超时整体退出，以及通道缺失拒绝启动。它不是六类真实群业务验收脚本。
+
+先构建服务端包，显式设置`OMB_DOCKER_MODEL_SMOKE=1`和`OMB_DOCKER_MODEL_SMOKE_IMAGE`（已缓存运行时镜像的完整`sha256:`摘要），再执行`node --experimental-strip-types scripts/smoke-docker-opencodex.mjs`。未opt-in或镜像不是完整摘要时，在创建临时资源前拒绝。固定使用`colima-openmausbot-pilot`及当前用户的既有Colima SSH master；远端UID/GID只读取后用于专用relay，不能是root或Provider身份。不新建登录连接、不拉取镜像、不调用真实模型、不启用钉钉、不挂原账本或凭据。Docker构建和临时容器均无网络，沿用原三项cap，结果检查后清理本次容器/镜像标签/通道/临时目录。
+
+脚本只清理事前确认不存在、且本次bridge已成功启动对应的私有目录，拒绝接管或删除预先存在的目录。需要本机Docker和回环/SSH访问权限；执行审批超时不表示测试已启动。运行期间不要修改受测源码或包。
+
 Docker运行镜像现在包含`collaboration-docker.js`及独立channel包；默认不启用relay，兼容原headless。`compose.opencodex.yaml`是无密钥模式专用overlay（Compose >=2.24.4），只和base compose合并，不和`compose.models.yaml`混用。需要显式提供已验证的VM私有socket目录、拥有该socket的专用UID/GID及验收策略版本；端口固定18100，四角色固定Astra/medium。!override保留原账本、仓库、Docker socket和两份业务凭据挂载，仅移除旧模型auth挂载，不修改或删除原文件。缺少目录不能自动创建。
 
 wrapper经setpriv清空附加组、继承/ambient能力和凭据环境；relay必须非root且不同于执行Provider身份，只有socket持有者可启动。relay探测后才启动headless；二者任一退出则关闭另一方，父stdin管道关闭是relay终止通知，不需要新增CAP_KILL。启动5秒/关闭10秒有界，Compose给20秒停止宽限；异常/超时以非零主进程退出交给Docker/tini关闭PID命名空间。不要在宿主启用relay wrapper模式。真实临时容器已补SIGSTOP冻结生产relay的故障注入：它不能响应父管道关闭，约10秒后wrapper失败退出、整个容器停止且State.Pid=0；不代表宿主/VM重启恢复。

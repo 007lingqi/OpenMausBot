@@ -1,5 +1,11 @@
 # Meta 协作验证记录
 
+## 2026-09-07 可重复Docker模型服务烟测
+
+- 9089d71业务代码保持不变；新增scripts/smoke-docker-opencodex.mjs，基于已经验证的临时脚本，改为当前用户/仓库路径、显式opt-in和缓存镜像完整摘要、读取实际远端专用UID/GID，并收紧私有目录清理归属条件。176ad1：默认不开启、缺少摘要、非法摘要三种拒绝路径均exit1且无stdout，不创建临时资源。语法检查通过。
+- 66468/55d694 exit0：新仓库脚本用固定缓存镜像验证生产wrapper/relay/headless五场景，含SIGSTOP冻结relay后约10秒退出1/State.Pid0；全部临时容器、派生镜像标签、SSH通道/目录清理通过。无真实群/模型请求、身份/凭据或原账本变更。76770负责本批typecheck/node-check/diff最终核对。
+- 本批仅验证脚本及说明变更，不重复9089d71已通过且业务代码未变的完整回归；不能把这项测试资产提交当真实六场景或常驻部署完成。
+
 ## 2026-09-07 启动接线完整验证终态
 
 - 54406/773901 exit0：严格四类真实临时Docker烟测、完整`pnpm test`、`pnpm typecheck`、`pnpm exec tsc -p tsconfig.server.build.json --noEmit false --outDir /tmp/openmausbot-docker-wrapper-typecheck`和`git diff --check`全部完成。普通包无node_modules启动/9个代理、新channel父管道关闭和兼容Docker wrapper的headless健康/启动/SIGTERM均通过。中间输出截断，不补造总数；此前steer-e2e连接重置本次未复现，根因仍未知。
