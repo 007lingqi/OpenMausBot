@@ -1,5 +1,11 @@
 # Meta 协作决策记录
 
+## D-111 — 用同一独立任务容器覆盖Provider和受控写入
+
+- 先前仅applier在独立容器中，Provider仍与headless共享PID命名空间，失败可能留下没有proof的预留。后续改为先建立真实任务容器身份、登记凭据，再启动Provider和固定写入阶段；不以另一个空容器代替模型进程的身份。
+- Provider只获得固定、脱敏、范围受限的Git源视图；真实可写候选置于root专用祖先目录，凭据/账本/签名密钥/Docker socket不挂载。已实现的视图组件与Linux权限烟测仅为前置能力，尚未完成容器启动器/headless接线，不提前宣称模型隔离完成。
+- 同容器证明也不能解决未确认的外部Git操作；create未知回执和缺finalization的旧协调器仍须独立持久证据。详细门禁记录在contained-provider-design，不改变旧账本或失败预算。
+
 ## D-110 — 不从缺失Docker状态推断退出，写入停止等待实际清理
 
 - Docker inspect必须单对象、完整ID一致、受管标签/代次匹配。用明确状态字段和禁用自动重启证明退出，不再采用“Running不为true即empty”；未知、dead、restarting或仍有PID继续保留仓库占用。仅原调用在所有启动操作结束后可清理created，不能拿未启动容器为Provider签证明。

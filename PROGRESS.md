@@ -1,5 +1,14 @@
 # Meta 协作实施进度
 
+## 当前实现批次：独立任务容器的只读来源组件（2026-09-07，已验证，未接线）
+
+- 已选择同一个独立任务容器覆盖Provider与固定受控写入的方向，保留模型前真实凭据入账，避免空applier凭据代替Provider。具体装配及恢复门禁见packaging/collaboration/contained-provider-design.md；当前尚未实现启动器或改变运行Provider拓扑。
+- 新增provider-read-view组件：仅从固定干净Git commit读取允许的完整blob；范围拒绝优先、常见凭据目录禁止、链接/子模块/二进制/超限拒绝、不执行配置filters。视图逐文件记录来源blob和脱敏后哈希；写入前重新校验源、范围、清单与视图。脱敏文件标记禁止自动整文件覆盖（写入器接线仍待实现）。
+- 0ecd12模块缺失TDD；d2d3e3首次14项中7项失败（Markdown误送仅支持代码的语法解析器），修复路由后d61eed15项/typecheck通过；9fbdce17项/typecheck及真实Linux UID10001烟测通过。真实受限子进程能读视图，不能写/改权限，也不能读取root专用候选或凭据。无模型/群消息/业务文件，不能冒充任务运行时已切换。
+- 35b242清理API先行失败后新增严格校验的dispose；只允许可信描述符且未被替换的视图清理，源已变仍可清理。必须由调用方先确认对应容器退出，组件本身不提供cgroup证明。63966/cell682已终态exit0：19项定向/typecheck/Linux视图清理/完整pnpm test/typecheck/diff通过；主集290文件通过/1跳过、3246项通过/18跳过（3264登记），broker7、桌面32项与打包启动退出通过。
+- 全量终态之后补测per-worktree Git filter边界；最终provider-read-view/sensitive-source/sensitive-text定向回归、typecheck、真实Linux视图与清理烟测、服务端构建及diff通过。该后置补强以定向证据为准，不冒充再次全仓；全部命令终态。保存本批组件/烟测/设计与状态文档本地commit，不push。下一轮优先按设计实现真实任务容器启动器及模型前凭据登记，不要把未使用的来源组件当作运行时隔离已完成。
+- 运行试点已是3c05339，独立视图组件尚无生产调用方；未再部署、未调用模型或发送群消息。全部Goal仍active；真实群六场景/在线文档材料、Provider隔离与协调器在途恢复、Owner最终验收未完成。AGENTS.md/outputs仍保持原状。
+
 ## 最新部署检查点：3c05339已更新非生产试点（2026-09-07）
 
 - c4e355固定缓存离线构建及无群/无执行临时data健康检查通过：openmausbot-collaboration-pilot:opencodex-3c05339，sha256:779586bc572ee7a3e4f6850975aa7d7fd558d1a906d69d9af9910782bf452aa7。沿用60830完整回归受测产物，不增加真实模型调用。
