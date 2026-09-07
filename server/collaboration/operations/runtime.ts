@@ -165,6 +165,7 @@ export interface CollaborationHeadlessRuntimeOptions {
   probeOnly?: boolean;
   planner?: PlannerPort;
   naturalIntake?: NaturalIntakeInterpreter;
+  onlineDocuments?: import("./dws-online-reader.ts").DwsOnlineDocumentReader;
   acceptanceMapping?: AcceptanceMappingModels;
   planningPolicy?: PlanningPolicy;
   planningDefaultDefinition?: { repository: string; acceptanceConditions: AcceptanceCondition[] };
@@ -643,6 +644,7 @@ export class CollaborationHeadlessRuntime {
   private stream: RuntimeStream | null = null;
   private dingTalkState: CollaborationRuntimeHealth["dingtalk"]["state"];
   private naturalIntakeTask: Promise<void> | null = null;
+  private onlineDocumentTask: Promise<void> | null = null;
   private lifecycleRecoveryTask: Promise<void> | null = null;
   private verificationAbort = new AbortController();
   private verificationCleanupUnconfirmed = false;
@@ -698,6 +700,8 @@ export class CollaborationHeadlessRuntime {
     try {
       const serviceOptions: CollaborationServiceOptions = {
         dataDirectory: this.options.dataDirectory,
+        ...(this.options.onlineDocuments ? { onlineDocuments: { reader: this.options.onlineDocuments,
+          currentLease: () => this.currentState === "running" ? this.lease : null } } : {}),
         ...(this.options.planner && this.options.planningPolicy
           ? {
               planning: {
@@ -1998,6 +2002,8 @@ export class CollaborationHeadlessRuntime {
       this.drainVerificationQueue();
       this.rebuildNeverStartedQueue();
     }
+    // Enqueue reading before interpretation, including installations without a model interpreter.
+    if (serviceReady && this.options.onlineDocuments && !this.onlineDocumentTask) this.startOnlineDocumentProcessing();
     if (serviceReady && this.options.naturalIntake && !this.naturalIntakeTask) {
       // Do not block lease renewal, Stream maintenance or other group messages on model latency.
       this.naturalIntakeTask = this.service!.processNaturalIntake(this.clock.now()).then(workItemId => {
@@ -2007,6 +2013,14 @@ export class CollaborationHeadlessRuntime {
       }).catch(() => undefined).finally(() => { this.naturalIntakeTask = null; });
     }
     return { dispatched, maintained };
+  }
+
+  private startOnlineDocumentProcessing(): void {
+    this.onlineDocumentTask = this.service!.processOnlineDocuments(this.clock.now()).then(workItemId => {
+      if (!workItemId || this.currentState !== "running") return;
+      this.syncMetaBundleBestEffort(workItemId, true);
+      if (this.options.autoExecuteReady) this.scheduleReadyExecution(workItemId);
+    }).catch(() => undefined).finally(() => { this.onlineDocumentTask = null; });
   }
 
   private assertOperational(): void {

@@ -20,7 +20,7 @@ export function readNaturalAttachmentContext(database: DatabaseSync, workItemId:
     "WHERE e.work_item_id=? ORDER BY e.received_at,e.id,a.ordinal LIMIT 101").all(workItemId) as unknown as Array<{ id: string; ingest_state: string; content_hash: string | null }>;
   const attachments: AttachmentEvidenceNotification[] = [];
   const receipts: unknown[] = [];
-  let incomplete = rows.length > 100 || replacement.needsClarification || onlineDocuments.totalSources > 0, bytes = 0;
+  let incomplete = rows.length > 100 || replacement.needsClarification || onlineDocuments.incomplete, bytes = Buffer.byteLength(JSON.stringify(onlineDocuments));
   for (const row of rows.slice(0, 100)) {
     if (replacement.replaced.has(row.id)) continue;
     if (row.ingest_state !== "ready") { incomplete = true; continue; }
@@ -85,7 +85,7 @@ export function attachmentCompletenessGates(database: DatabaseSync, workItemId: 
       }
     } catch { incomplete = true; }
   }
-  const gates: BlockingAmbiguity[] = onlineDocumentCompletenessGates(database, workItemId);
+  const gates: BlockingAmbiguity[] = onlineDocumentCompletenessGates(database, workItemId, facts);
   if (replacement.needsClarification) gates.push({ id: "attachment-replacement-unclear", dependsOn: [],
     ...(replacement.selectionQuestion ?? { question: "附件替换关系还不明确，请确认原材料和要采用的新文件。",
       recommendedAnswer: "请原材料提供者回复原附件消息，确认要替换的文件；涉及多人材料或已经使用的内容，需要先核对影响。" }) });

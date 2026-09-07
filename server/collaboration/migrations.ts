@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { OPENMAUSBOT_SOURCE_BASELINE } from "./config.ts";
 
-export const COLLABORATION_SCHEMA_VERSION = 31;
+export const COLLABORATION_SCHEMA_VERSION = 32;
 
 interface Migration {
   version: number;
@@ -1419,6 +1419,38 @@ const migrations: readonly Migration[] = [
           BEGIN SELECT RAISE(ABORT,'coordinator proof is immutable'); END;
         CREATE TRIGGER coordinator_proofs_no_delete BEFORE DELETE ON collaboration_coordinator_proofs
           BEGIN SELECT RAISE(ABORT,'coordinator proof is immutable'); END;
+      `);
+    },
+  },
+  {
+    version: 32, name: "durable-online-document-reads", checksum: "v32:source-bound-read-jobs-and-immutable-receipts",
+    apply(database) {
+      database.exec(`
+        CREATE TABLE collaboration_online_read_jobs (
+          id TEXT PRIMARY KEY, work_item_id TEXT NOT NULL REFERENCES collaboration_work_items(id),
+          source_event_id TEXT NOT NULL, normalized_hash TEXT NOT NULL, reference_hash TEXT NOT NULL,
+          grant_fingerprint TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('pending','running','ready','failed')),
+          attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts BETWEEN 0 AND 3),
+          claim_token TEXT, instance_owner TEXT, instance_fence INTEGER, error_code TEXT,
+          projected_revision INTEGER, projection_attempts INTEGER NOT NULL DEFAULT 0 CHECK(projection_attempts BETWEEN 0 AND 3), created_at INTEGER NOT NULL,
+          UNIQUE(source_event_id,reference_hash)
+        ) STRICT;
+        CREATE TABLE collaboration_online_read_receipts (
+          job_id TEXT PRIMARY KEY REFERENCES collaboration_online_read_jobs(id),
+          receipt_json TEXT NOT NULL CHECK(json_valid(receipt_json) AND length(receipt_json)<=4194304),
+          receipt_hash TEXT NOT NULL, created_at INTEGER NOT NULL
+        ) STRICT;
+        CREATE TRIGGER online_read_receipts_no_update BEFORE UPDATE ON collaboration_online_read_receipts
+          BEGIN SELECT RAISE(ABORT,'online receipt is immutable'); END;
+        CREATE TRIGGER online_read_receipts_no_delete BEFORE DELETE ON collaboration_online_read_receipts
+          BEGIN SELECT RAISE(ABORT,'online receipt is immutable'); END;
+        CREATE TRIGGER online_read_jobs_binding BEFORE UPDATE ON collaboration_online_read_jobs
+          WHEN NEW.id<>OLD.id OR NEW.work_item_id<>OLD.work_item_id OR NEW.source_event_id<>OLD.source_event_id
+            OR NEW.normalized_hash<>OLD.normalized_hash OR NEW.reference_hash<>OLD.reference_hash
+            OR NEW.grant_fingerprint<>OLD.grant_fingerprint OR NEW.attempts<OLD.attempts OR NEW.projection_attempts<OLD.projection_attempts
+          BEGIN SELECT RAISE(ABORT,'online source and budget are immutable'); END;
+        CREATE TRIGGER online_read_jobs_no_delete BEFORE DELETE ON collaboration_online_read_jobs
+          BEGIN SELECT RAISE(ABORT,'online read history is immutable'); END;
       `);
     },
   },

@@ -26,6 +26,7 @@ import {
 } from "./plan-reviser.ts";
 import { LocalOwnerRegistry, type OwnerBinding } from "./owner.ts";
 import type { WorkItemSnapshotPatch } from "./snapshot.ts";
+import { OnlineDocumentIngestion, type OnlineDocumentIngestionOptions } from "./online-document-ingestion.ts";
 
 export interface CollaborationHealth {
   app: "openmausbot-collaboration";
@@ -43,6 +44,7 @@ export interface CollaborationService {
   health(): CollaborationHealth;
   ingestDingTalkMessage(message: DingTalkInboundMessage): InboundMessageOutcome;
   processNaturalIntake(now?: number): Promise<string | null>;
+  processOnlineDocuments(now?: number): Promise<string | null>;
   observeAttachmentEvidence(
     workItemId: string,
     evidence: AcceptedAttachmentEvidence,
@@ -70,6 +72,7 @@ export interface CollaborationService {
 }
 
 export interface CollaborationServiceOptions {
+  onlineDocuments?: OnlineDocumentIngestionOptions;
   dataDirectory: string;
   planning?: PlanningCoordinatorOptions;
   execution?: CandidateExecutorOptions;
@@ -120,6 +123,8 @@ export function startCollaborationService(options: CollaborationServiceOptions):
     throw error;
   }
   let closed = false;
+  const onlineDocuments = options.onlineDocuments && planning ? new OnlineDocumentIngestion(ledger.filePath, options.onlineDocuments,
+    (workItemId, jobId, now) => planning!.observeAcceptedOnlineDocument(workItemId, jobId, now) !== null) : null;
   let serviceDegradedReason: "ledger_unwritable" | "audit_unwritable" | null = null;
 
   const assertServiceArmed = () => {
@@ -156,6 +161,7 @@ export function startCollaborationService(options: CollaborationServiceOptions):
       assertServiceArmed();
       try {
         const outcome = inbound.processDingTalkMessage(message);
+        if (outcome.workItemId) onlineDocuments?.enqueue(outcome.workItemId, message.receivedAt);
         if (planning && outcome.workItemId) {
           planning.observeAcceptedEvent(outcome.workItemId, message.text, message.receivedAt, outcome.sourceEventId);
         }
@@ -168,7 +174,12 @@ export function startCollaborationService(options: CollaborationServiceOptions):
     async processNaturalIntake(now) {
       if (closed) throw new Error("Collaboration service is closed");
       assertServiceArmed();
-      return await planning?.processNaturalIntake(now) ?? null;
+      return await planning?.processNaturalIntake(now, () => onlineDocuments?.enqueue(undefined, now)) ?? null;
+    },
+    async processOnlineDocuments(now) {
+      if (closed) throw new Error("Collaboration service is closed");
+      assertServiceArmed();
+      return await onlineDocuments?.processOne(now) ?? null;
     },
     observeAttachmentEvidence(workItemId, evidence, now) {
       if (closed) throw new Error("Collaboration service is closed");
@@ -237,6 +248,7 @@ export function startCollaborationService(options: CollaborationServiceOptions):
     close() {
       if (closed) return;
       closed = true;
+      onlineDocuments?.close();
       actions.close();
       owner.close();
       execution?.close();

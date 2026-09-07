@@ -14,6 +14,7 @@ import { NaturalAssociationCoordinator } from "./natural-association.ts";
 import { clarificationRecipient } from "./clarification-recipients.ts";
 import { attachmentCompletenessGates, attachmentExcerpts, readNaturalAttachmentContext } from "./attachment-completeness.ts";
 import { readAttachmentEvidenceNotification } from "./attachment-ingestion.ts";
+import { durableOnlineSources, readOnlineBody, onlineBodyExcerpts } from "./online-document-evidence.ts";
 import {
   appendWorkItemSnapshot,
   readLatestWorkItemSnapshot,
@@ -53,6 +54,8 @@ export interface AcceptedAttachmentEvidence {
 }
 
 interface DefinitionProjectionInput {
+  onlineJobId?: string;
+  onlineExpectedRevision?: number;
   attachmentId?: string;
   contentHash?: string;
   contextSummary?: string;
@@ -171,6 +174,11 @@ export class PlanningCoordinator {
     let snapshots: { previous: WorkItemSnapshot | null; current: WorkItemSnapshot };
     try {
       assertLedgerArmed(this.database);
+      if (projection?.onlineJobId && !this.database.prepare("SELECT 1 FROM collaboration_online_read_jobs WHERE id=? AND work_item_id=? AND status='ready' AND projected_revision IS NULL")
+        .get(projection.onlineJobId, workItemId)) { this.database.exec("COMMIT"); return null; }
+      if (projection?.onlineJobId && readLatestWorkItemSnapshot(this.database, workItemId)?.revision !== projection.onlineExpectedRevision) {
+        this.database.exec("COMMIT"); return null;
+      }
       if (projection?.enqueueNaturalEvent && this.database.prepare(
         "SELECT 1 FROM collaboration_natural_intake_jobs WHERE source_event_id=?",
       ).get(projection.enqueueNaturalEvent)) {
@@ -205,6 +213,8 @@ export class PlanningCoordinator {
         }] };
       }
       snapshots = appendWorkItemSnapshot(this.database, workItemId, patch, now);
+      if (projection?.onlineJobId) this.database.prepare("UPDATE collaboration_online_read_jobs SET projected_revision=? WHERE id=? AND projected_revision IS NULL")
+        .run(snapshots.current.revision, projection.onlineJobId);
       if (projection?.enqueueNaturalEvent) {
         this.database.prepare("INSERT INTO collaboration_natural_intake_jobs (source_event_id,work_item_id,status,base_revision,created_at) " +
           "VALUES (?,?,'pending',?,?)").run(projection.enqueueNaturalEvent, workItemId, snapshots.current.revision, now);
@@ -311,10 +321,11 @@ export class PlanningCoordinator {
     return this.persistPublishedPlan(workItemId, snapshots.current, plan, now);
   }
 
-  async processNaturalIntake(now = Date.now()): Promise<string | null> {
+  async processNaturalIntake(now = Date.now(), beforeInterpret?: () => void): Promise<string | null> {
     if (this.closed) throw new Error("Planning coordinator is closed");
     if (this.naturalAssociation) await this.naturalAssociation.processOne(now);
     if (this.closed) return null;
+    beforeInterpret?.();
     return this.naturalIntake?.processOne(now) ?? Promise.resolve(null);
   }
 
@@ -389,6 +400,20 @@ export class PlanningCoordinator {
       now,
       { contextSummary },
     );
+  }
+
+  observeAcceptedOnlineDocument(workItemId: string, jobId: string, now = Date.now()): DefinitionRevisionOutcome | null {
+    if (this.closed) throw new Error("Planning coordinator is closed");
+    assertLedgerArmed(this.database);
+    const source = [...durableOnlineSources(this.database, workItemId)].find(value => value.id === jobId);
+    const receipt = source && readOnlineBody(this.database, source);
+    if (!source || !receipt) throw new Error("online_document_evidence_invalid");
+    const latest = readLatestWorkItemSnapshot(this.database, workItemId);
+    if (!latest) throw new Error("online_document_snapshot_missing");
+    const facts = [...latest.facts];
+    for (const fact of onlineBodyExcerpts(source, receipt)) if (!facts.includes(fact) && facts.length < 100) facts.push(fact);
+    return this.reviseDefinition(workItemId, { facts }, now, { onlineJobId: jobId, onlineExpectedRevision: latest.revision,
+      contextSummary: "已读取在线材料，正文已按原消息和位置保存；正在核对需求，尚未开始修改。" });
   }
 
   observeAcceptedEvidence(

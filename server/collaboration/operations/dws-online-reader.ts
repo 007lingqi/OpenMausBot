@@ -90,6 +90,12 @@ export class DwsOnlineDocumentReader {
     if (new Set(this.grants.map(g => g.id)).size !== this.grants.length ||
       new Set(this.grants.map(g => JSON.stringify([g.conversationId, g.node]))).size !== this.grants.length) throw new Error("online_document_grant_ambiguous");
   }
+  authorizationFingerprint(input: OnlineReadSource): string {
+    const source = sourceSchema.parse(input);
+    const grant = this.grants.find(value => value.conversationId === source.conversationId && value.node === source.node);
+    if (!grant) throw new Error("online_document_not_authorized");
+    return hash(grant);
+  }
   async read(input: OnlineReadSource, signal: AbortSignal): Promise<OnlineBodyReceipt> {
     active(signal);
     const source = sourceSchema.parse(input);
