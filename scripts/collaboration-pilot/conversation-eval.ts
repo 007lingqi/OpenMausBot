@@ -17,7 +17,8 @@ export interface ConversationScenario {
   id: string;
   turns: Array<{ speaker: string; text: string; expect: {
     action: string | string[]; items: number; unchangedRequirements?: boolean; targetTurn?: number;
-    pendingTasks?: number; maxReplyLength?: number;
+    pendingTasks?: number; maxReplyLength?: number; replyTopics?: string[];
+    pendingKind?: "requirement" | "association" | "read_only" | "approval";
   } }>;
 }
 interface TurnReport {
@@ -62,6 +63,12 @@ export const CONVERSATION_SCENARIOS: ConversationScenario[] = [
     { speaker: "product", text: "另外一个独立问题：支付失败后的提示也要改得容易理解。", expect: { action: "create_work", items: 2 } },
     { speaker: "product", text: "对，就这样。", expect: { action: "ask_context", items: 2, unchangedRequirements: true, pendingTasks: 2 } },
     { speaker: "product", text: "我说的是登录，账号或密码错误时统一显示“账号或密码不正确”。支付那个先不补充。", expect: { action: "contribute", items: 2, targetTurn: 0 } },
+  ] },
+  { id: "progress-amid-unanswered-requirements", turns: [
+    { speaker: "product", text: "登录提示友好一点。", expect: { action: "create_work", items: 1 } },
+    { speaker: "product", text: "另外一个独立问题：支付失败后的提示也要改得容易理解。", expect: { action: "create_work", items: 2 } },
+    { speaker: "product", text: "现在进展怎么样？", expect: { action: "ask_context", items: 2, unchangedRequirements: true, replyTopics: ["登录", "支付"], maxReplyLength: 150 } },
+    { speaker: "product", text: "登录那个。", expect: { action: "read_status", items: 2, unchangedRequirements: true, targetTurn: 0, pendingKind: "read_only", maxReplyLength: 90 } },
   ] },
 ];
 
@@ -187,6 +194,12 @@ export async function runConversationEvaluation(options: { model: NaturalIntakeM
         if (turn.expect.unchangedRequirements) checks.unchangedRequirements = before === changed;
         if (turn.expect.targetTurn !== undefined) checks.target = intent.target_work_item_id === scenarioTurns[turn.expect.targetTurn]?.target;
         if (turn.expect.maxReplyLength !== undefined) checks.replyLength = replies.every(reply => reply.text.length <= turn.expect.maxReplyLength!);
+        if (turn.expect.replyTopics !== undefined) checks.topicHints = replies.some(reply => turn.expect.replyTopics!.every(topic => reply.text.includes(topic)));
+        if (turn.expect.pendingKind !== undefined) {
+          const request = report.requests.find(request => request.scenario === scenario.id && request.turn === turnIndex && request.phase === "intent")?.request as
+            { pendingQuestion?: { kind: string } | null } | undefined;
+          checks.pendingKind = request?.pendingQuestion?.kind === turn.expect.pendingKind;
+        }
         if (turn.expect.pendingTasks !== undefined) {
           const request = report.requests.find(request => request.scenario === scenario.id && request.turn === turnIndex && request.phase === "intent")?.request as
             { pendingQuestion?: { workItemIds: string[] } | null } | undefined;

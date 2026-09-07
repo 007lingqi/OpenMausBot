@@ -46,6 +46,14 @@ function pendingQuestion(db: DatabaseSync, job: ConversationJob, sent: SentReply
         kind = ["status_query", "explanation"].includes(proposal.intent) || proposal.reason === "pending_read_only" ? "read_only"
           : proposal.reason === "pending_approval" ? "approval" : "association";
         text = card.summary ?? "";
+        // A direct question about a read-only/control intent keeps its purpose.
+        // Older requirement questions must not turn its next answer into a
+        // contribution. Rows are already newest-first, actually delivered and
+        // scoped to this person/group, with intervening turns excluded above.
+        if (text && (kind === "read_only" || kind === "approval")) return {
+          kind, sourceEventId: `outbox:${row.id}`, workItemIds: row.work_item_id ? [row.work_item_id] : [],
+          text: redactSensitiveText(text).slice(0, 500),
+        };
       }
     } else if (card.type === "plan_status_card" && card.status === "candidate_ready" && row.work_item_id && candidates.includes(row.work_item_id)) {
       const owner = db.prepare("SELECT 1 FROM collaboration_owner_bindings WHERE principal_id=?").get(job.principal_id);
@@ -184,7 +192,26 @@ export function refreshConversationStatusReply(db: DatabaseSync, row: { id: stri
   return true;
 }
 
-export function conversationReply(db: DatabaseSync, result: ConversationIntentDecision): string {
+/** Names are display hints, never numbered choices or association authority. */
+function clarificationTopics(db: DatabaseSync, request: ConversationIntentRequest | undefined): string[] {
+  if (!request || request.contextTruncated || !request.candidates.length || request.candidates.length > 3) return [];
+  const source = db.prepare("SELECT conversation_id FROM collaboration_external_events WHERE source='dingtalk' AND source_event_id=? AND principal_id=?")
+    .get(request.sourceEventId, request.principalId) as { conversation_id: string } | undefined;
+  if (!source) return [];
+  const topics: string[] = [];
+  for (const offered of request.candidates) {
+    const current = db.prepare("SELECT title,version FROM collaboration_work_items WHERE id=? AND conversation_id=?")
+      .get(offered.id, source.conversation_id) as { title: string; version: number } | undefined;
+    if (!current || current.version !== offered.version ||
+      (readLatestWorkItemSnapshot(db, offered.id)?.revision ?? 0) !== offered.snapshotRevision) return [];
+    const title = statusTopicExcerpt(current.title);
+    if (title === "这个问题" || topics.includes(title)) return [];
+    topics.push(title);
+  }
+  return topics;
+}
+
+export function conversationReply(db: DatabaseSync, result: ConversationIntentDecision, request?: ConversationIntentRequest): string {
   if (result.action === "acknowledge") return "不客气，有需要继续说。";
   if (result.action === "control_requires_authorization") return "这涉及控制或审批操作，需要由负责人确认具体动作和影响；目前没有执行。";
   if (result.action === "read_status" && result.target) return conversationStatus(db, result.target.id);
@@ -200,5 +227,16 @@ export function conversationReply(db: DatabaseSync, result: ConversationIntentDe
     return `之前的回复内容是：${redactSensitiveText(result.reply.text).slice(0, 700)}\n这只是说明之前的消息，不会因此重新修改。`;
   }
   if (result.action === "ask_context" && result.reason === "missing_reply") return "你想了解哪条回复的意思？说一下其中的内容就行。";
+  if (result.action === "ask_context" && ["uncertain", "missing_target", "pending_answer", "pending_read_only"].includes(result.reason)) {
+    const topics = clarificationTopics(db, request);
+    if (topics.length) {
+      const labels = topics.map(title => `「${title}」`);
+      const names = labels.length === 1 ? labels[0] : `${labels.slice(0, -1).join("、")}还是${labels.at(-1)}`;
+      if (result.intent === "status_query") return labels.length === 1
+        ? `你想查看${names}的进度吗？也可以说一下其他问题。`
+        : `你想查看哪件事的进度：${names}？也可以说一下其他问题。`;
+      return `你指的是${names}${labels.length === 1 ? "吗" : ""}？也可以说一下其他问题。`;
+    }
+  }
   return "你说的是哪个问题，或者想确认哪一件事？简单说一下问题名称或具体内容就行。";
 }

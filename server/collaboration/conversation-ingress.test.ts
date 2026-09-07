@@ -67,6 +67,122 @@ function job(db: DatabaseSync, source: string): ConversationJob {
 }
 
 describe("durable conversational ingress before Work Item mutation", () => {
+  it("names the unresolved same-group topics instead of asking a context-free question", async () => {
+    const h = setup(async input => input.sourceEventId === "answer"
+      ? decision(input, "contribution", input.candidates[0].id) : decision(input, "new_request"));
+    try {
+      for (const [id, text, group] of [["other", "别群的薪资事项", "private"], ["login", "登录提示友好一点。", "group"], ["payment", "支付失败提示不清楚。", "group"]]) {
+        h.service.ingestDingTalkMessage(message(id, text, group)); await h.service.processNaturalIntake(); await deliver(h.db);
+      }
+      const before = taskState(h.db);
+      h.service.ingestDingTalkMessage(message("answer", "对，就这样。")); await h.service.processNaturalIntake(); await deliver(h.db);
+      const text = reply(h.db, "answer")!;
+      expect(text).toContain("登录提示友好一点"); expect(text).toContain("支付失败提示不清楚");
+      expect(text).not.toMatch(/薪资|WI-|第一个|序号|固定模板/u);
+      expect(text.length).toBeLessThan(150);
+      expect(item(h.db, "answer")).toBeNull(); expect(taskState(h.db)).toEqual(before);
+    } finally { h.service.close(); h.db.close(); }
+  });
+
+  it("keeps a direct progress clarification read-only despite older requirement questions, including after restart", async () => {
+    const h = setup(async input => {
+      if (["login", "payment"].includes(input.sourceEventId)) return decision(input, "new_request");
+      if (input.sourceEventId === "query") return decision(input, "status_query");
+      const target = input.candidates.find(candidate => candidate.title.includes("登录"))!.id;
+      return decision(input, input.sourceEventId === "answer" ? "contribution" : "status_query", target);
+    });
+    try {
+      for (const [id, text] of [["login", "登录提示友好一点。"], ["payment", "支付失败提示不清楚。"]]) {
+        h.service.ingestDingTalkMessage(message(id, text)); await h.service.processNaturalIntake(); await deliver(h.db);
+      }
+      const before = taskState(h.db);
+      h.service.ingestDingTalkMessage(message("query", "现在进展怎么样？")); await h.service.processNaturalIntake(); await deliver(h.db);
+      h.service.close(); const restarted = startCollaborationService(h.options);
+      try {
+        restarted.ingestDingTalkMessage(message("answer", "登录那个"));
+        expect(readConversationContext(h.db, job(h.db, "answer")).pendingQuestion?.kind).toBe("read_only");
+        await restarted.processNaturalIntake(); await deliver(h.db);
+        expect(job(h.db, "answer").proposal_json).toContain('"reason":"pending_read_only"');
+        expect(item(h.db, "answer")).toBeNull(); expect(taskState(h.db)).toEqual(before);
+        const next = message("answer-correct", "我想看登录那个的进度");
+        restarted.ingestDingTalkMessage(next); await restarted.processNaturalIntake(); await deliver(h.db);
+        expect(reply(h.db, "answer-correct")).toContain("还需要补充信息");
+        expect(job(h.db, "answer-correct").target_work_item_id).toBe(item(h.db, "login"));
+        expect(taskState(h.db)).toEqual(before);
+        expect(reply(h.db, "query")).toContain("登录提示友好一点");
+        const count = h.db.prepare("SELECT count(*) n FROM collaboration_outbox").get();
+        restarted.ingestDingTalkMessage(next); await restarted.processNaturalIntake();
+        expect(h.db.prepare("SELECT count(*) n FROM collaboration_outbox").get()).toEqual(count);
+        expect(taskState(h.db)).toEqual(before);
+      } finally { restarted.close(); }
+    } finally { h.service.close(); h.db.close(); }
+  });
+
+  it("redacts and bounds topic hints while retaining the original task titles", async () => {
+    const h = setup(async input => input.sourceEventId === "query" ? decision(input, "status_query") : decision(input, "new_request"));
+    try {
+      for (const [id, text] of [["login", "登录提示调整"], ["payment", "支付提示调整"]]) {
+        h.service.ingestDingTalkMessage(message(id, text)); await h.service.processNaturalIntake();
+      }
+      const title = "WI-PRIVATE api_key=synthetic_private_value 登录提示".repeat(4).slice(0, 120);
+      h.db.prepare("UPDATE collaboration_work_items SET title=? WHERE id=?").run(title, item(h.db, "login"));
+      const before = taskState(h.db);
+      h.service.ingestDingTalkMessage(message("query", "现在进展怎么样？")); await h.service.processNaturalIntake();
+      const text = reply(h.db, "query")!;
+      expect(text).toContain("支付提示调整"); expect(text).toContain("…");
+      expect(text).not.toMatch(/WI-PRIVATE|synthetic_private_value/u); expect(text.length).toBeLessThan(150);
+      expect(taskState(h.db)).toEqual(before);
+    } finally { h.service.close(); h.db.close(); }
+  });
+
+  it.each(["duplicate", "too_many"])("does not invent an exclusive choice when topic hints are %s", async mode => {
+    const h = setup(async input => input.sourceEventId === "query" ? decision(input, "status_query") : decision(input, "new_request"));
+    try {
+      for (let index = 0; index < (mode === "duplicate" ? 2 : 4); index++) {
+        h.service.ingestDingTalkMessage(message("new-" + index, mode === "duplicate" ? "调整登录错误提示。" : "独立修改事项" + index));
+        await h.service.processNaturalIntake();
+      }
+      const before = taskState(h.db);
+      h.service.ingestDingTalkMessage(message("query", "现在进展怎么样？")); await h.service.processNaturalIntake();
+      expect(reply(h.db, "query")).not.toContain("「");
+      expect(item(h.db, "query")).toBeNull(); expect(taskState(h.db)).toEqual(before);
+    } finally { h.service.close(); h.db.close(); }
+  });
+
+  it.each(["unsent", "sent_later", "other_speaker", "other_group"])("does not borrow a direct read-only question when it is %s", async mode => {
+    const h = setup(async input => input.sourceEventId === "query" ? decision(input, "status_query") : decision(input, "new_request"));
+    try {
+      for (const id of ["login", "payment"]) {
+        h.service.ingestDingTalkMessage(message(id, id === "login" ? "登录提示友好一点。" : "支付提示友好一点。"));
+        await h.service.processNaturalIntake(); await deliver(h.db);
+      }
+      h.service.ingestDingTalkMessage(message("query", "现在进展怎么样？")); await h.service.processNaturalIntake();
+      if (["other_speaker", "other_group"].includes(mode)) await deliver(h.db);
+      h.service.ingestDingTalkMessage(message("answer", "登录那个", mode === "other_group" ? "different" : "group", mode === "other_speaker" ? "tester" : "product"));
+      if (mode === "sent_later") await deliver(h.db);
+      expect(readConversationContext(h.db, job(h.db, "answer")).pendingQuestion?.kind).not.toBe("read_only");
+      expect(item(h.db, "answer")).toBeNull();
+    } finally { h.service.close(); h.db.close(); }
+  });
+
+  it.each(["stale", "moved_group"])("omits topic hints if a candidate becomes %s during classification", async mode => {
+    const h = setup(async input => {
+      if (input.sourceEventId !== "query") return decision(input, "new_request");
+      const target = input.candidates.find(candidate => candidate.title.includes("登录"))!.id;
+      if (mode === "stale") h.db.prepare("UPDATE collaboration_work_items SET version=version+1 WHERE id=?").run(target);
+      else h.db.prepare("UPDATE collaboration_work_items SET conversation_id=(SELECT conversation_id FROM collaboration_work_items WHERE title='别群问题') WHERE id=?").run(target);
+      return decision(input, "status_query");
+    });
+    try {
+      for (const [id, text, group] of [["other", "别群问题", "private"], ["login", "登录提示", "group"], ["payment", "支付提示", "group"]]) {
+        h.service.ingestDingTalkMessage(message(id, text, group)); await h.service.processNaturalIntake();
+      }
+      h.service.ingestDingTalkMessage(message("query", "现在进展怎么样？")); await h.service.processNaturalIntake();
+      expect(reply(h.db, "query")).not.toMatch(/登录|支付|别群|「/u);
+      expect(item(h.db, "query")).toBeNull();
+    } finally { h.service.close(); h.db.close(); }
+  });
+
   it("keeps status replies brief without changing the full requirement or its source", async () => {
     const h = setup(async input => decision(input, input.sourceEventId === "new" ? "new_request" : "status_query", input.sourceEventId === "new" ? null : input.candidates[0].id));
     const text = "登录失败后保留用户名、清空密码。账号不存在或密码错误，都提示“账号或密码不正确”；网络断开则提示“网络异常，请稍后重试”。";

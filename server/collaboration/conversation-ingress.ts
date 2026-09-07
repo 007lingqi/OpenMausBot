@@ -101,7 +101,7 @@ export class ConversationIngressCoordinator {
         this.supersedeProgress(job, now);
         enqueueInboundCard(this.db, { sourceEventId: `conversation:${job.source_event_id}`, aggregateType: "association", aggregateId: job.id,
           aggregateVersion: 1, now, card: modifies ? renderPrimaryStatusCard({ workItemId: targetId!, status: "collecting",
-            version: (result.target?.version ?? 0) + 1, association: result.action === "create_work" ? "created" : "associated" }) : renderConversationReplyCard(conversationReply(this.db, result)) });
+            version: (result.target?.version ?? 0) + 1, association: result.action === "create_work" ? "created" : "associated" }) : renderConversationReplyCard(conversationReply(this.db, result, request)) });
         this.db.exec("COMMIT");
         if (modifies) { job.target_work_item_id = targetId; job.status = "routed"; this.finishProjection(job, now); }
       } catch (error) { if (this.db.isTransaction) this.db.exec("ROLLBACK"); throw error; }

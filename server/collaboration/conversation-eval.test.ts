@@ -60,6 +60,27 @@ describe("conversation evaluation uses the real ingress without real delivery or
     expect(status.turns[1].expect.maxReplyLength).toBe(90);
   });
 
+  it("checks named hints and the preserved read-only purpose in a continuous multi-question scenario", async () => {
+    const [scenario] = selectConversationScenarios(["--live", "--scenario", "progress-amid-unanswered-requirements"]);
+    expect(scenario.turns.every(turn => turn.speaker === "product")).toBe(true);
+    expect(scenario.turns[3]).toMatchObject({ text: "登录那个。", expect: { action: "read_status", unchangedRequirements: true, pendingKind: "read_only" } });
+    const model: NaturalIntakeModelPort = { async complete(envelope) {
+      const input = JSON.parse(envelope.user);
+      if (input.candidates) {
+        const turn = Number(input.sourceEventId.split(":").at(-1));
+        return { version: 1, sourceEventId: input.sourceEventId, intent: turn < 2 ? "new_request" : "status_query",
+          targetWorkItemId: turn === 3 ? input.candidates.find((candidate: { title: string }) => candidate.title.includes("登录")).id : null,
+          replySourceEventId: null, quote: input.text, confidence: "high" };
+      }
+      return { version: 1, sourceEventId: input.event.sourceEventId, baseRevision: input.snapshot.revision,
+        goal: null, acceptance: [], answers: [], questions: [] };
+    } };
+    const result = await runConversationEvaluation({ model, scenarios: [scenario] }); directories.push(result.directory);
+    expect(result.report.status).toBe("checks_passed");
+    expect(result.report.turns[2].checks.topicHints).toBe(true);
+    expect(result.report.turns[3].checks.pendingKind).toBe(true);
+  });
+
   it("stops after three model failures instead of retrying or inventing a successful result", async () => {
     let calls = 0;
     const result = await runConversationEvaluation({ model: { async complete() { calls++; throw new Error("private upstream body"); } },
