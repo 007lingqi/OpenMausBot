@@ -1,5 +1,12 @@
 # Meta 协作决策记录
 
+## D-108 — 跨UID停止与实际退出分开验证
+
+- cap-drop后的控制UID0不能给Provider UID10001发信号。通过原setpriv launcher运行固定Node信号代码，检查实际UID/GID；仅允许受信任控制面当前记录的进程组、TERM/KILL，最小环境，不借此增加CAP_KILL、网络或模型能力。
+- interrupt等待实际close，多个调用共享一次过程。提前abort不启动；取消后的exit0不能使任务成功。信号失败不等于进程仍存活或已结束，等待真实close；仍未确认时抛CommandCleanupError并保留私有目录。DockerPatchAgent同时尝试双方停止后传播错误，不再吞掉异常。
+- 三次EPIPE回归同样失败后停止重复运行，449ebc诊断明确macOS退出窗口的process.kill返回EPERM；依据证据改为信号结果与close分开处理，40185/e2019f的30项/typecheck通过。不能把正常退出窗口误判为跨UID能力缺失，也不能把真正未结束的进程误当已收束。
+- 该过程只证明被跟踪CLI关闭及同组信号路径，不是独立supervisor或对脱离进程组后代的完整证明；历史缺失proof仍阻塞自动恢复。完整目标及已有模型尝试次数不变。
+
 ## D-107 — 建议阶段故障不扩大权限，缺失隔离证据不靠终态推断
 
 - 只读Provider不亲自执行后续Executor/Verifier负责的测试；职责分工必须写清，不能为满足项目候选交付要求而扩大建议阶段命令权限。输入写入失败即拒绝建议，即使CLI退出码和JSON均看似成功。

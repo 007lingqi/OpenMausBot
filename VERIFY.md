@@ -1,5 +1,18 @@
 # Meta 协作验证记录
 
+## 2026-09-07 跨UID停止TDD和当前完整回归
+
+- 74926/f6e42f：先行2项红灯（已取消仍启动、interrupt未等待退出）；47f75b真实Linux同cap-drop下也未等待退出。修复后dff692及3137e7证明同UID固定工具的TERM等待、KILL、abort与私有清理通过，外部软链接哨兵不变、modelCalls0。
+- 8f7ab9/341d99/63169a的EPIPE两项连续失败，停止重复，449ebc独立诊断捕获退出窗口kill EPERM；新实现等待真实close而不从信号错误猜测。40185/e2019f exit0：3文件30项、pnpm typecheck和git diff --check通过。包含取消不启动、迟到exit0拒绝、并发停止等待、真正停止失败保留状态、双方清理失败传播及非法PID/错误UID拒绝。
+- 14079/4a48c9已终态exit0：新增真实Linux自动timeout路径后，cleanup smoke、完整pnpm test、typecheck和diff全部通过。ebdb00明确crossUidTimeout等四项true；普通无node_modules包、9个代理路径、model-channel/headless启动退出均通过。业务源码和单测自启动后固定。主集统计输出截断，不补造数量；本批未发模型或切换服务，不宣称独立cgroup完整进程树证明。所有句柄终态，无需再轮询。
+
+## 2026-09-07 同一原事项只读复查与跨UID停止诊断
+
+- 71725/6e230f exit1：原事项/工作树的真实Astra-medium只读复查，无应用、无新业务账本、无群发送。模型调用前写model-attempt-2.json（wx），原七张业务/执行表哈希前后相同；ad6d6a确认output0字节、无proposal/result，不能认为模型完成。完整ID/固定image检查后12364b停止独立复查容器，Pid0/Exited1，数据保留。原执行attempt1未改，独立只读复查ordinal2保留。
+- f2e823为零模型合成Linux探测：同部署cap-drop、setpriv到10001并输出确认UID后，控制UID0调用process.kill(-child.pid,SIGTERM)得到EPERM；子进程随后按自身1秒定时退出。证明生产interrupt的跨UID信号调用无权限，不证明模型此次超时的上游原因。接续修复须测试真实UID环境的TERM、强制退出及等待，不增加容器权限。
+- 78675/27e651：离线新固定镜像构建成功，但脚本健康检查使用wrapper和默认只读/root数据路径而失败；c9aabe复核明确ENOENT。7382f0改为同一固定镜像的headless --health、临时/tmp/health后exit0，schema30，禁群禁执行，无租约。镜像980b42987e593fa21299a5e6d71c8c89c414a8d4197569661bc702e28b0f21bf尚未部署。
+- 所有句柄终态，不重跑已消费review/build脚本；后续真实复查仍须保留原预算与失败。最新运行诊断未修复，不将真实失败覆盖成绿色，不自动提交此诊断记录为已完成代码批次。
+
 ## 2026-09-07 Provider 修复验证收束
 
 - 72060/d45bb6：主集3184 passed/18 skipped（3202登记），287文件通过/1跳过；broker7、桌面32项通过。原链在打包编译遇 smoke fixture 缺 containmentBinding，exit2，不是完整成功。

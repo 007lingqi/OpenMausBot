@@ -1,5 +1,22 @@
 # Meta 协作实施进度
 
+## 当前检查点：跨UID停止修复与完整回归通过，等待真实复查（2026-09-07）
+
+- 上轮是实质进展：保存cecb31c并确认真实复查超时/EPERM。本轮新增同UID固定信号工具；并发interrupt共用停止并等close，失败传播并保留私有状态，提前取消不启动、迟到exit0不成功。未增加容器能力，未解锁旧无proof会话。
+- 74926/f6e42f的2项先行红灯及47f75b真实Linux先行失败确认旧interrupt过早返回；dff692真实TERM/KILL/abort转绿。定向EPIPE连续三次失败（8f7ab9、341d99、63169a）后停止重复并检查事件顺序，449ebc确认macOS进程退出窗口kill返回EPERM；修为只以close解除不确定性。40185/e2019f：3文件30项、typecheck和diff exit0。
+- 14079/4a48c9已终态exit0：真实Linux清理/四类停止（TERM等待、KILL、abort、自动timeout），完整pnpm test、typecheck及diff全部通过；普通/headless打包启动退出及代理检查通过。业务代码/测试保持固定，仅状态说明更新。所有句柄终态，不重复轮询或重启；可保存本批9个本任务文件的本地commit，不push。
+- 没有真实模型调用或新部署，原def5f17群服务仍healthy；第2次只读复查和78675构建均终态。下一步在本批基础上构建固定新镜像，再准备同一原事项第3次有界只读复查，保持原前两次证据；第2次120秒无最终输出不证明上游模型失败，下一次时限须按真实CLI多轮阅读任务评估，不能因取消修复成功而预判建议成功。
+- 本批只修被跟踪CLI停止和错误传播，不是独立cgroup/逃逸进程树证明；旧execution proof缺失不能由此次测试补造。原事项仍不执行写入重试，真实群六场景/在线文档与表格/独立supervisor/VM宿主恢复/Owner验收未完成。20工具轮批次内收束，Goal active。
+
+## 最新接续：真实只读复查因超时不能收束而停止；新镜像未部署（2026-09-07）
+
+- cecb31c已本地提交10个本任务文件；用户AGENTS.md/outputs不动、不push。20项定向、主集及分段打包/typecheck全部通过的边界见下方，不能当真实模型或最终目标成功。
+- 71725/6e230f exit1：在原合成事项WI-EA2FD321158E、原工作树和原证据根新增provider-review-2，只运行真实Astra/medium只读Provider；请求和第2次预留在调用前独占落盘。原工作树只读、不挂Docker socket/原账本/凭据，未应用代码；原业务七张表哈希前后相同。容器fecd51465014…已被本次运维按完整ID/固定image核对后停止，State.Pid0/Exited1并保留，不再轮询或重跑该脚本。
+- ad6d6a确认模型尝试已预留，但无result/proposal，Provider输出0字节；不得称建议通过，模型未完成的上游原因仍未知。超过120秒后仍在运行的直接缺陷是跨UID停止信号被拒：f2e823真实Linux内核合成探测确认controllerUid0→providerUid10001的进程组SIGTERM返回EPERM（原cap-drop配置、modelCalls0）。CodexReadOnlyPatchProvider.interrupt吞掉此错误，强制SIGKILL同样身份；必须先补同UID受限停止/等待测试及实现，不添加CAP_KILL或绕开隔离。
+- 新离线镜像已构建：sha256:980b42987e593fa21299a5e6d71c8c89c414a8d4197569661bc702e28b0f21bf，tag openmausbot-collaboration-pilot:opencodex-cecb31c。构建脚本78675/27e651在错误使用wrapper传--health、且未给临时data目录时exit1；镜像构建本身成功。7382f0显式headless入口及/tmp/health、禁群禁执行健康验证exit0/schema30。不是启用业务运行成功，未切换原healthy def5f17服务。
+- 恢复入口：/private/tmp/omb-run-provider-review-cecb31c.mjs、/private/tmp/omb-provider-review-cecb31c.ts已消费；manifest在/private/tmp/omb-provider-review-build-HfMEXI。原VM证据根的provider-review-2保留请求/预留/私有CLI状态。下一批先修跨UID超时收束，再沿原事项/已有两次记录有界复测；不能创建新账本刷新次数、不能据容器停止补造旧proof。原execution attempt仍1，独立只读复查ordinal2不可与执行attempt混淆。
+- 本批原生Goal active，全部验证/模型/构建句柄终态。20工具轮批次约束下收束；未部署、未发送群消息、未重试文档镜像、未改变Owner/密钥。原事项proof缺失、真实六场景/文档/独立supervisor/VM宿主恢复/Owner本人验收仍待完成。
+
 ## 当前检查点：Provider 修复与分段完整验证通过，原失败事项仍受恢复门禁保护（2026-09-07）
 
 - 72060/d45bb6 已终态 exit2：主集287文件、3184通过/18跳过，broker及桌面测试通过；仅新增 smoke fixture 缺 containmentBinding 阻断打包。补合成 binding 后，79246/82a922 的 typecheck、真实Linux清理、完整 test:packaged-server 和 diff 全部 exit0；62888/b5e184 的20项定向测试再通过。验证分两段完成，不称原 pnpm test 命令 exit0；业务源码/单测从72060启动起未变，只修夹具类型。

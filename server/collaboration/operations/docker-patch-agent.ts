@@ -6,6 +6,8 @@ import type { ContainmentProof } from "../containment.ts";
 import type { AgentRunPort, AgentRunRequest, AgentRunResult } from "../provider-runner.ts";
 import { redactSensitiveText } from "../sensitive-text.ts";
 import { clearProviderOwnedHome } from "./provider-home-cleanup.ts";
+import { signalProviderProcess } from "./provider-process-signal.ts";
+import { CommandCleanupError } from "../execution-limits.ts";
 import {
   DockerCliContainmentSupervisor,
   type DockerCommandPort,
@@ -222,7 +224,8 @@ export class DockerPatchAgent implements AgentRunPort {
   }
 
   async interrupt(runId: string): Promise<void> {
-    await Promise.allSettled([this.provider.interrupt(runId), this.applier.interrupt(runId)]);
+    const results=await Promise.allSettled([this.provider.interrupt(runId), this.applier.interrupt(runId)]);
+    if(results.some(result=>result.status==='rejected'))throw new CommandCleanupError(new Error('provider_interrupt_unconfirmed'));
   }
 }
 
@@ -262,7 +265,9 @@ export class CodexReadOnlyPatchProvider implements ReadOnlyPatchProvider {
   private readonly providerHome: string;
   private readonly forceKillGraceMs: number;
   private readonly launcher: { executable: string; args: string[] } | undefined;
-  private readonly active = new Map<string, ChildProcess>();
+  private readonly active = new Map<string, {
+    child:ChildProcess; closed:Promise<void>; didClose:boolean; stopRequested:boolean; interruption?:Promise<void>;
+  }>();
 
   constructor(input: {
     executable?: string;
@@ -315,6 +320,8 @@ export class CodexReadOnlyPatchProvider implements ReadOnlyPatchProvider {
   }
 
   async propose(request: AgentRunRequest): Promise<PatchProposal & { readOnlyEnforced: true }> {
+    if(request.signal.aborted)throw new Error('codex_patch_provider_cancelled');
+    if(this.active.has(request.runId))throw new Error('codex_patch_provider_already_active');
     const directory = join(this.exchangeRoot, safeName(`${request.runId}-provider`));
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     const schema = join(directory, "schema.json");
@@ -393,6 +400,9 @@ export class CodexReadOnlyPatchProvider implements ReadOnlyPatchProvider {
       }
       return { ...parsed, readOnlyEnforced: true };
     } finally {
+      // Never remove state while a process may still be using it. Retain it for
+      // independent recovery if cancellation failed or exit is unconfirmed.
+      if(this.active.has(request.runId))throw new CommandCleanupError(new Error('provider_exit_unconfirmed'));
       if (localCodexHome && this.providerUid !== undefined && this.providerGid !== undefined) {
         await clearProviderOwnedHome({ home: localCodexHome, uid: this.providerUid, gid: this.providerGid,
           ...(this.launcher ? { launcher: this.launcher } : {}) });
@@ -406,22 +416,42 @@ export class CodexReadOnlyPatchProvider implements ReadOnlyPatchProvider {
   }
 
   async interrupt(runId: string): Promise<void> {
-    const child = this.active.get(runId);
-    if (!child?.pid) return;
-    const pid = child.pid;
-    try {
-      process.kill(process.platform === "win32" ? pid : -pid, "SIGTERM");
-    } catch {}
-    const forceKill = setTimeout(() => {
-      if (this.active.get(runId) !== child) return;
-      try {
-        process.kill(process.platform === "win32" ? pid : -pid, "SIGKILL");
-      } catch {}
-    }, this.forceKillGraceMs);
-    forceKill.unref?.();
+    const active=this.active.get(runId);
+    if(!active||active.didClose)return;
+    active.stopRequested=true;
+    // Share a single stop operation, including its final wait, across callers.
+    active.interruption??=Promise.resolve().then(async()=>{
+      const signal=async(value:'SIGTERM'|'SIGKILL')=>{
+        if(active.didClose)return;
+        if(!active.child.pid)throw new Error('provider_process_identity_missing');
+        await signalProviderProcess({pid:active.child.pid,signal:value,uid:this.providerUid,gid:this.providerGid,launcher:this.launcher});
+      };
+      const waitClosed=async(ms:number)=>{
+        if(active.didClose)return;
+        let timer:ReturnType<typeof setTimeout>|undefined;
+        try{await Promise.race([active.closed,new Promise<void>(resolve=>{timer=setTimeout(resolve,ms);})]);}
+        finally{clearTimeout(timer);}
+      };
+      try{
+        let signalFailed=false;
+        try{await signal('SIGTERM');}catch{signalFailed=true;}
+        // Some kernels deny a signal in the narrow exiting/reaping window.
+        // Only the actual close event can resolve that uncertainty; a failed
+        // signal by itself must never be interpreted as an empty process.
+        await waitClosed(this.forceKillGraceMs);
+        if(!active.didClose&&signalFailed)throw new Error('provider_stop_signal_failed');
+        if(!active.didClose){
+          try{await signal('SIGKILL');}catch{ /* Still require observed close. */ }
+          await waitClosed(2000);
+        }
+        if(!active.didClose)throw new Error('provider_exit_unconfirmed');
+      }catch{throw new CommandCleanupError(new Error('provider_exit_unconfirmed'));}
+    });
+    await active.interruption;
   }
 
   private async runProcess(runId: string, args: string[], prompt: string, signal: AbortSignal, localCodexHome?: string): Promise<void> {
+    if(signal.aborted)throw new Error('codex_patch_provider_cancelled');
     await new Promise<void>((resolvePromise, rejectPromise) => {
       const executable = this.launcher?.executable ?? this.executable;
       const commandArgs = this.launcher ? [...this.launcher.args, this.executable, ...args] : args;
@@ -442,11 +472,20 @@ export class CodexReadOnlyPatchProvider implements ReadOnlyPatchProvider {
         windowsHide: true,
         stdio: ["pipe", "ignore", "pipe"],
       });
-      this.active.set(runId, child);
+      let markClosed!:()=>void;
+      const active={child,closed:new Promise<void>(resolve=>{markClosed=resolve;}),didClose:false,stopRequested:false};
+      this.active.set(runId, active);
       let stderr = Buffer.alloc(0);
       let settled = false;
       let inputFailed = false;
-      const stop = () => void this.interrupt(runId);
+      let processFailed = false;
+      const stop = () => {
+        void this.interrupt(runId).catch(error=>{
+          if(settled)return;
+          settled=true;clearTimeout(timer);signal.removeEventListener('abort',stop);
+          rejectPromise(error);
+        });
+      };
       signal.addEventListener("abort", stop, { once: true });
       const timer = setTimeout(stop, this.timeoutMs);
       timer.unref?.();
@@ -455,19 +494,27 @@ export class CodexReadOnlyPatchProvider implements ReadOnlyPatchProvider {
       });
       child.once("error", (error) => {
         if (settled) return;
+        // Node can report a stdin EPIPE on ChildProcess before its close event.
+        // A known PID still needs the same bounded stop/close path; only a
+        // genuine spawn failure without a PID is immediately terminal.
+        if(child.pid){processFailed=true;stop();return;}
         settled = true;
         clearTimeout(timer);
         signal.removeEventListener("abort", stop);
-        this.active.delete(runId);
+        // A spawn error without a PID cannot leave a provider process behind.
+        if(!child.pid)this.active.delete(runId);
         rejectPromise(error);
       });
       child.once("close", (code) => {
+        active.didClose=true;markClosed();
+        if(this.active.get(runId)===active)this.active.delete(runId);
         if (settled) return;
         settled = true;
         clearTimeout(timer);
         signal.removeEventListener("abort", stop);
-        this.active.delete(runId);
         if (inputFailed) rejectPromise(new Error("codex_patch_provider_input_failed"));
+        else if(processFailed)rejectPromise(new Error('codex_patch_provider_failed:process_error'));
+        else if(active.stopRequested)rejectPromise(new Error('codex_patch_provider_failed:interrupted'));
         else if (code === 0) resolvePromise();
         else rejectPromise(new Error(`codex_patch_provider_failed:${stderr.toString("utf8").slice(0, 500)}`));
       });
@@ -476,6 +523,7 @@ export class CodexReadOnlyPatchProvider implements ReadOnlyPatchProvider {
       // the complete prompt was not delivered. Wait for close before settling.
       child.stdin?.on("error", () => { inputFailed = true; stop(); });
       child.stdin?.end(prompt);
+      if(signal.aborted)stop();
     });
   }
 }

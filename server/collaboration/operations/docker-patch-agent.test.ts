@@ -59,6 +59,58 @@ const proof: ContainmentProof = {
 };
 
 describe("Docker patch Agent", () => {
+  it("does not launch a provider for an already cancelled request", async () => {
+    const directory=mkdtempSync(join(tmpdir(),'provider-pre-abort-'));
+    const marker=join(directory,'launched'),executable=join(directory,'cli.mjs');
+    writeFileSync(executable,`#!/usr/bin/env node\nimport{writeFileSync}from'node:fs';writeFileSync(${JSON.stringify(marker)},'launched');`,{mode:0o700});
+    const provider=new CodexReadOnlyPatchProvider({executable,exchangeRoot:join(directory,'exchange'),forceKillGraceMs:20});
+    const controller=new AbortController();controller.abort();
+    await expect(provider.propose({...request(),signal:controller.signal})).rejects.toThrow('codex_patch_provider_cancelled');
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it("waits for termination and rejects a late exit-zero proposal after concurrent interrupts", async () => {
+    const directory=mkdtempSync(join(tmpdir(),'provider-wait-stop-'));
+    const marker=join(directory,'ready'),ended=join(directory,'ended'),executable=join(directory,'cli.mjs');
+    writeFileSync(executable,`#!/usr/bin/env node\nimport{writeFileSync}from'node:fs';
+      for await(const chunk of process.stdin){};
+      const args=process.argv.slice(2);writeFileSync(args[args.indexOf('--output-last-message')+1],JSON.stringify({status:'completed',summary:'late output',changes:[]}));
+      process.on('SIGTERM',()=>setTimeout(()=>{writeFileSync(${JSON.stringify(ended)},'ended');process.exit(0);},100));
+      writeFileSync(${JSON.stringify(marker)},'ready');setInterval(()=>{},1000);`,{mode:0o700});
+    const provider=new CodexReadOnlyPatchProvider({executable,exchangeRoot:join(directory,'exchange'),forceKillGraceMs:1000});
+    const outcome=provider.propose(request()).then(()=> 'accepted',e=>e.message);
+    await vi.waitFor(()=>expect(existsSync(marker)).toBe(true),{timeout:2000});
+    await Promise.all([provider.interrupt('run-1'),provider.interrupt('run-1')]);
+    expect(existsSync(ended)).toBe(true);
+    expect(await outcome).toBe('codex_patch_provider_failed:interrupted');
+  });
+
+  it("preserves private state and rejects cancellation when signalling is denied", async () => {
+    const directory=mkdtempSync(join(tmpdir(),'provider-denied-stop-')),marker=join(directory,'ready'),executable=join(directory,'cli.mjs');
+    writeFileSync(executable,`#!/usr/bin/env node\nimport{writeFileSync}from'node:fs';for await(const c of process.stdin){};writeFileSync(${JSON.stringify(marker)},'ready');setTimeout(()=>process.exit(0),600);`,{mode:0o700});
+    const provider=new CodexReadOnlyPatchProvider({executable,exchangeRoot:join(directory,'exchange'),forceKillGraceMs:20});
+    const controller=new AbortController();
+    const outcome=provider.propose({...request(),signal:controller.signal}).then(()=>null,error=>error);
+    await vi.waitFor(()=>expect(existsSync(marker)).toBe(true));
+    const denied=vi.spyOn(process,'kill').mockImplementation(()=>{throw Object.assign(new Error('private details must not leak'),{code:'EPERM'});});
+    try{
+      controller.abort();
+      const error=await outcome;
+      expect(error?.name).toBe('CommandCleanupError');
+      expect(String(error)).not.toContain('private details');
+      expect(existsSync(join(directory,'exchange','omb-run-1-provider'))).toBe(true);
+      await expect(provider.interrupt('run-1')).rejects.toHaveProperty('name','CommandCleanupError');
+    }finally{denied.mockRestore();await new Promise(resolve=>setTimeout(resolve,650));}
+  });
+
+  it("propagates a provider stop failure after attempting both cleanup paths", async()=>{
+    const provider={propose:vi.fn(),interrupt:vi.fn(async()=>{throw Error('unconfirmed');})};
+    const applier={apply:vi.fn(),interrupt:vi.fn(async()=>{})};
+    const agent=new DockerPatchAgent({provider,applier});
+    await expect(agent.interrupt('run-1')).rejects.toHaveProperty('name','CommandCleanupError');
+    expect(provider.interrupt).toHaveBeenCalledWith('run-1');expect(applier.interrupt).toHaveBeenCalledWith('run-1');
+  });
+
   it.each([0, 7])("rejects a provider that closes stdin early without crashing the host (exit %s)", exitCode => {
     const directory=mkdtempSync(join(tmpdir(),'docker-provider-early-exit-'));
     const executable=join(directory,'early-exit.mjs');
