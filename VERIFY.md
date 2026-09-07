@@ -1,5 +1,15 @@
 # Meta 协作验证记录
 
+## 2026-09-07 纯对话自然回复第一批（本地完整验证通过/未部署）
+
+- 7532d6确认7c78b4/session61699整链exit0：`pnpm test && pnpm typecheck && git diff --check`全部通过。主集310文件通过/1跳过，3599项通过/18跳过；broker7项、桌面15+5+2+10项通过。打包服务无node_modules启动、9代理路径、headless健康/退出、合成模型与文档host/relay启动退出通过。源码与测试保持固定，仅文档更新；所有会话终态。本批仅本地保存，不push或部署，真实Astra、多参与者与纯对话六场景仍待验收。
+
+- 5e77f0：新增session-message.test.ts，14项中12项预期红灯。复现planning无失败时误报环境故障、Owner拒绝和未知状态泄露内部证据、普通回复冗余与高风险标题误导。
+- bfdd90/98345f：`pnpm exec vitest run server/integrations/dingtalk/session-message.test.ts server/integrations/dingtalk/sender.test.ts && pnpm typecheck`终态exit0，29项通过。实际Markdown序列化/业务响应使用网络替身，没有真实投递。
+- 39e048/506a99：扩大定向30文件388项中387通过/1失败，仅interactive-card-sender.test.ts主动Markdown分支的旧标题断言；更换该断言后启动c33fd7/session87510重新验证，所有权限/批准指令/Secret与业务失败断言保留。
+- 06f8e2确认c33fd7/session87510扩大定向30文件388项通过。随后完整集因本机端口/Unix socket被沙箱拒绝无法正常运行；dd15c2最小loopback探针明确EPERM。2231e4定位本次唯一Vitest PID，30c7a3中断、30c09b确认exit130，无完整计数；这是已停止的环境受限运行，不是完整通过。类型和打包后续链未执行。
+- 7c78b4/session61699在获准本机测试权限下重跑，最终通过见本节首条；受测源码与测试自c33fd7保持固定。没有通过关闭断言或跳过受限用例制造通过，也未调用真实Astra或钉钉发送。
+
 ## 2026-09-07 用户授权纯对话范围与自然性review（未改运行代码）
 
 - 用户明确移出钉钉Bug文档，并授权修改目标；SPEC/PROGRESS/D-129与docs/pilot/pmo-conversation-goal.md已采用新的纯对话范围。旧材料账号缺口不再阻塞当前范围，旧文档/附件验收保留历史，不标通过或删除。原生Goal接口不支持改写未完成目标，CUA拒绝控制Codex自身，因此应用内旧卡片未改，未调用complete/create_goal绕过。

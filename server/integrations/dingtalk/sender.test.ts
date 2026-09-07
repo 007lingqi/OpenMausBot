@@ -85,11 +85,10 @@ describe("DingTalk session sender", () => {
       summary: "把 pilot-output.txt 的内容修改为 hello pilot，并运行 pilot 验证。",
     });
     const markdown = (requestBody as { markdown: { title: string; text: string } }).markdown;
-    expect(markdown.title).toBe("方案已确认，准备执行");
-    expect(markdown.text).toContain("任务内容");
-    expect(markdown.text).toContain("当前进度：准备开始");
-    expect(markdown.text).toContain("下一步：系统将自动执行，完成后直接通知结果");
-    expect(markdown.text).toContain("任务编号");
+    expect(markdown.title).toBe("准备开始修改");
+    expect(markdown.text).toContain("的内容修改为 hello pilot");
+    expect(markdown.text).toContain("完成后会告诉你改动结果和验证情况");
+    expect(markdown.text).not.toMatch(/任务编号|当前进度|任务内容/u);
     expect(markdown.text).not.toContain("ready_for_execution");
     expect(markdown.text).not.toContain("Work Item");
   });
@@ -117,7 +116,7 @@ describe("DingTalk session sender", () => {
       ],
     });
     const markdown = (requestBody as { markdown: { title: string; text: string } }).markdown;
-    expect(markdown.title).toBe("修改完成，需要负责人确认");
+    expect(markdown.title).toBe("待负责人审批");
     expect(markdown.text).toContain("涉及部署或运行环境");
     expect(markdown.text).toContain("@研发助手 批准 WI\\-D183F9E734FE");
     expect(markdown.text).toContain("@研发助手 退回 WI\\-D183F9E734FE 请说明原因");
@@ -147,11 +146,11 @@ describe("DingTalk session sender", () => {
       resultHighlights: ["产品和测试人员可以直接看到本次变化", "普通修改不再需要重复确认"],
     });
     const markdown = (requestBody as { markdown: { title: string; text: string } }).markdown;
-    expect(markdown.title).toBe("修改已完成");
+    expect(markdown.title).toBe("修改完成");
     expect(markdown.text).toContain("发布看板现在会显示清晰的完成结果");
     expect(markdown.text).toContain("产品和测试人员可以直接看到本次变化");
-    expect(markdown.text).toContain("验证情况：相关检查已通过");
-    expect(markdown.text).toContain("当前状态：已完成，无需再次确认");
+    expect(markdown.text).toContain("相关检查已通过");
+    expect(markdown.text).not.toMatch(/任务编号|当前状态|验证情况：/u);
     expect(markdown.text).not.toContain("接受");
     expect(markdown.text).not.toContain("candidate");
     expect(markdown.text).not.toContain("SHA");
@@ -258,9 +257,8 @@ describe("DingTalk session sender", () => {
       .resolves.toEqual({ ok: true, status: 200 });
     const markdown = (requestBody as { markdown: { title: string; text: string } }).markdown;
     expect(markdown.title).toBe("需求已收到");
-    expect(markdown.text).toContain("已收到你的需求，正在整理。当前尚未开始执行");
-    expect(markdown.text).toContain("当前进度：正在整理需求");
-    expect(markdown.text).toContain("任务编号");
+    expect(markdown.text).toContain("正在整理你的需求，还没有开始修改");
+    expect(markdown.text).not.toMatch(/任务编号|当前进度/u);
     expect(markdown.text).not.toContain("collecting");
     expect(markdown.text).not.toContain("Work Item");
     expect(markdown.text).not.toContain("协作账本");
@@ -278,7 +276,7 @@ describe("DingTalk session sender", () => {
     });
     const markdown = (requestBody as { markdown: { text: string } }).markdown.text;
     expect(markdown).toContain("已收到你的需求和 2 个附件");
-    expect(markdown).toContain("当前进度：读取附件");
+    expect(markdown).toContain("正在安全读取附件内容");
     expect(markdown).toContain("读取完成前不会开始修改");
     expect(markdown).not.toContain("已读取");
     expect(markdown).not.toContain("修改完成");

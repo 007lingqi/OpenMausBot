@@ -117,7 +117,7 @@ describe("DingTalk interactive card sender", () => {
       robotCode: "app-key",
     });
     const message = JSON.parse(String(body.msgParam)) as { title: string; text: string };
-    expect(message.title).toBe("修改完成，需要负责人确认");
+    expect(message.title).toBe("待负责人审批");
     expect(message.text).toContain("@研发助手 批准 WI\\-1");
     expect(message.text).not.toContain("accept_code_");
   });

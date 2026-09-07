@@ -238,7 +238,7 @@ export function renderPlanStatusCard(input: {
       workItemId: input.workItemId,
       planRevision: input.planRevision,
       status: input.status,
-      failures: input.failures ?? ["未知计划错误"],
+      failures: input.failures ?? ["修改方案还没整理完成，具体原因还需核查；目前没有开始修改。"],
     };
   }
   if (input.status === "candidate_ready") {
@@ -265,7 +265,7 @@ export function renderPlanStatusCard(input: {
       workItemId: input.workItemId,
       status: input.status,
       summary: input.summary ?? "已按确认的需求完成修改。",
-      resultHighlights: input.resultHighlights ?? ["相关功能已按确认要求更新"],
+      resultHighlights: input.resultHighlights ?? [],
       approvalRequired: false,
     };
   }
@@ -279,6 +279,8 @@ export function renderPlanStatusCard(input: {
       status: input.status,
       failures: input.failures ?? [input.status === "verification_pending"
         ? "正在核对验收要求与测试的对应关系，尚未确认修改完成。"
+        : input.status === "execution_failed"
+        ? "这次修改没有完成，具体原因还需核查。请负责人检查后再决定是否重试。"
         : "本次修改尚未通过验证。"],
     };
   }

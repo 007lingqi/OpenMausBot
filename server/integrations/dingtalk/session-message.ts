@@ -17,7 +17,8 @@ function text(value: unknown, fallback: string, maximum = 4_000): string {
 
 function stringList(value: unknown, maximum = 8): string[] {
   if (!Array.isArray(value)) return [];
-  return value.slice(0, maximum).map((entry) => text(entry, "unknown", 256));
+  return value.slice(0, maximum).flatMap((entry) =>
+    typeof entry === "string" && entry.trim() ? [text(entry, "", 256)] : []);
 }
 
 function associationCandidates(value: unknown): Array<{ title: string }> {
@@ -27,17 +28,6 @@ function associationCandidates(value: unknown): Array<{ title: string }> {
     const title = typeof candidate?.title === "string" ? candidate.title.trim() : "";
     return title ? [{ title: text(title, "待确认问题", 120) }] : [];
   });
-}
-
-function diffPreview(value: unknown, maximum = 3_500): string | null {
-  if (typeof value !== "string") return null;
-  const normalized = value
-    .trim()
-    .slice(0, maximum)
-    .replaceAll("\r", "")
-    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu, "�")
-    .replaceAll("`", "ˋ");
-  return normalized || null;
 }
 
 function readableStatus(value: unknown): string {
@@ -60,15 +50,37 @@ function userFacingSummary(value: unknown, fallback: string): string {
   return /[\u3400-\u9fff]/u.test(summary) ? summary : fallback;
 }
 
-function failureGuidance(value: unknown): string[] {
+const PLAN_HEADLINES: Record<string, string> = {
+  planning: "正在整理修改方案",
+  ready_for_execution: "准备开始修改",
+  planning_failed: "修改方案还没整理完成",
+  candidate_ready: "待负责人审批",
+  completed: "修改完成",
+  execution_failed: "执行未完成",
+  verification_pending: "正在核对修改结果",
+  verification_blocked: "修改结果尚未通过复核",
+  owner_accepted: "修改已确认完成",
+  owner_rejected: "已退回修改",
+  owner_action_denied: "审批操作未执行",
+};
+
+function failureGuidance(value: unknown, status: string): string[] {
   const failures = Array.isArray(value) ? value : [];
   const readable = failures
     .filter((item): item is string => typeof item === "string")
-    .filter((item) => /[\u3400-\u9fff]/u.test(item))
+    .filter((item) => /[\u3400-\u9fff]/u.test(item) && item !== "未知计划错误")
     .slice(0, 3);
-  return readable.length
-    ? readable
-    : ["执行环境暂不可用，本次没有产生可验收修改。请由任务负责人检查后使用“重试”命令。"];
+  if (readable.length) return readable;
+  if (status === "execution_failed" && failures.includes("provider_sandbox_unavailable")) {
+    return ["执行环境暂不可用，这次修改没有完成。请负责人检查后再决定是否重试。"];
+  }
+  // Missing or unfamiliar evidence cannot establish the cause of a failure.
+  return [{
+    planning_failed: "修改方案还没整理完成，具体原因还需核查；目前没有开始修改。",
+    execution_failed: "这次修改没有完成，具体原因还需核查。请负责人检查后再决定是否重试。",
+    verification_pending: "正在核对修改结果，还不能确认已完成。",
+    verification_blocked: "修改结果尚未通过复核，目前不能标记完成。请负责人核查验证情况。",
+  }[status] ?? "暂时无法确认最新进度，请负责人核查。"];
 }
 
 /** Converts internal status-card data to the documented DingTalk session-webhook message shape. */
@@ -77,19 +89,9 @@ export function renderDingTalkSessionMessage(payload: unknown): Record<string, u
   const type = typeof card?.type === "string" ? card.type : "unknown";
   const status = typeof card?.status === "string" ? card.status : "";
   const headline = type === "primary_status_card"
-    ? "需求已收到"
-    : status === "ready_for_execution"
-    ? "方案已确认，准备执行"
-    : status === "candidate_ready"
-      ? "修改完成，需要负责人确认"
-    : status === "completed"
-      ? "修改已完成"
-    : status === "owner_accepted"
-      ? "修改已确认完成"
-    : status === "owner_rejected"
-      ? "已退回修改"
-    : status === "owner_action_denied"
-      ? "验收操作未执行"
+    ? card?.association === "associated" ? "补充已收到" : "需求已收到"
+    : type === "plan_status_card"
+      ? (Object.hasOwn(PLAN_HEADLINES, status) ? PLAN_HEADLINES[status] : "进度待核查")
     : type === "command_status_card"
       ? text(card?.headline, "任务状态", 120)
     : text(card?.headline, "协作状态更新", 120);
@@ -103,11 +105,10 @@ export function renderDingTalkSessionMessage(payload: unknown): Record<string, u
       "",
       resourceCount
         ? `已收到你的需求和 ${resourceCount} 个附件，正在安全读取附件内容。`
-        : "已收到你的需求，正在整理。当前尚未开始执行。",
-      "",
-      resourceCount ? "- 当前进度：读取附件" : "- 当前进度：正在整理需求",
-      ...(resourceCount ? ["- 读取完成前不会开始修改"] : []),
-      `- 任务编号：\`${text(card?.workItemId, "unavailable", 128)}\``,
+        : card?.association === "associated"
+        ? "会结合前面的需求一起整理。"
+        : "正在整理你的需求，还没有开始修改。",
+      ...(resourceCount ? ["读取完成前不会开始修改。"] : []),
     );
   } else if (type === "association_choice_card") {
     lines.push(
@@ -128,7 +129,7 @@ export function renderDingTalkSessionMessage(payload: unknown): Record<string, u
       ? "请补充问题名称或原需求内容，我再确认归属。"
       : card?.allowOrdinalSelection === true
       ? "直接说“第二个”就可以选择，不用重复刚才的内容。也可以继续补充；如果这是新问题，请直接描述。"
-      : "请回复“继续【问题标题】，补充：具体内容”，或者回复“这是新问题：具体内容”。");
+      : "请说明要继续的问题名称，或告诉我这是新问题。");
   } else if (type === "invalid_reference_card") {
     lines.push("", "引用的问题不可用。", "", `- 引用: \`${text(card?.reference, "unknown", 128)}\``);
   } else if (type === "clarification_card") {
@@ -176,21 +177,19 @@ export function renderDingTalkSessionMessage(payload: unknown): Record<string, u
     if (card?.controlState) lines.push(`- 控制状态：${readableStatus(card.controlState)}`);
     }
   } else if (type === "plan_status_card") {
-    if (status === "ready_for_execution") {
+    if (status === "planning") {
+      lines.push("", "正在整理修改方案，还没有开始修改。");
+    } else if (status === "ready_for_execution") {
       lines.push(
         "",
-        "**任务内容**",
+        text(userFacingSummary(card?.summary, "会按已确认的需求开始修改。"), "按已确认的需求执行。", 1_000),
         "",
-        text(userFacingSummary(card?.summary, "已确认任务范围，系统将按受控计划执行。"), "按已确认的需求执行。", 1_000),
-        "",
-        "- 当前进度：准备开始",
-        "- 下一步：系统将自动执行，完成后直接通知结果",
-        `- 任务编号：\`${text(card?.workItemId, "unavailable", 128)}\``,
+        "完成后会告诉你改动结果和验证情况。",
       );
     } else if (status === "candidate_ready") {
       lines.push(
         "",
-        text(card?.summary, "本次改动已完成并通过基础验证，但存在需要负责人确认的风险。", 1_000),
+        text(card?.summary, "改动已准备好，但存在需要负责人确认的风险，任务尚未完成。", 1_000),
         "",
         "**需要确认的原因**",
       );
@@ -206,58 +205,30 @@ export function renderDingTalkSessionMessage(payload: unknown): Record<string, u
         `- 需要调整：@研发助手 退回 ${workItemId} 请说明原因`,
       );
     } else if (status === "completed") {
-      lines.push(
-        "",
-        `**已完成：${text(card?.summary, "已按确认的需求完成修改。", 1_000)}**`,
-        "",
-        "**本次变化**",
-      );
-      const highlights = stringList(card?.resultHighlights, 3);
-      for (const highlight of highlights.length ? highlights : ["相关功能已按确认要求更新"]) {
-        lines.push(`- ${highlight}`);
-      }
-      lines.push(
-        "",
-        "- 验证情况：相关检查已通过",
-        "- 当前状态：已完成，无需再次确认",
-        `- 任务编号：${text(card?.workItemId, "unavailable", 128)}`,
-      );
-    } else if (["execution_failed", "verification_pending", "verification_blocked"].includes(status)) {
-      lines.push("", ...failureGuidance(card?.failures).map(message => text(message, "本次修改尚未通过验证。", 1_000)));
+      const summary = text(userFacingSummary(card?.summary, "已按确认的需求完成修改。"), "已按确认的需求完成修改。", 1_000);
+      lines.push("", summary);
+      const highlights = [...new Set(stringList(card?.resultHighlights, 3))]
+        .filter(highlight => highlight !== summary && highlight !== "相关功能已按确认要求更新");
+      if (highlights.length) lines.push("", ...highlights.map(highlight => `- ${highlight}`));
+      lines.push("", "相关检查已通过。");
+    } else if (["planning_failed", "execution_failed", "verification_pending", "verification_blocked"].includes(status)) {
+      lines.push("", ...failureGuidance(card?.failures, status).map(message => text(message, "本次修改尚未通过验证。", 1_000)));
     } else if (status === "owner_accepted") {
       lines.push(
         "",
         "负责人已批准本次风险改动，任务已完成。",
-        `- 任务编号：${text(card?.workItemId, "unavailable", 128)}`,
       );
     } else if (status === "owner_rejected") {
       lines.push(
         "",
         "负责人已退回本次结果，系统将按反馈重新整理并执行。",
-        `- 任务编号：\`${text(card?.workItemId, "unavailable", 128)}\``,
       );
     } else if (status === "owner_action_denied") {
       lines.push(
         "",
         text(card?.summary, "该验收操作未通过身份或候选状态校验，请使用最新消息中的验收指令。", 1_000),
       );
-    } else lines.push(
-      "",
-      `- Work Item: \`${text(card?.workItemId, "unavailable", 128)}\``,
-      `- 状态: ${text(card?.status, "planning", 80)}`,
-    );
-    if (!["ready_for_execution", "candidate_ready", "completed", "owner_accepted", "owner_rejected",
-      "execution_failed", "verification_pending", "verification_blocked"].includes(status)) {
-      if (typeof card?.summary === "string" && card.summary.trim()) lines.push(`- 摘要: ${text(card.summary, "", 1_000)}`);
-      if (typeof card?.candidateSha === "string" && card.candidateSha.trim()) {
-        lines.push(`- Candidate: \`${text(card.candidateSha, "unavailable", 128)}\``);
-      }
-      for (const path of stringList(card?.changedPaths)) lines.push(`- 变更: \`${path}\``);
-      for (const state of stringList(card?.testStates)) lines.push(`- 测试: ${state}`);
-      const preview = diffPreview(card?.candidatePreview);
-      if (preview) lines.push("", "**候选内容预览**", "", "```diff", preview, "```");
-      for (const failure of failureGuidance(card?.failures)) lines.push(`- 处理建议：${text(failure, "请联系维护人员检查。", 1_000)}`);
-    }
+    } else lines.push("", "暂时无法确认最新进度，请负责人核查。");
   } else {
     lines.push("", "协作状态已更新，请查看受控审计记录。");
   }
