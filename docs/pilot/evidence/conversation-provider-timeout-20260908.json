@@ -1,0 +1,84 @@
+{
+  "date": "2026-09-08",
+  "status": "fix_verified_on_original_proposal_pending_rollout",
+  "goalStatus": "active",
+  "workItem": "WI-5C68D17B361E",
+  "businessRun": "a46a7aac-9547-4376-989b-9d377ea24dac",
+  "businessAttempt": 3,
+  "businessAttemptCountUnchanged": true,
+  "businessDelivered": false,
+  "input": {
+    "specRevision": 4,
+    "planRevision": 2,
+    "baseSha": "0837a3fc6f02be0c6b067f63749f19d8d7104154",
+    "requestHash": "61e5d1edbc348c814ae0d35cf5efb9b43f504045cf2279ea321118c73f8c45ca",
+    "viewFiles": 31,
+    "writeScopes": ["app/**", "tests/**"]
+  },
+  "diagnosticSafety": {
+    "mode": "proposal_only",
+    "model": "gpt-6-astra",
+    "reasoningEffort": "medium",
+    "network": "none",
+    "sourceMount": "sanitized_read_only_view",
+    "ledgerMountedDuringModel": false,
+    "candidateMountedDuringModel": false,
+    "applyGateExists": false,
+    "rawModelLogsRetained": false,
+    "originalWorktreeUnchanged": true
+  },
+  "reproduction": {
+    "container": "omb-proposal-diagnostic-20260908",
+    "providerDurationMs": 385845,
+    "providerCode": "provider_process_failed",
+    "cliExitCode": 1,
+    "containerExitCode": 0,
+    "containerPid": 0,
+    "applied": false,
+    "receipt": "7ef993"
+  },
+  "instrumentedReproduction": {
+    "container": "omb-proposal-trace-20260908",
+    "firstFourRequests": "completed",
+    "timeouts": [
+      {"sequence": 5, "stage": "stream", "outcome": "timeout", "upstreamStatus": 200, "durationMs": 60006.488935, "firstByteMs": 1481.326643, "inputBytes": 79975, "outputBytes": 607926},
+      {"sequence": 6, "stage": "stream", "outcome": "timeout", "upstreamStatus": 200, "durationMs": 60007.696156, "firstByteMs": 2385.696712, "inputBytes": 81877, "outputBytes": 605498}
+    ],
+    "stoppedAfterEvidence": true,
+    "containerExitCode": 137,
+    "containerPid": 0,
+    "applied": false,
+    "receipts": ["08e57f", "c26b74", "8f8b85"]
+  },
+  "causalConclusion": {
+    "reproducedCause": "The existing 60-second hard gateway deadline terminates successful long SSE responses in the original task context.",
+    "historicalLink": "The historical worker removed detailed errors; its exact last request cannot be recovered. A same-context diagnostic reproduces the approximately 386-second CLI failure, and the instrumented run directly observes the deadline.",
+    "notRuledOut": ["additional provider or proposal-validation defects after transport is fixed"]
+  },
+  "fixedReproduction": {
+    "container": "omb-proposal-fixed-20260908",
+    "isolatedDiagnosticPort": 18105,
+    "sourceInputUnchanged": true,
+    "modelUnchanged": true,
+    "finalRequest": {"sequence": 5, "stage": "stream", "outcome": "completed", "upstreamStatus": 200, "inputBytes": 81057, "outputBytes": 1606316, "durationMs": 154395.557772, "firstByteMs": 1272.828052},
+    "proposalStatus": "completed",
+    "proposalValidation": "passed",
+    "durationMs": 178895,
+    "changeCount": 3,
+    "proposedBytes": 16298,
+    "proposalHash": "42ce15eccabd2733ac032b6e7f8a12e51ef3d0ec278c13188c5f853323a4cce0",
+    "cliExitCode": 0,
+    "applied": false,
+    "receipt": "6fda19",
+    "diagnosticBridgeClosedReceipt": "796254"
+  },
+  "validation": {
+    "diagnostics": "50 tests and typecheck passed; independently rechecked",
+    "readyReply": "real introductory-sentence regression red, then 72 related tests passed",
+    "offlineCliProtocol": "CLI 0.146.0 completed two synthetic SSE requests including tool result and final JSON; no real model calls",
+    "timeoutFix": "11 expected red tests, 62 passed and typecheck; independently rechecked 62 passed",
+    "fixedRealModel": "original-context read-only proposal and actual validator passed; not applied",
+    "fullRegression": {"command": "pnpm test && pnpm typecheck && git diff --check", "session": 88677, "terminalReceipt": "8e741a", "exitCode": 0, "includes": ["main test floor", "broker", "Node desktop tests", "packaged server", "headless startup", "typecheck", "diff check"], "earlierInconclusiveRun": "sandbox-limited session68797 deliberately stopped with143; not counted as passed"},
+    "deployment": "pending"
+  }
+}

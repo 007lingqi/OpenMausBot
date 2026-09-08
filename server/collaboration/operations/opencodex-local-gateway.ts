@@ -3,6 +3,25 @@ import {once} from 'node:events';
 import {abortable} from './opencodex-stream.ts';
 
 const INPUT_LIMIT=1024*1024, OUTPUT_LIMIT=8*1024*1024, MAX_ACTIVE=4;
+const TOTAL_TIMEOUT_MS=15*60_000, IDLE_TIMEOUT_MS=60_000, ADMISSION_TIMEOUT_MS=60_000;
+export type LocalOpenCodexDiagnosticOutcome='completed'|'route_denied'|'headers_denied'|'input_limit'|'busy'|
+  'json_invalid'|'request_denied'|'request_error'|'upstream_http_rejected'|'upstream_protocol_rejected'|
+  'upstream_error'|'output_limit'|'timeout'|'client_disconnected'|'stopping';
+/** One terminal transport observation, never model output or business evidence.
+ * Byte counts cover bytes actually read, including the chunk exceeding a limit.
+ * Timing is relative to request handling; firstByteMs is the first nonempty SSE
+ * body chunk, not response headers. Rejected upstream bodies are never read. */
+export interface LocalOpenCodexDiagnostic {
+  stage:'request'|'upstream'|'stream';
+  outcome:LocalOpenCodexDiagnosticOutcome;
+  inputBytes:number;
+  outputBytes:number;
+  durationMs:number;
+  firstByteMs:number|null;
+  upstreamStatus:number|null;
+  timeoutKind?:'admission'|'idle'|'total';
+}
+export type LocalOpenCodexDiagnosticObserver=(diagnostic:Readonly<LocalOpenCodexDiagnostic>)=>void|Promise<void>;
 const object=(value:unknown):value is Record<string,unknown> => !!value && typeof value==='object' && !Array.isArray(value);
 function localTool(value:unknown, nested=false):boolean {
   if(!object(value))return false;
@@ -29,69 +48,110 @@ function fail(response:ServerResponse,status:number,code:string):void {
  * forwards caller headers, executes tools, or logs request/response bodies.
  * Access from the pilot must be separately restricted to its private channel. */
 export async function startLocalOpenCodexGateway(options:{
-  endpoint:string; port?:number; fetch?:typeof globalThis.fetch; timeoutMs?:number;
+  endpoint:string; port?:number; fetch?:typeof globalThis.fetch;
+  /** Hard request lifetime, never extended by upstream progress. */
+  timeoutMs?:number;
+  /** Upstream silence limit, refreshed only at headers or nonempty body chunks. */
+  idleTimeoutMs?:number;
+  onDiagnostic?:LocalOpenCodexDiagnosticObserver;
 }):Promise<{url:string;close:()=>Promise<void>}> {
   let endpoint:URL;
   try {endpoint=new URL(options.endpoint);}catch{throw new Error('local_gateway_configuration_invalid');}
-  const timeoutMs=options.timeoutMs??60000, port=options.port??0;
+  const timeoutMs=options.timeoutMs??TOTAL_TIMEOUT_MS,idleTimeoutMs=options.idleTimeoutMs??IDLE_TIMEOUT_MS,port=options.port??0;
   if(endpoint.protocol!=='http:'||!['127.0.0.1','[::1]'].includes(endpoint.hostname)||
     endpoint.pathname!=='/v1/responses'||endpoint.username||endpoint.password||endpoint.search||endpoint.hash||
-    !Number.isSafeInteger(port)||port<0||port>65535||!Number.isSafeInteger(timeoutMs)||timeoutMs<1||timeoutMs>120000)
+    !Number.isSafeInteger(port)||port<0||port>65535||!Number.isSafeInteger(timeoutMs)||timeoutMs<1||timeoutMs>TOTAL_TIMEOUT_MS||
+    !Number.isSafeInteger(idleTimeoutMs)||idleTimeoutMs<1||idleTimeoutMs>IDLE_TIMEOUT_MS)
     throw new Error('local_gateway_configuration_invalid');
   const fetcher=options.fetch??globalThis.fetch;
   const controllers=new Set<AbortController>();
   let closing=false;
   const handle=async(request:IncomingMessage,response:ServerResponse)=>{
-    if(closing){fail(response,503,'local_gateway_stopping');return;}
+    const started=performance.now();
+    let stage:LocalOpenCodexDiagnostic['stage']='request',outcome:LocalOpenCodexDiagnosticOutcome|undefined;
+    let timeoutKind:LocalOpenCodexDiagnostic['timeoutKind'];
+    let inputBytes=0,outputBytes=0,firstByteMs:number|null=null,upstreamStatus:number|null=null;
+    try {
+    if(closing){outcome='stopping';fail(response,503,'local_gateway_stopping');return;}
     if(request.method!=='POST'||request.url!=='/v1/responses'){
-      fail(response,404,'local_gateway_route_denied');request.resume();return;
+      outcome='route_denied';fail(response,404,'local_gateway_route_denied');request.resume();return;
     }
     if(request.headers.origin!==undefined||request.headers.authorization!==undefined||request.headers.cookie!==undefined||
       request.headers['sec-fetch-site']!==undefined||request.headers['content-type']?.split(';')[0].trim()!=='application/json'){
-      fail(response,400,'local_gateway_headers_denied');request.resume();return;
+      outcome='headers_denied';fail(response,400,'local_gateway_headers_denied');request.resume();return;
     }
-    if(Number(request.headers['content-length'])>INPUT_LIMIT){fail(response,413,'local_gateway_input_limit');request.resume();return;}
-    if(controllers.size>=MAX_ACTIVE){fail(response,429,'local_gateway_busy');request.resume();return;}
+    if(Number(request.headers['content-length'])>INPUT_LIMIT){outcome='input_limit';fail(response,413,'local_gateway_input_limit');request.resume();return;}
+    if(controllers.size>=MAX_ACTIVE){outcome='busy';fail(response,429,'local_gateway_busy');request.resume();return;}
     const controller=new AbortController();controllers.add(controller);
-    const timer=setTimeout(()=>{controller.abort();if(!request.complete)request.destroy();},timeoutMs);
-    const disconnected=()=>{if(!response.writableFinished)controller.abort();};
+    let abortOutcome:'timeout'|'client_disconnected'|'stopping'|undefined;
+    const expire=(kind:NonNullable<LocalOpenCodexDiagnostic['timeoutKind']>)=>{
+      if(controller.signal.aborted)return;
+      abortOutcome='timeout';timeoutKind=kind;controller.abort();if(!request.complete)request.destroy();
+    };
+    const totalTimer=setTimeout(()=>expire('total'),timeoutMs);
+    // Slow inbound clients retain the original one-minute ceiling, regardless
+    // of upstream/model budget. Incoming chunks never refresh this timer.
+    const admissionTimer=setTimeout(()=>expire('admission'),Math.min(timeoutMs,ADMISSION_TIMEOUT_MS));
+    let idleTimer:ReturnType<typeof setTimeout>|undefined;
+    const refreshIdle=()=>{
+      clearTimeout(idleTimer);
+      if(!controller.signal.aborted)idleTimer=setTimeout(()=>expire('idle'),idleTimeoutMs);
+    };
+    const disconnected=()=>{if(!response.writableFinished){abortOutcome??=closing?'stopping':'client_disconnected';controller.abort();}};
     response.on('close',disconnected);
     let reader:ReadableStreamDefaultReader<Uint8Array>|undefined;
     try {
-      const chunks:Buffer[]=[];let inputBytes=0;
+      const chunks:Buffer[]=[];
       for await(const chunk of request){
         controller.signal.throwIfAborted();inputBytes+=chunk.length;
-        if(inputBytes>INPUT_LIMIT){fail(response,413,'local_gateway_input_limit');return;}
+        if(inputBytes>INPUT_LIMIT){outcome='input_limit';fail(response,413,'local_gateway_input_limit');return;}
         chunks.push(Buffer.from(chunk));
       }
       let body:unknown;
       try {body=JSON.parse(Buffer.concat(chunks).toString('utf8'));}
-      catch{fail(response,400,'local_gateway_json_invalid');return;}
-      if(!permitted(body)){fail(response,400,'local_gateway_request_denied');return;}
+      catch{outcome='json_invalid';fail(response,400,'local_gateway_json_invalid');return;}
+      if(!permitted(body)){outcome='request_denied';fail(response,400,'local_gateway_request_denied');return;}
+      clearTimeout(admissionTimer);stage='upstream';refreshIdle();
       const upstream=await abortable(fetcher(endpoint.href,{method:'POST',redirect:'error',
         headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:controller.signal}),controller.signal,
         late=>{void late.body?.cancel().catch(()=>undefined);});
+      upstreamStatus=upstream.status;refreshIdle();
       if(!upstream.ok||!upstream.body||upstream.headers.get('content-type')?.split(';')[0].trim()!=='text/event-stream'){
+        outcome=!upstream.ok?'upstream_http_rejected':'upstream_protocol_rejected';
         void upstream.body?.cancel().catch(()=>undefined);fail(response,502,'local_gateway_upstream_unavailable');return;
       }
-      reader=upstream.body.getReader();let outputBytes=0;
+      reader=upstream.body.getReader();stage='stream';
       response.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});
       for(;;){
         const chunk=await abortable(reader.read(),controller.signal);
         if(chunk.done)break;
         outputBytes+=chunk.value.byteLength;
-        if(outputBytes>OUTPUT_LIMIT)throw new Error('output_limit');
+        if(chunk.value.byteLength>0){firstByteMs??=performance.now()-started;refreshIdle();}
+        if(outputBytes>OUTPUT_LIMIT){outcome='output_limit';throw new Error('output_limit');}
         if(!response.write(chunk.value))await abortable(once(response,'drain'),controller.signal);
       }
-      response.end();
-    }catch{fail(response,controller.signal.aborted?504:502,'local_gateway_request_unavailable');}
+      response.end();outcome='completed';
+    }catch{
+      outcome??=abortOutcome??(controller.signal.aborted&&closing?'stopping':stage==='request'?'request_error':'upstream_error');
+      fail(response,controller.signal.aborted?504:502,'local_gateway_request_unavailable');
+    }
     finally{
       controller.abort();if(reader){void reader.cancel().catch(()=>undefined);reader.releaseLock();}
-      clearTimeout(timer);response.off('close',disconnected);controllers.delete(controller);
+      clearTimeout(totalTimer);clearTimeout(admissionTimer);clearTimeout(idleTimer);
+      response.off('close',disconnected);controllers.delete(controller);
+    }
+    } finally {
+      // All exits converge here exactly once. The observer cannot affect request
+      // handling, and receives no caller/upstream strings or exception details.
+      try {
+        const observation=options.onDiagnostic?.(Object.freeze({stage,outcome:outcome??'request_error',inputBytes,outputBytes,
+          durationMs:performance.now()-started,firstByteMs,upstreamStatus,...(outcome==='timeout'&&timeoutKind?{timeoutKind}:{})}));
+        void Promise.resolve(observation).catch(()=>undefined);
+      } catch { /* Optional diagnostics must not change the transport result. */ }
     }
   };
   const server=createServer((request,response)=>{void handle(request,response).catch(()=>fail(response,502,'local_gateway_request_unavailable'));});
-  server.headersTimeout=10000;server.requestTimeout=timeoutMs;server.maxHeadersCount=32;
+  server.headersTimeout=10000;server.requestTimeout=Math.min(timeoutMs,ADMISSION_TIMEOUT_MS);server.maxHeadersCount=32;
   const listening=once(server,'listening');server.listen(port,'127.0.0.1');await listening;
   const address=server.address();if(!address||typeof address==='string')throw new Error('local_gateway_listen_failed');
   let stop:Promise<void>|undefined;

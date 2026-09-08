@@ -2,7 +2,7 @@ import {lstatSync, realpathSync} from 'node:fs';
 import {request} from 'node:http';
 import {dirname, isAbsolute, resolve} from 'node:path';
 import {Readable} from 'node:stream';
-import {startLocalOpenCodexGateway} from './opencodex-local-gateway.ts';
+import {startLocalOpenCodexGateway, type LocalOpenCodexDiagnosticObserver} from './opencodex-local-gateway.ts';
 
 function privateSocket(path:string):void {
   try {
@@ -53,7 +53,8 @@ export async function probeLocalOpenCodexSocket(socketPath:string,options:{timeo
  * fallback, credentials, tool dispatcher, retry queue, or request-body logs.
  * Each connection rechecks the trusted socket directory; after upstream
  * restart a new request reconnects rather than reusing a stale connection. */
-export async function startLocalOpenCodexRelay(options:{socketPath:string;port?:number;timeoutMs?:number;probeUpstream?:boolean}) {
+export async function startLocalOpenCodexRelay(options:{socketPath:string;port?:number;timeoutMs?:number;idleTimeoutMs?:number;probeUpstream?:boolean;
+  onDiagnostic?:LocalOpenCodexDiagnosticObserver}) {
   privateSocket(options.socketPath);
   if(options.probeUpstream)await probeLocalOpenCodexSocket(options.socketPath);
   const fetcher:typeof fetch=async(_url,init)=>{
@@ -74,5 +75,5 @@ export async function startLocalOpenCodexRelay(options:{socketPath:string;port?:
   // The endpoint is a local protocol identifier only. The injected transport
   // always connects to the validated Unix socket and never resolves this URL.
   return startLocalOpenCodexGateway({endpoint:'http://127.0.0.1/v1/responses',
-    port:options.port,timeoutMs:options.timeoutMs,fetch:fetcher});
+    port:options.port,timeoutMs:options.timeoutMs,idleTimeoutMs:options.idleTimeoutMs,fetch:fetcher,onDiagnostic:options.onDiagnostic});
 }

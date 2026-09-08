@@ -54,9 +54,9 @@ function readySummary(value: unknown): string {
   const summary = userFacingSummary(value, "会按已确认的需求开始修改。");
   const characters = Array.from(summary.replace(/\s+/gu, " "));
   if (characters.length <= 96) return summary;
-  const prefix = characters.slice(0, 96).join("");
-  const boundary = prefix.search(/[。！？；]/u);
-  const excerpt = boundary >= 8 ? prefix.slice(0, boundary) : prefix;
+  // Keep the bounded prefix, not just its first sentence: an introductory
+  // sentence (for example, "this is a pilot") may precede the actual request.
+  const excerpt = characters.slice(0, 96).join("");
   // This is visibly a topic excerpt, never a replacement Spec or a claim
   // that omitted constraints were removed. The original card is unchanged.
   return `这次处理：“${excerpt}…”，完整要求保持不变。`;

@@ -168,6 +168,19 @@ describe("natural DingTalk session replies", () => {
       .not.toContain("还没有开始修改");
   });
 
+  it("keeps the business request after an introductory sentence in a long ready excerpt", () => {
+    const summary = "这是一次非生产自动化试点。请给“发布验收室”的检查项列表增加优先级筛选，可以选全部、P0、P1、P2，并与现有状态筛选、搜索一起生效。没有匹配项时继续显示空结果提示。只改这个测试页面，完成后自动回归，用两三句话告诉我改了什么、验证是否通过。";
+    const card = renderPlanStatusCard({ workItemId: "WI-INTERNAL", status: "ready_for_execution", summary });
+    const before = structuredClone(card), reply = markdown(card);
+    expect(reply.text).toContain("发布验收室");
+    expect(reply.text).toContain("增加优先级筛选");
+    expect(reply.text).toContain("状态筛选、搜索一起生效");
+    expect(reply.text.length).toBeLessThan(200);
+    expect(reply.text).not.toContain("修改完成");
+    expect(card).toEqual(before);
+    expectBusinessOnly(reply.text);
+  });
+
   it("keeps a shortened ready excerpt escaped and does not split Unicode characters", () => {
     const summary = "界面" + "🧪".repeat(130) + "<script>不得执行</script>";
     const reply = markdown(renderPlanStatusCard({ workItemId: "WI-INTERNAL", status: "ready_for_execution", summary }));

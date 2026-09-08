@@ -27,6 +27,23 @@ unixIt('forwards only approved requests from loopback over a private Unix socket
  const bad=await fetch(value.url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...body(),model:'other'})});
  expect(bad.status).toBe(400);expect(requests).toHaveLength(1);
 });
+unixIt('passes the optional gateway diagnostic observer through without exposing the private socket',async()=>{
+ const socket=join(directory(),'model.sock'),diagnostic=vi.fn();
+ await listen(createServer((_req,res)=>{res.writeHead(429,{'Content-Type':'application/json'});res.end('private upstream diagnostics');}),socket);
+ const value=await startLocalOpenCodexRelay({socketPath:socket,onDiagnostic:diagnostic});cleanup.push(value.close);
+ const response=await post(value.url);expect(response.status).toBe(502);expect(await response.text()).not.toContain('private');
+ expect(diagnostic).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({stage:'upstream',outcome:'upstream_http_rejected',
+  inputBytes:Buffer.byteLength(JSON.stringify(body())),outputBytes:0,firstByteMs:null,upstreamStatus:429,durationMs:expect.any(Number)}));
+ expect(JSON.stringify(diagnostic.mock.calls)).not.toContain(socket);expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('private');
+});
+unixIt('passes the independent idle deadline through and closes a stalled Unix stream',async()=>{
+ const socket=join(directory(),'model.sock'),diagnostic=vi.fn();let closed=false;
+ await listen(createServer((_req,res)=>{res.on('close',()=>{closed=true;});res.writeHead(200,{'Content-Type':'text/event-stream'});res.write('data: initial\n\n');}),socket);
+ const value=await startLocalOpenCodexRelay({socketPath:socket,timeoutMs:1500,idleTimeoutMs:200,onDiagnostic:diagnostic});cleanup.push(value.close);
+ await expect(post(value.url).then(response=>response.text())).rejects.toThrow();
+ expect(diagnostic).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({stage:'stream',outcome:'timeout',timeoutKind:'idle'}));
+ await vi.waitFor(()=>expect(closed).toBe(true));
+});
 unixIt('reconnects after the private upstream stops and is recreated',async()=>{
  const socket=join(directory(),'model.sock');
  const upstream=()=>createServer((_req,res)=>{res.writeHead(200,{'Content-Type':'text/event-stream'});res.end('data: ready\n\n');});
