@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "date": "2026-09-08",
+  "status": "passed_for_original_work_item_normalized_duplicate_path",
+  "goalCompleted": false,
+  "workItemId": "WI-5C68D17B361E",
+  "workspaceRevision": "73345ac433299b1d2723167d950981e71509417a",
+  "productSourceRevision": "d6b4e0ba618e3e141a3e470619764ac173fd3aa0",
+  "runtimeImage": "sha256:f09d3bf3e34f9650ef77874a3c3e84e58464f4884912f46a808f758ae0e4d312",
+  "probeExecution": {
+    "receipt": "61d68c",
+    "exitCode": 0,
+    "platform": "linux",
+    "nodeVersion": "v24.20.0",
+    "name": "omb-normalized-event-replay-20260908",
+    "user": "10001:10001",
+    "network": "none",
+    "readOnlyRootFilesystem": true,
+    "capabilitiesDropped": ["ALL"],
+    "noNewPrivileges": true,
+    "memoryMiB": 384,
+    "cpus": 1,
+    "pidsLimit": 64,
+    "restartPolicy": "no",
+    "mounts": [
+      { "source": "/var/lib/openmausbot-collaboration-pilot/replays/normalized-event-20260908/rehearsal", "target": "/rehearsal", "writable": true },
+      { "source": "/var/lib/openmausbot-collaboration-pilot/replays/normalized-event-20260908/scripts", "target": "/audit", "writable": false }
+    ],
+    "liveLedgerMounted": false,
+    "modelSocketMounted": false,
+    "credentialsMounted": false
+  },
+  "snapshot": {
+    "method": "node:sqlite backup from readOnly source mounted read-only; existing snapshot retained after first validation failure",
+    "schemaVersion": 37,
+    "integrity": "ok",
+    "foreignKeyViolations": 0,
+    "totalTablesIncludingSqliteSequence": 75,
+    "totalExternalEvents": 15,
+    "stableTablesComparedWithLiveSource": 73,
+    "otherTablesComparedExceptNamedHeartbeatColumns": {
+      "collaboration_instance_lease": ["heartbeat_at", "expires_at", "version"],
+      "collaboration_runtime_state": ["updated_at", "version"]
+    },
+    "ownerFenceAcquiredAtAndRuntimeModeReasonLowDiskCompared": true,
+    "businessRowsComparedBeforeAndAfterSourceObservation": true,
+    "originalWorkItemInputsMatchedByStoredRawHash": 2
+  },
+  "replay": {
+    "inputSelection": "only the two persisted DingTalk message events associated with the fixed original work item",
+    "inputIdentityCheck": "reconstructed normalized text, source/transport/conversation IDs, sender aliases, reference, resources and mentions must exactly match current product eventHash",
+    "orders": ["received order", "reverse received order"],
+    "attemptedReplays": 4,
+    "acceptedDuplicates": 4,
+    "associatedWithOriginalWorkItem": 4,
+    "deferred": 4,
+    "allTablesAndHiddenRowidsComparedAfterEveryReplay": true,
+    "schemaAndLogicalRowsHashBefore": "32a678575b4f4b8d5203c3de3a88525ba2878e26ea7f9735eec12afd62258556",
+    "schemaAndLogicalRowsHashAfter": "32a678575b4f4b8d5203c3de3a88525ba2878e26ea7f9735eec12afd62258556",
+    "modelOrPlannerCalls": 0,
+    "documentAuthorizationOrReadCalls": 0,
+    "onlineEnqueueBranchConfigured": true,
+    "newTasksRepliesRunsOrOwnerChanges": 0
+  },
+  "probeValidation": {
+    "receipts": ["1ce8af", "79e25a"],
+    "checks": ["associated duplicate", "deferred duplicate", "zero model calls", "all-row and hidden-rowid fingerprint", "hash mismatch rejected", "unretained display-name boundary", "missing planning job compensation detected", "fixed work-item selection and absent target"],
+    "independentSourceReview": "/root/proposal_contract_audit",
+    "reviewCorrections": ["enable document enqueue branch with deny-and-count ports", "include hidden rowid", "derive platform from process.platform", "compare control fields despite heartbeat changes", "limit original-event claim to the original work item"]
+  },
+  "preparationHistory": [
+    { "receipt": "4858f5", "result": "temporary external-package bundle could not resolve zod; changed to self-contained bundle" },
+    { "receipt": "fbf90b", "result": "synthetic missing-job fixture rejected deletion by immutable provenance trigger; constructed the state through service without planning instead, no trigger removed" },
+    { "receipt": "1864a5", "result": "protected-directory shell glob did not expand; preparation stopped before snapshot execution, replaced with explicit paths" },
+    { "receipt": "524677", "result": "snapshot created but broad validation failed; container exited 1 and was retained, no service replay or original ledger write" },
+    { "receipts": ["d634b9", "69a544", "4fbf68"], "result": "readonly diagnostics found source runtime metadata changes and nine unrelated legacy events without resources/mentions in their historical hash format; the original work item's two events matched current hashes" },
+    { "receipt": "61d68c", "result": "validated existing snapshot with strict stable control fields, then original-work-item service replay passed; no new snapshot or source-state alteration" }
+  ],
+  "artifacts": {
+    "remotePrivateDirectory": "/var/lib/openmausbot-collaboration-pilot/replays/normalized-event-20260908",
+    "localReplaySource": "/private/tmp/omb-ledger-replay-20260908.ts",
+    "localFixtureSource": "/private/tmp/omb-ledger-replay-fixture-20260908.ts",
+    "sha256": {
+      "omb-ledger-replay-utils-20260908.cjs": "b2cf547640e878955fd1ce28c6d77317e3e63cdbfe97d6400dd2ae56b6531ba8",
+      "omb-ledger-copy-gate-20260908.cjs": "1e5dfac7c8cfd7135c2ffb2c767aa30c2a06950b2bb73ba5529365f083ecea3b",
+      "omb-ledger-replay-20260908.cjs": "b013132ede6f77e349571f3b322a4e5fd3399913cc0f21a64dfa3d237e7d80f8",
+      "omb-ledger-replay-20260908.ts": "c0256df31f9b39d1933b93dfdaa3a5e7bc95ddec7f07c370915aa827682616d9",
+      "omb-ledger-replay-fixture-20260908.ts": "a631cb26ff598d17aad59df3e7fcf9b921d3e747acb34fdb0d1a3761eb275768"
+    }
+  },
+  "limitations": [
+    "This is a derived bundle of the unchanged current product service, with reject-and-count model/planner/document ports and deny-all planning policy; not a production-configuration-equivalent runtime.",
+    "All four duplicate outcomes were deferred, so real original-event replay did not exercise non-deferred planning/online enqueue; those branches have synthetic fixture evidence only.",
+    "The original display name is not retained in the event hash and is replaced by an explicitly inert placeholder; addressedToBot is the required accepted-ingress precondition, not a new platform observation.",
+    "No raw Stream envelope, platform whitelist/authentication, actual DingTalk resend/ACK, delivery business response or outbound sending was exercised.",
+    "Other thirteen message events, including nine legacy events, were retained and fingerprinted but not replayed.",
+    "Final logical state equality, including hidden rowids, does not prove zero SQL statements or all possible concurrency interleavings.",
+    "No asynchronous natural queue, execution, fourth business attempt, live restart or additional model invocation occurred.",
+    "Original work-item delivery, complete C2-C6, real multi-person input, in-flight recovery and final personal Owner acceptance remain unverified."
+  ],
+  "independentFinalVerification": {
+    "reviewer": "/root/model_channel_audit",
+    "status": "passed",
+    "probeContainerReceipt": "c0d2d4",
+    "probeContainerIdPrefix": "83b9e6c3",
+    "probeExitCode": 0,
+    "probePid": 0,
+    "probeOomKilled": false,
+    "probeIsolationAndTwoMountsVerified": true,
+    "safeLogReceipt": "870421",
+    "replaysDeferredAndLogicalHashVerified": true,
+    "zeroPortCallCountsEvidence": "61d68c; independently filtered log did not repeat these fields",
+    "liveServiceAndLedgerReceipt": "05d1f8",
+    "liveContainerId": "f683e49097a22dd855a52eb7b326ac5e75e244c31dddf753e6eaf5d7acea05fd",
+    "liveServiceState": "running",
+    "liveServiceRestarts": 0,
+    "ledgerSchema": 37,
+    "ledgerIntegrity": "ok",
+    "ledgerForeignKeyViolations": 0,
+    "activeOwners": 1,
+    "ownerHash": "5fe9525037ba8ac251261cd02a5ca7185899452e81f033680920326729077865",
+    "externalEvents": 15,
+    "outbox": { "sent": 47, "superseded": 18 },
+    "tenInflightCategoriesAllZero": true,
+    "reviewExecutionNote": "initial safe-log request timed out before execution; one tool-permitted retry succeeded, no further checks"
+  }
+}

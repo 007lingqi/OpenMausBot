@@ -17,11 +17,13 @@
 | 当前真实服务 | f683e490…/f09d3bf3…，StartedAt12:05:45.179Z，启动ready/connected/execute；fence63匹配、active/enabled、unless-stopped/零重启 | 日志只反映启动及已观察事件，不能代表实时钉钉状态或新业务完成；不沿用首启实例时长 |
 | 同仓库串行、跨仓库并发 | 本地受控 Agent 测试；部分旧版隔离/停止证据 | 当前 Linux/Docker 下真实独立任务、同仓库互斥、跨仓库并发和监督器绑定 |
 | Linux VM 空闲重启 | d8bef2/4805ef真实boot改变、systemd恢复；ff76d0新boot监督器，f3cb8b真实模型恢复探针通过 | 已通过服务/模型恢复；宿主Docker CLI旧转发另外修复，未来重启时CLI自动恢复未验证 |
-| 幂等与在途恢复 | 本地持久入口/Outbox/控制/恢复测试、数据迁移保留；VM空闲恢复通过 | 原始平台事件重放、在途服务重启仍待验证。相似新消息、重新打开 SQLite 和空闲VM重启均不代替 |
+| 幂等与在途恢复 | 61d68c原事项两条规范化消息在Linux私有副本4次重放，75表/schema/rowid不变、模型0；四次均deferred。既有本地恢复及VM空闲恢复证据保留 | 尚非真实Stream报文重送/ACK；其他任务、真实非deferred路径、并发及在途服务重启未覆盖。副本重放不代替真实在途恢复 |
 | 平台入口与安全边界 | 本地自然入口和 Owner/白名单/业务响应回归 | @、未 @、引用回复的实测可达性和标识；明确不支持项，不暗中扩大监听权限 |
 | 最终验收 | 尚无 Owner 本人确认 | 自动部分通过后汇总真实对话/交付证据交本人确认；此前不标整体完成 |
 
 当前启用、交接、配置、数据和副本回执见 [长响应修复发布](evidence/conversation-provider-timeout-rollout-20260908.json)，此前见 [重试结果修复](evidence/conversation-retry-result-fix-20260908.json)、[自然重试入口](evidence/conversation-natural-retry-fix-20260908.json)、[回复修复](evidence/conversation-reply-fix-20260908.json) 和 [读取修复](evidence/conversation-read-view-fix-20260908.json)。完整回归与模型证据分别见 [VERIFY](../../VERIFY.md) 和 [模型评测](conversation-eval-20260908.md)。本批有完整回归，重新加载规则不重做未受影响的测试或模型评测。
+
+原事项隔离重放的原输入匹配、全表比较、失败准备经过与证据边界见[原消息重放](evidence/conversation-original-event-replay-20260908.json)。它不恢复原任务尝试额度，也不构成C1交付或Owner决定。
 
 ## 执行及收束原则
 

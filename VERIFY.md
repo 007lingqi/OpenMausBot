@@ -1,5 +1,13 @@
 # Meta 协作验证记录
 
+## 2026-09-08 原事项规范化消息隔离重放
+
+- 79e25a自包含探针和合成夹具通过，含关联/延迟消息去重、禁止模型调用、逐行/rowid指纹、输入hash不符拒绝、缺规划job补偿写入检测和事项选择。team源码审查纠正了online enqueue遗漏、物理rowid遗漏及心跳字段豁免过宽；并未将源码复核冒称独立运行。
+- 524677首次SQLite backup已生成，但后续校验未通过，最初摘要未区分失败子步骤；失败容器保留exit1。d634b9/69a544只读确认原WI两条均精确匹配当前eventHash，另九条仅有text/replyToSourceEventId，与0dc02fd之前格式一致；未校验其旧版hash、不改历史hash、不重放其他任务。源运行元数据在观察间更新，后续只豁免heartbeat_at/expires_at/version与runtime.updated_at/version，控制字段不豁免。
+- 61d68c既有副本schema37、完整性/外键通过，73表与原库逐行一致，另2表控制字段一致；原WI两条在UID10001、network none、无原库/凭据/socket的Linux容器正反序4次全部duplicate/deferred。每次比较全部75表及schema/隐藏rowid，hash32a678575b4f4b8d5203c3de3a88525ba2878e26ea7f9735eec12afd62258556保持；模型/planner/文档调用0，终态0。
+- 适用范围是该快照的原事项service重复入站路径；不覆盖真实Stream重送/ACK、群发送、其他任务、并发或在途恢复，也不是第四次执行。四次均deferred，真实非deferred分支未被该证据覆盖。产品源码没有变化，既有全套回归不重跑。详见[结构化证据](docs/pilot/evidence/conversation-original-event-replay-20260908.json)。
+- 独立现场c0d2d4确认实际探针83b9e6c3…已Exit0/Pid0、非root/禁网/只读根/CapDropALL/无提权且仅两挂载；870421读取安全日志核对4次deferred及75表hash。05d1f8确认原服务仍f683e490…/f09d3bf3…running/零重启，原账本schema37完整/Owner摘要不变、15事件/47sent/18superseded和十项在途0。没有模型或业务调用；最初日志审核超时未执行，工具许可的一次重试成功，随后停止检查。
+
 ## 2026-09-08 宿主与 Docker 长响应修复启用
 
 - 宿主首次切换80426b启动和回滚失败，原plist字节恢复但job absent；d2a914/49214c明确恢复原通道。前滚e3ef0b在停机前因全局lsof超时中止；38656e定向PID查询56ms成功，修正退出确认/错误记录后95e102启用固定新bundle，独立核验PID7476/监听/哈希/私有权限/400通过。未清空checkpoint或删除失败守卫。
