@@ -1,0 +1,31 @@
+{
+  "format": "docker-release-images-v1",
+  "candidate": {
+    "image": "sha256:217009a9366573849b024fa749ee83a33e5c5d1c2b2dd696f465bd2c30db1d10",
+    "revision": "13a373c968bf92666300d64f7ace07beeb63a958",
+    "sixFilesVerified": true,
+    "files": {
+      "/opt/openmausbot/collaboration-headless.js": "7b7fce33b477636f73554b47f5e6fdd4923602a0f3e130fb667822e856b474ca",
+      "/opt/openmausbot/collaboration-docker.js": "b635b94aaaf66b365d9e1e76e89589522d62493c79d842344a5cbb82f6e5f9f7",
+      "/opt/openmausbot/collaboration/operations/opencodex-model-channel.js": "1766cd1b4e3ceca3758c6770bcfc973c581fc8c86bba6673212be557a02a0f4e",
+      "/opt/openmausbot/collaboration/operations/online-document-relay.js": "7fcfaea1df1698de48ef42716e630fe7b63345eec9fe6b37405b6c04d4b47a43",
+      "/opt/openmausbot/docker-apply-patch.js": "e9086293be497798ec75236fed68f2d37e4541824ab0dd4edeb44c292ee2e044",
+      "/opt/openmausbot/contained-patch-worker.js": "706fe5ff58056172960c87e5aaba1c58ffe290d16c5afcc9debdc16bfb2e2074"
+    }
+  },
+  "rollback": {
+    "image": "sha256:c79a575f72ed34a0490e58168df8128f2eb17621c02c5669cb67a92b3e5ce728",
+    "revision": "d5909b6be5a6612706ffb8f17ce7ac0838d03b0b",
+    "sixFilesVerified": true,
+    "files": {
+      "/opt/openmausbot/collaboration-headless.js": "e70f21612a7d189fdc4fd82f5f51209552db94db335be210a15022db3bfb5140",
+      "/opt/openmausbot/collaboration-docker.js": "b635b94aaaf66b365d9e1e76e89589522d62493c79d842344a5cbb82f6e5f9f7",
+      "/opt/openmausbot/collaboration/operations/opencodex-model-channel.js": "1766cd1b4e3ceca3758c6770bcfc973c581fc8c86bba6673212be557a02a0f4e",
+      "/opt/openmausbot/collaboration/operations/online-document-relay.js": "47afef867075c3531bf4263b7b11ca05f6b9604725ff992502c710fe71c7c7ce",
+      "/opt/openmausbot/docker-apply-patch.js": "e9086293be497798ec75236fed68f2d37e4541824ab0dd4edeb44c292ee2e044",
+      "/opt/openmausbot/contained-patch-worker.js": "706fe5ff58056172960c87e5aaba1c58ffe290d16c5afcc9debdc16bfb2e2074"
+    }
+  },
+  "sourceFingerprint": "c33337c2c074475c77aa483ef71156405be284fee4e650989dea49fd31c368be",
+  "scope": "Offline fixed-image build and six-file hash validation only; no service switch or live group acceptance"
+}

@@ -1,5 +1,13 @@
 # Meta 协作验证记录
 
+## 2026-09-08 当前固定镜像与真实Docker发布预检（通过，未切换群服务）
+
+- 355579/d19643确认候选217009a93665…及回退c79a575f72ed…离线固定构建exit0；96e63b/1dcc8b镜像内六bundle与本地manifest全部匹配，结构化证据见conversation-release-13a373c-images.json。没有安装依赖或新增业务模型调用。
+- bc08fb一致性私有副本原库readOnly；1bbc0b迁移31→37、ac9d55全部66旧表原列/行哈希不变、384397同schema回退health通过。cae271只读核验回退后全部73表与after-candidate快照一致，新合成意图标记保留、quick_check/外键通过。9f8fb1的WAL只读挂载错误和未执行的审核超时保留，不伪写为首次全绿，也不当成数据丢失或产品测试失败。
+- 两个正式image entrypoint实例均真实就绪，5702bc/41dae3验证各自coordinator证明/实际containerId及image、降权relay UID501、事件0/执行0。8eab9d确认两实例exited/exit0/restarts0。仅合成仓库、假key、空Ledger，不等于真实群/交付；测试卷及容器保留。结构化回执见conversation-release-13a373c-preflight.json。
+- 36595f原库在途为0、schema31/完整性及唯一Owner正常；8a8bb6确认实际systemd active/enabled及服务级stop。a05022确认原真实服务仍原ID/镜像且healthy/restarts0，未切换。Compose读取1763/1767的两次审核超时不等于配置错误，下一步仍需核对固定配置、停机双检查及备份后才能安全切换。
+- 本轮无产品源码改动，复用匹配固定指纹的完整回归及真实Astra对话证据，不用合成Docker启动代替完整Goal验收。所有本轮运行会话已终态。
+
 ## 2026-09-08 固定纯对话候选发布准备（本地打包通过，Docker审核未完成）
 
 - 9a4be3源码指纹仍匹配TBNnjl；5e2f50将已全套通过的本任务文件提交为13a373c。abc714候选pnpm build:server退出0，e63557独立d5909b6回退源码打包退出0；两者schema37迁移/依赖/打包脚本一致，六bundle哈希见evidence/conversation-release-13a373c-bundles.json。

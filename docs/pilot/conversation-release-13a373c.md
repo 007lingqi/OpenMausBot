@@ -1,6 +1,24 @@
 # 纯对话候选发布准备
 
-用户已于2026-09-08明确允许本地提交和非生产Docker试点直接继续，无需重复业务授权。当前阻塞来自自动权限审核超时，不是用户未许可，也不是产品测试失败。
+用户已于2026-09-08明确允许本地提交和非生产Docker试点直接继续，无需重复业务授权。最新进展覆盖下方上一轮“尚无镜像”：本轮独立构建和主要预检已实际执行，自动权限审核仍间歇超时，不是用户未许可。
+
+## 本轮实际发布预检（2026-09-08）
+
+- 候选固定镜像sha256:217009a9366573849b024fa749ee83a33e5c5d1c2b2dd696f465bd2c30db1d10，回退固定镜像sha256:c79a575f72ed34a0490e58168df8128f2eb17621c02c5669cb67a92b3e5ce728。355579/d19643确认构建终态exit0，96e63b/1dcc8b的镜像内六文件哈希全部匹配已保存manifest，见evidence/conversation-release-13a373c-images.json。
+- 36595f只读原库确认schema31、完整性ok、外键错误0、唯一Owner1，无运行/未结算执行及验证、无待发回复或自然输入。历史12个事件、Outbox39sent/10superseded。这是当时的在途检查，不能免除真正停机前和停机后的再次核对。
+- 8a8bb6确认systemd active/enabled且ExecStop只stop collaboration；主机重启未执行。生产、身份、凭据和其他容器边界保持。
+- bc08fb创建VM私有一致性副本/var/lib/openmausbot-collaboration-pilot/conversation-rehearsal-13a373c，目录0700、数据库0600，原库readOnly。1bbc0b新版health将副本31升级至37，ac9d55对照升级前66张旧业务表的原列/全部行哈希一致；只在副本加一条合成schema36意图记录。
+- 384397回退镜像health正常打开schema37副本；cae271之后用已有Node以readOnly连接独立核验全部73张表，与after-candidate快照逐行哈希一致，合成记录保留、完整性/外键检查通过。此证据是回退后的数据保留，不是回退版已处理真实群任务；没有创建schema37审批展示标记，不扩大证明范围。
+- 9f8fb1曾因WAL只读挂载无法创建共享内存而失败，没有得到行比较结果。后续仍是只读数据库连接，在私有副本所在可写目录核验，不改原库、不放宽执行/审批规则。1746/1753/1755等审核超时不是数据库或产品失败，未据此重复执行有副作用的复制或合成标记写入。
+- 0f4deb创建带本批标签的独立卷omb-conversation-startup-13a373c-826f7cc0-60c2-4d34-a2b5-726f4adbd3fa；c4acef初始化合成仓库，base22e5459c6fd2519aa1b5b8dd71f169b83f422c77，假key不含真实凭据。两实例都禁网络/钉钉/自然输入、使用独立空Ledger和正式镜像entrypoint，挂已有只读模型socket，cap严格为CHOWN/SETUID/SETGID，带init及资源限额、restart=no。
+- 候选实例b01265d3e29ebb20a881ddaae3dde1a15bfcc67272e714cb75099d03f795df1b在dccf6a就绪，5702bc确认真实coordinator证明匹配该ID/镜像、relay实际UID501、真实事件0/执行0；bf9be2停止成功，d45f2a确认exited/exit0/restarts0。
+- 回退实例e7cac7f4e2cfb891a00abd93d29d22490c2e99c68ceaffce3bcef64309354c55在d9a429就绪，41dae3确认对应coordinator证明、UID501、真实事件0/执行0；停止审核首次超时后432cdf的一次重试成功。8eab9d最终确认两个合成实例均exited/exit0/restarts0，不仅凭停止回执断言干净退出，全部会话终态。
+- a05022最终确认原真实群服务仍原ID1f608281…/原镜像1f53b346…、running/healthy/restarts0，没有切换或重启。该同条显示命令对无Health字段的两个合成容器报模板错误，不能据此说启动失败；8eab9d已改用仅状态/退出码字段只读核对通过。
+- 当前固定Compose摘要读取1763/1767均在审核前超时，未进入文件读取或修改；没有改变release.conf、systemd或运行配置。后续先核对有效配置，生成schema37候选及兼容回退的固定配置，再做在途双检查、离线备份和单次受控切换，不能复用旧schema31回退。
+
+上述只证明镜像、私有副本迁移/回退保留及合成实例启动预检，不证明当前真实群已使用新版、真实开发交付、Owner决定或主机重启恢复已完成。原始数据与合成卷均保留在VM，不删除其他容器或历史数据。
+
+完整结构化回执见evidence/conversation-release-13a373c-preflight.json。下面“尚无镜像”和第一目标轮次描述为上一轮历史；本轮为用户恢复后第二目标轮次，有实际构建/副本/启动进展，原生Goal继续active，不虚标完成或以旧三轮阻塞计数收束。
 
 ## 已完成
 

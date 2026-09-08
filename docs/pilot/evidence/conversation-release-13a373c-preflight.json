@@ -1,0 +1,79 @@
+{
+  "format": "conversation-release-preflight-v1",
+  "sourceRevision": "13a373c968bf92666300d64f7ace07beeb63a958",
+  "sourceFingerprint": "c33337c2c074475c77aa483ef71156405be284fee4e650989dea49fd31c368be",
+  "images": {
+    "candidate": "sha256:217009a9366573849b024fa749ee83a33e5c5d1c2b2dd696f465bd2c30db1d10",
+    "rollback": "sha256:c79a575f72ed34a0490e58168df8128f2eb17621c02c5669cb67a92b3e5ce728"
+  },
+  "imageHashesVerified": true,
+  "copy": {
+    "directory": "/var/lib/openmausbot-collaboration-pilot/conversation-rehearsal-13a373c",
+    "sourceOpenedReadOnly": true,
+    "sourceSchema": 31,
+    "targetSchema": 37,
+    "oldBusinessTablesPreserved": 66,
+    "postCandidateTablesPreservedAfterRollback": 73,
+    "syntheticSchema36IntentPreserved": true,
+    "schema37ApprovalPresentationMarkerTested": false,
+    "integrity": "ok",
+    "foreignKeyViolations": 0,
+    "rollbackHealthCommand": "fixed rollback image --health",
+    "postRollbackComparison": "existing Node readOnly connection to private copy; all recorded row hashes match"
+  },
+  "startup": {
+    "volume": "omb-conversation-startup-13a373c-826f7cc0-60c2-4d34-a2b5-726f4adbd3fa",
+    "syntheticRepositoryBase": "22e5459c6fd2519aa1b5b8dd71f169b83f422c77",
+    "candidate": {
+      "containerId": "b01265d3e29ebb20a881ddaae3dde1a15bfcc67272e714cb75099d03f795df1b",
+      "coordinatorProofMatches": true,
+      "relayUid": 501,
+      "exitCode": 0,
+      "restarts": 0
+    },
+    "rollback": {
+      "containerId": "e7cac7f4e2cfb891a00abd93d29d22490c2e99c68ceaffce3bcef64309354c55",
+      "coordinatorProofMatches": true,
+      "relayUid": 501,
+      "exitCode": 0,
+      "restarts": 0
+    },
+    "actualImageEntrypoints": true,
+    "network": "none",
+    "realGroupMessages": 0,
+    "executionSessions": 0,
+    "disposal": "stopped; containers and synthetic volume retained"
+  },
+  "originalService": {
+    "containerId": "1f608281b764fd9ba4f551e08927fc8c57495c794c7c1481bdae8acc646cd447",
+    "image": "sha256:1f53b346ebf89534c02d831e241681bac2a34191e817373e5121d71606e734eb",
+    "status": "running",
+    "health": "healthy",
+    "restarts": 0,
+    "unchanged": true
+  },
+  "scope": {
+    "serviceSwitched": false,
+    "realGroupAcceptance": false,
+    "realDeliveryAcceptance": false,
+    "ownerFinalAcceptance": false,
+    "hostRebootTested": false
+  },
+  "commands": {
+    "buildCandidate": "355579",
+    "buildRollback": "d19643",
+    "imageHashes": [
+      "96e63b",
+      "1dcc8b"
+    ],
+    "consistentCopy": "bc08fb",
+    "candidateMigration": "1bbc0b",
+    "oldRows": "ac9d55",
+    "rollbackHealth": "384397",
+    "preservation": "cae271",
+    "candidateProof": "5702bc",
+    "rollbackProof": "41dae3",
+    "finalExit": "8eab9d",
+    "originalService": "a05022"
+  }
+}

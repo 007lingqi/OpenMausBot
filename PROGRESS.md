@@ -1,5 +1,16 @@
 # Meta 协作实施进度
 
+## 当前批次：固定镜像、副本迁移回退和合成启动预检通过（2026-09-08，未切换真实服务）
+
+- 上轮分类progress：保存13a373c业务候选及4887ce5发布记录、完成两套本地打包。本轮原生Goal仍active，沿用户纯对话范围和已给授权推进，不恢复文档前置、不重复业务许可问题。
+- 36595f只读确认原群服务schema31完整性ok、Owner1、没有运行/未结算执行或验证、没有待发Outbox或自然输入。8a8bb6确认systemd active/enabled，实际ExecStop只stop collaboration而非down；这不是主机重启验收。
+- 355579确认候选镜像217009a93665…构建完成，d19643确认回退c79a575f72ed…构建完成；两条构建会话已exit0。96e63b/1dcc8b镜像内六bundle逐一匹配持久哈希，证据保存于conversation-release-13a373c-images.json。旧权限超时阻塞已经部分解除，不再把“没有候选镜像”作为当前状态。
+- bc08fb以readOnly源创建VM私有一致性副本conversation-rehearsal-13a373c，66张旧表哈希保留；1bbc0b候选health迁移31→37通过，ac9d55确认旧列/旧行不变并仅在副本加入合成意图标记；384397确认回退health可读schema37。
+- 回退逐行核对的9f8fb1失败为只读挂载下SQLite WAL共享内存无法创建，并非数据对比失败；1755的后续审核超时未执行。cae271最终在回退health之后以已有Node只读核验私有副本，73张表的原列/全部行及合成schema36标记保留，完整性/外键通过。不将此扩大为schema37审批展示标记测试，原库不改写。
+- 专用合成卷omb-conversation-startup-13a373c-826f7cc0-60c2-4d34-a2b5-726f4adbd3fa和base22e5459c…已初始化，不能重建或重跑初始化。候选b01265d3…与回退e7cac7f4…均由正式镜像entrypoint启动，schema37就绪、实际coordinator证明匹配各自ID/镜像、relay实际UID501，真实事件/执行均0。5702bc/41dae3记录证据；8eab9d最终确认两者exited/exit0/restarts0，容器和测试卷保留。
+- a05022确认原真实服务仍1f608281…/1f53b346…且running/healthy/restarts0。所有测试/工具会话已终态，不再轮询或重跑；镜像/副本/启动证据分别保存在conversation-release-13a373c-images.json与-preflight.json，完整经过见发布准备文档。代码未变，既有完整回归/真实模型证据保持，不因发布预检重复跑全套。
+- 尚未切换真实服务、修改systemd、发送真实群消息或执行Owner操作。有效Compose摘要读取1763/1767两次在审核阶段超时，未修改发布配置；下一步先核对当前配置，生成固定候选和schema37兼容回退配置，再在途双检查/离线备份/单次无重启循环切换及真实群交付恢复验收。沿已授权范围继续，不再要求相同业务许可；原生Goal active，本轮为恢复后第二目标轮次且有实质进展，不标完成或blocked。
+
 ## 当前恢复入口：授权已确认，本地候选已保存，执行审核未完成（2026-09-08）
 
 - 用户许可已取得，无需再次询问本地提交或非生产试点。5e2f50确认本任务40文件提交13a373c；用户AGENTS.md/outputs保留，未push。9a4be3确认源码仍匹配TBNnjl及完整回归受测指纹，abc714候选正式打包、e63557同schema37回退d5909b6打包通过，六文件哈希已持久保存。
