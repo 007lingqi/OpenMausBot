@@ -50,7 +50,6 @@ export class RealDingTalkStreamSdk implements DingTalkStreamSdkPort {
   private lifecycleGeneration = 0;
   private nextAttemptAt = 0;
   private failedAttempts = 0;
-  private registrationStartedAt = 0;
 
   constructor(
     credentials: { clientId: string; clientSecret: string },
@@ -99,11 +98,6 @@ export class RealDingTalkStreamSdk implements DingTalkStreamSdkPort {
       return Promise.resolve({ connected: true });
     }
     const now = Date.now();
-    if (this.client.connected) {
-      // WebSocket open is not subscription registration. Give REGISTERED time to arrive.
-      if (now - this.registrationStartedAt < 30_000) return Promise.resolve({ connected: false });
-      this.client.disconnect();
-    }
     if (now < this.nextAttemptAt) return Promise.resolve({ connected: false });
     const generation = this.lifecycleGeneration;
     this.reconnectPromise = Promise.resolve()
@@ -116,7 +110,6 @@ export class RealDingTalkStreamSdk implements DingTalkStreamSdkPort {
           return { connected: false };
         }
         if (this.client.connected) {
-          this.registrationStartedAt = Date.now();
           this.nextAttemptAt = 0;
         } else {
           // The pinned SDK may swallow connection errors rather than reject.
@@ -139,7 +132,13 @@ export class RealDingTalkStreamSdk implements DingTalkStreamSdkPort {
 
   state(): "connected" | "reconnecting" | "stopped" {
     if (this.stopped) return "stopped";
-    return this.client.connected && this.client.registered ? "connected" : "reconnecting";
+    // connect() obtains an authenticated ticket for the requested subscriptions
+    // before opening this socket. REGISTERED is an optional SDK system frame,
+    // not a required gateway handshake (the official Python SDK does not await
+    // it either). Waiting for it disconnects valid idle streams every 30s.
+    // The SDK heartbeat/close/error handlers clear connected on transport loss;
+    // chat allowlisting, persistence and Owner authorization remain downstream.
+    return this.client.connected ? "connected" : "reconnecting";
   }
 
   private deferRetry(): void {

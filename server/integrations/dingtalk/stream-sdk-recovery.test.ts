@@ -73,12 +73,30 @@ function systemDisconnect() {
 }
 
 describe("real DingTalk Stream recovery wrapper", () => {
-  it("leaves registration time to finish instead of reconnecting every maintenance tick", async () => {
+  it("keeps an authenticated transport usable when DingTalk sends no REGISTERED frame", async () => {
+    vi.useFakeTimers();
+    try {
+      const client = new FakeDingTalkClient();
+      client.registerOnConnect = false;
+      const sdk = new RealDingTalkStreamSdk({ clientId: "id", clientSecret: "secret" }, undefined, () => client);
+      await sdk.connect();
+      for (let tick = 0; tick < 90; tick++) {
+        await vi.advanceTimersByTimeAsync(1_000);
+        await sdk.reconnect();
+      }
+      expect(sdk.state()).toBe("connected");
+      expect(client.connectCalls).toBe(1);
+      expect(client.disconnectCalls).toBe(0);
+      sdk.disconnect();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("does not require the optional registered flag or start a vendor reconnect timer", async () => {
     const client = new FakeDingTalkClient();
     client.registerOnConnect = false;
     const factory = vi.fn(() => client);
     const sdk = new RealDingTalkStreamSdk({ clientId: "id", clientSecret: "secret" }, undefined, factory);
-    expect(await sdk.connect()).toEqual({ connected: false });
+    expect(await sdk.connect()).toEqual({ connected: true });
     client.reconnecting = true;
     for (let tick = 0; tick < 60; tick++) await sdk.reconnect();
     expect(client.connectCalls).toBe(1);
@@ -91,7 +109,7 @@ describe("real DingTalk Stream recovery wrapper", () => {
     sdk.disconnect();
   });
 
-  it("retries a stalled registration only after a bounded grace period", async () => {
+  it("retries actual transport loss, not the absence of a REGISTERED frame", async () => {
     vi.useFakeTimers();
     try {
       const client = new FakeDingTalkClient();
@@ -103,8 +121,14 @@ describe("real DingTalk Stream recovery wrapper", () => {
       expect(client.connectCalls).toBe(1);
       await vi.advanceTimersByTimeAsync(1);
       await sdk.reconnect();
+      expect(client.connectCalls).toBe(1);
+      expect(client.disconnectCalls).toBe(0);
+      client.connected = false;
+      client.registered = true; // A stale flag must never make a lost socket ready.
+      expect(sdk.state()).toBe("reconnecting");
+      await sdk.reconnect();
       expect(client.connectCalls).toBe(2);
-      expect(client.disconnectCalls).toBe(1);
+      expect(client.disconnectCalls).toBe(0);
       sdk.disconnect();
     } finally { vi.useRealTimers(); }
   });

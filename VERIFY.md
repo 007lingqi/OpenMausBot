@@ -1,5 +1,13 @@
 # Meta 协作验证记录
 
+## 2026-09-08 Stream 可选注册帧不阻塞群服务（本地完整回归通过，修复镜像待切换）
+
+- fb8a71：新增90秒无REGISTERED回归先行失败，实际reconnecting；24b3eb修复后5文件199项、typecheck/diff通过。
+- 4c1de5确认1cdd8b/session50474完整 `pnpm test && pnpm typecheck && git diff --check` 终态exit0；覆盖主集数量门槛、broker、桌面、无node_modules打包/9代理、headless/model channel合成启动与退出。测试代码在运行期间固定。原生主集临时JSON由test-floor自动清理，没有据旧报告编造本次数量。
+- 43513e真实协议探针40秒、socket打开、SYSTEM/业务帧均0，主动关闭exit0；3bff21原候选16次连接/15次断开。与官方SDK无必需REGISTERED握手及原/新wrapper同哈希相符，形成原因证据；不是群业务验收。
+- 52f8c5兼容回退打包通过，721fd3确认其Stream源与本次受测实现逐字节相同。34b091失败为临时目录无法解析已有Node类型定义，显式指定主仓库实际使用的类型目录后恢复，未改变依赖。
+
+
 ## 2026-09-08 当前固定镜像与真实Docker发布预检（通过，未切换群服务）
 
 - 355579/d19643确认候选217009a93665…及回退c79a575f72ed…离线固定构建exit0；96e63b/1dcc8b镜像内六bundle与本地manifest全部匹配，结构化证据见conversation-release-13a373c-images.json。没有安装依赖或新增业务模型调用。
