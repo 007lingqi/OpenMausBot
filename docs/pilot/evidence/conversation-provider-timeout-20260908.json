@@ -1,6 +1,6 @@
 {
   "date": "2026-09-08",
-  "status": "fix_verified_on_original_proposal_pending_rollout",
+  "status": "fix_verified_on_original_proposal_and_rolled_out_business_delivery_pending",
   "goalStatus": "active",
   "workItem": "WI-5C68D17B361E",
   "businessRun": "a46a7aac-9547-4376-989b-9d377ea24dac",
@@ -79,6 +79,6 @@
     "timeoutFix": "11 expected red tests, 62 passed and typecheck; independently rechecked 62 passed",
     "fixedRealModel": "original-context read-only proposal and actual validator passed; not applied",
     "fullRegression": {"command": "pnpm test && pnpm typecheck && git diff --check", "session": 88677, "terminalReceipt": "8e741a", "exitCode": 0, "includes": ["main test floor", "broker", "Node desktop tests", "packaged server", "headless startup", "typecheck", "diff check"], "earlierInconclusiveRun": "sandbox-limited session68797 deliberately stopped with143; not counted as passed"},
-    "deployment": "pending"
+    "deployment": "host fixed bundle and permission-corrected Docker image activated; see conversation-provider-timeout-rollout-20260908.json; business delivery remains pending"
   }
 }

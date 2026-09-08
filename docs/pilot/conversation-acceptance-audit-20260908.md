@@ -4,24 +4,24 @@
 
 ## 当前证据与缺口
 
-真实C1已验证新需求和自然补充同事项接续，当前Spec保留五项验收、无重复追问，新计划范围正确。第三次执行未形成候选或启动测试；47sent/18superseded、十项在途0。当前失败已送达，旧未送达结果由正常运行时superseded，并非补发成功。详见[本次真实执行与诊断](evidence/conversation-supplement-attempt3-20260908.json)；C1交付及完整C2–C6仍缺。准备摘要只有“非生产自动化试点”，不够具体；失败文案仅能表达未完成，不能算诊断精确。
+真实C1已验证新需求和自然补充同事项接续，当前Spec保留五项验收、无重复追问，新计划范围正确。第三次执行未形成候选或启动测试；47sent/18superseded、十项在途0。当前失败已送达，旧未送达结果由正常运行时superseded，并非补发成功。详见[本次真实执行与诊断](evidence/conversation-supplement-attempt3-20260908.json)；C1交付及完整C2–C6仍缺。过短准备摘要和失败分类的受测修复现已启用，但没有新群消息验证新版可见文案；不能用本地序列化结果冒充群内已送达。
 
 | 验收面 | 可复用证据及限制 | 剩余工作 |
 | --- | --- | --- |
 | 自然新需求、短回答、多轮归并 | TBNnjl 真实 Astra 七场景 24 轮；来源/关联有本地测试，但群、参与者和发送合成 | 最终候选真实平台 C1–C4，尤其至少两位真实成员的补充、更正和定向提醒 |
 | 简短自然、查询解释致谢 | D-143–145及D-152通知/追问/解释/长准备回复修复；真实序列化与账本保留回归通过 | C5实际可见文案和发送节奏；未知自由文本解释不能以固定词义表宣称全面支持 |
-| 可验证研发交付 | 运行3841359完整回归1546b6退出0；本轮D-155本地7文件147项及typecheck通过、03e2e7完整回归终态0，但尚未部署 | C1真实attempt3失败且无resultSha/测试/复测；新Spec/plan已形成，不再重复索要补充，先查模型诊断 |
+| 可验证研发交付 | d6b4e0b完整回归8e741a；原需求154秒真实只提案6fda19通过，宿主/Docker修复已启用，产品实际客户端真实模型542a2e通过 | 原C1仍attempt3失败且无resultSha/测试/复测；待Owner明确决定是否补齐仅此原事项的一次受控恢复，不清零或新建同需求 |
 | 风险与唯一 Owner | D-153/D-154门禁回归保留；真实Owner自然重试允许且同事项实际进入attempt2 | C6只有部分真实控制成功证据；非Owner拒绝、高风险固定对象决定仍待，不以一次重试覆盖整类 |
 | 上下文精简与可接续 | 已有有限上下文、来源/版本和状态投影；本次目标将当前索引与历史分开 | 验收中核对实际执行/验证输入及重启恢复依据，不把更新 Markdown 当成运行时证明 |
-| 固定候选安全启用 | 5e8119a6…单次首启/173秒稳定、十项在途双检查/两份新私有备份/Owner保留，正式交接6196d8通过 | 此阶段已完成；once/handoff守卫不重跑；配置修正不覆盖原计划 |
-| 当前真实服务 | fe5eda33…/5e8119a6…，StartedAt08:58:53.208Z，ready/connected/execute；fence60匹配，active/enabled、unless-stopped、restarts0 | 0f348f新实例独立186秒连接1/断开0/错误0；空闲连接不证明业务交付，不沿用前实例时长 |
+| 固定候选安全启用 | f09d3bf3…权限修正版单次首启7a34c6、正式交接efc370通过；两次空闲双检查、新备份及历史消息/Outbox/Owner行保留 | 本阶段已完成；首版失败与最终两阶段守卫均不重跑；不覆盖原Spec/plan或业务尝试记录 |
+| 当前真实服务 | f683e490…/f09d3bf3…，StartedAt12:05:45.179Z，启动ready/connected/execute；fence63匹配、active/enabled、unless-stopped/零重启 | 日志只反映启动及已观察事件，不能代表实时钉钉状态或新业务完成；不沿用首启实例时长 |
 | 同仓库串行、跨仓库并发 | 本地受控 Agent 测试；部分旧版隔离/停止证据 | 当前 Linux/Docker 下真实独立任务、同仓库互斥、跨仓库并发和监督器绑定 |
 | Linux VM 空闲重启 | d8bef2/4805ef真实boot改变、systemd恢复；ff76d0新boot监督器，f3cb8b真实模型恢复探针通过 | 已通过服务/模型恢复；宿主Docker CLI旧转发另外修复，未来重启时CLI自动恢复未验证 |
 | 幂等与在途恢复 | 本地持久入口/Outbox/控制/恢复测试、数据迁移保留；VM空闲恢复通过 | 原始平台事件重放、在途服务重启仍待验证。相似新消息、重新打开 SQLite 和空闲VM重启均不代替 |
 | 平台入口与安全边界 | 本地自然入口和 Owner/白名单/业务响应回归 | @、未 @、引用回复的实测可达性和标识；明确不支持项，不暗中扩大监听权限 |
 | 最终验收 | 尚无 Owner 本人确认 | 自动部分通过后汇总真实对话/交付证据交本人确认；此前不标整体完成 |
 
-当前启用、交接、配置、数据和副本回执见 [重试结果修复及发布](evidence/conversation-retry-result-fix-20260908.json)，此前见 [自然重试入口](evidence/conversation-natural-retry-fix-20260908.json)、[回复修复](evidence/conversation-reply-fix-20260908.json) 和 [读取修复](evidence/conversation-read-view-fix-20260908.json)。完整回归与模型证据分别见 [VERIFY](../../VERIFY.md) 和 [模型评测](conversation-eval-20260908.md)。本批有完整回归，重新加载规则不重做未受影响的测试或模型评测。
+当前启用、交接、配置、数据和副本回执见 [长响应修复发布](evidence/conversation-provider-timeout-rollout-20260908.json)，此前见 [重试结果修复](evidence/conversation-retry-result-fix-20260908.json)、[自然重试入口](evidence/conversation-natural-retry-fix-20260908.json)、[回复修复](evidence/conversation-reply-fix-20260908.json) 和 [读取修复](evidence/conversation-read-view-fix-20260908.json)。完整回归与模型证据分别见 [VERIFY](../../VERIFY.md) 和 [模型评测](conversation-eval-20260908.md)。本批有完整回归，重新加载规则不重做未受影响的测试或模型评测。
 
 ## 执行及收束原则
 

@@ -1,5 +1,14 @@
 # Meta 协作验证记录
 
+## 2026-09-08 宿主与 Docker 长响应修复启用
+
+- 宿主首次切换80426b启动和回滚失败，原plist字节恢复但job absent；d2a914/49214c明确恢复原通道。前滚e3ef0b在停机前因全局lsof超时中止；38656e定向PID查询56ms成功，修正退出确认/错误记录后95e102启用固定新bundle，独立核验PID7476/监听/哈希/私有权限/400通过。未清空checkpoint或删除失败守卫。
+- Docker v1首启dcc17a失败，cd0c7c退出事件exit1、无OOM事件；旧版已恢复。固定同镜像实测root0600六bundle在UID501全部EACCES，root全部可读/语法通过。c1c7f5仅六程序文件权限层0444修正版f09d3bf3…构建终态0，字节hash不变，501与10001各6项读取/语法通过、schema37健康通过；bb2f9b真实relay CLI在无网络/无真实数据的UID501容器ready、一次上游负向探针、400、SIGTERM0和cleanup通过。
+- 发布脚本终态检查先红17项后22项全绿；新回退前失败摘要脱敏/顺序13项全绿，a2907a独立重验及原配置/行保留/bundle fixture通过。a31247脚本传输hash一致，0b098c配置只改两处镜像；失败首版once守卫与备份保留，不是重跑原失败事务。
+- 7a34c6单次首启通过，15事件/65 Outbox/1 Owner原行保留、空闲门/完整性/外键正常。7a55c9简化HTTP探针没有完成结果，不计通过也不能据此判网络故障；542a2e改用产品实际Responses客户端，经新Docker relay→宿主→OpenCodex在3725ms取得完整且校验通过的合成JSON，无业务写入或工具。原长154秒真实提案验证6fda19及完整回归8e741a复用，不重复无变化产品测试。
+- efc370正式systemd交接终态0，新容器f683e490…/f09d3bf3…、StartedAt12:05:45.179Z、fence63/host generation匹配，active/enabled；两阶段分别新备份和原行保留通过，15事件/47sent/18superseded、十项在途0。启动日志不证明实时钉钉状态，真实群业务、原任务第四次执行和最终Owner验收均未发生。精确值及限制见[发布证据](docs/pilot/evidence/conversation-provider-timeout-rollout-20260908.json)。
+- 非作者最终a6f6cf/f90f96当前容器running/healthy/零重启及unit逐字匹配；ce4318账本/监督器匹配，9c249d启动记录1连接/0已观察断连/0错误；dc3e8d UID501正式relay400，de7f16固定宿主版本正常。584de8原WI三个run/dispatch、candidate记录3条但resultSha全空，说明尚无候选交付；没有第四次执行。
+
 ## 2026-09-08 原需求长响应截断红绿验证
 
 - 7ef993：原上下文只提案诊断385845ms后provider_process_failed/CLI1，无应用。08e57f/c26b74：逐请求观测前4成功，第5/6上游200、约600KiB输出，却于60006/60007ms本层timeout；8f8b85停止诊断后pid0，原a3工作树未改。
