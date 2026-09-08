@@ -3,14 +3,18 @@ import { redactSensitiveText } from "./sensitive-text.ts";
 
 const HIDDEN = "[敏感信息已隐藏]";
 const LIMIT = 32000;
+// Trusted read views already cap each file at 512 KiB. Reserve a small amount
+// for their parse-only JSON expression wrapper; ordinary callers keep LIMIT.
+const MAX_TRUSTED_SOURCE_BYTES = 512 * 1024 + 128;
+export interface SourceRedactionOptions { maxBytes?: number }
 const credentialName = (name: string) =>
   /(?:password|passwd|secret|credential|token|apikey|密码|密钥|令牌|凭证)/iu.test(name.replace(/[_\s-]/gu, ""));
 type Span = { start: number; end: number; text: string };
 
 // Parse only. Never resolve imports, evaluate constant expressions, or run candidate code.
-function parse(source: string, file: string): ts.SourceFile {
+function parse(source: string, file: string, maxBytes: number): ts.SourceFile {
   if (!/\.(?:[cm]?[jt]s|[jt]sx)$/iu.test(file) || !source.length ||
-    Buffer.byteLength(source) > LIMIT || source.includes("\0")) throw new Error("sensitive_source_invalid");
+    Buffer.byteLength(source) > maxBytes || source.includes("\0")) throw new Error("sensitive_source_invalid");
   const parsed = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
   if ((parsed as ts.SourceFile & { parseDiagnostics: readonly unknown[] }).parseDiagnostics.length)
     throw new Error("sensitive_source_parse_failed");
@@ -40,9 +44,12 @@ function sensitiveName(node: ts.Node): boolean {
 }
 
 /** Bounded source view for models, not executable output or a universal secret detector. */
-export function redactSensitiveSource(source: string, file = "source.ts"): string {
+export function redactSensitiveSource(source: string, file = "source.ts", options: SourceRedactionOptions = {}): string {
   try {
-    const tree = parse(source, file);
+    const maxBytes = options.maxBytes ?? LIMIT;
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_TRUSTED_SOURCE_BYTES)
+      throw new Error("sensitive_source_limit_invalid");
+    const tree = parse(source, file, maxBytes);
     const spans: Span[] = [];
     const replace = (start: number, end: number, text: string) => {
       const newlines = source.slice(start, end).match(/\r\n|[\r\n\u2028\u2029]/gu)?.join("") ?? "";
@@ -129,7 +136,7 @@ export function redactSensitiveSource(source: string, file = "source.ts"): strin
       cursor = span.end;
     }
     output += source.slice(cursor);
-    parse(output, file);
+    parse(output, file, maxBytes);
     return output;
   } catch {
     // Parser diagnostics and nested failures can contain source values; never propagate them.

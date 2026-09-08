@@ -28,6 +28,30 @@ function fixture() {
 }
 
 describe("immutable scoped provider read view", () => {
+  it.each([false, true])("reads a bounded 350KB lockfile without bypassing redaction (sensitive=%s)", sensitive => {
+    const f = fixture();
+    const source = JSON.stringify({ name: "pilot", description: "readable ".repeat(39_000),
+      ...(sensitive ? { password: "large-lock-fixture-value" } : {}) }, null, 2) + "\n";
+    expect(Buffer.byteLength(source)).toBeGreaterThan(349_000);
+    writeFileSync(join(f.source, "package-lock.json"), source); f.git("add", "."); f.git("commit", "-qm", "large lockfile");
+    const view = createProviderReadView({ ...f.input, baseSha: f.git("rev-parse", "HEAD") });
+    const output = readFileSync(join(f.destination, "package-lock.json"), "utf8");
+    expect(JSON.parse(output).name).toBe("pilot");
+    expect(output).not.toContain("large-lock-fixture-value");
+    if (!sensitive) expect(output).toBe(source);
+    else expect(JSON.parse(output).password).toBe("[敏感信息已隐藏]");
+    expect(view.files.find(file => file.path === "package-lock.json")?.automaticReplacementAllowed).toBe(!sensitive);
+    expect(readFileSync(join(f.source, "package-lock.json"), "utf8")).toBe(source);
+  });
+
+  it("supports a source file above the default redactor bound but below the view file bound", () => {
+    const f = fixture(), source = `export const text = "${"ordinary ".repeat(5_000)}";\nexport const apiKey = "large-source-fixture-value";\n`;
+    writeFileSync(join(f.source, "src/large.ts"), source); f.git("add", "."); f.git("commit", "-qm", "large source");
+    const view = createProviderReadView({ ...f.input, baseSha: f.git("rev-parse", "HEAD") });
+    expect(readFileSync(join(f.destination, "src/large.ts"), "utf8")).not.toContain("large-source-fixture-value");
+    expect(view.files.find(file => file.path === "src/large.ts")?.automaticReplacementAllowed).toBe(false);
+  });
+
   it("can discard its read-only view after the source changes without changing the source", () => {
     const f = fixture(); const view = createProviderReadView(f.input);
     writeFileSync(join(f.source, "README.md"), "later source\n");

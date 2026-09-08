@@ -116,12 +116,14 @@ function collect(input: Pick<ProviderReadView, "source" | "baseSha" | "readScope
     const source = decoder.decode(raw.subarray(offset, offset + size)); offset += size + 1;
     if (source.includes("\0")) throw Error("provider_view_binary_source");
     let text: string;
-    if (/\.(?:[cm]?[jt]s|[jt]sx)$/iu.test(file.path)) text = source ? redactSensitiveSource(source, file.path) : source;
+    if (/\.(?:[cm]?[jt]s|[jt]sx)$/iu.test(file.path)) text = source ? redactSensitiveSource(source, file.path, { maxBytes: cap.maxFileBytes }) : source;
     else if (/\.json$/iu.test(file.path)) {
       try {
         JSON.parse(source); // Parse only. No evaluation, imports or object merging.
         const prefix = "const __omb_view_value = (\n", suffix = "\n);";
-        text = redactSensitiveSource(prefix + source + suffix, "source.ts").slice(prefix.length, -suffix.length);
+        text = redactSensitiveSource(prefix + source + suffix, "source.ts", {
+          maxBytes: cap.maxFileBytes + Buffer.byteLength(prefix + suffix),
+        }).slice(prefix.length, -suffix.length);
         JSON.parse(text);
       } catch { throw Error("provider_view_json_unavailable"); }
     } else {

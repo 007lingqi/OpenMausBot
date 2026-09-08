@@ -9,6 +9,26 @@ function parses(source: string) {
 }
 
 describe("syntax-preserving source redaction", () => {
+  it("keeps the default bound but permits a trusted larger bounded source view", () => {
+    const source = `const description = "${"readable ".repeat(40_000)}";\nconst password = "large-fixture-value";`;
+    expect(() => redactSensitiveSource(source)).toThrow("sensitive_source_unavailable");
+    const result = redactSensitiveSource(source, "source.ts", { maxBytes: 512 * 1024 });
+    expect(result).toContain('const description = "readable ');
+    expect(result).not.toContain("large-fixture-value");
+    expect(result).toContain(marker);
+    parses(result);
+  });
+
+  it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 512 * 1024 + 129])("rejects an invalid trusted source bound %s", maxBytes => {
+    expect(() => redactSensitiveSource("const value = 1;", "source.ts", { maxBytes })).toThrow("sensitive_source_unavailable");
+  });
+
+  it("applies an explicit source bound to UTF-8 bytes, not character count", () => {
+    const source = `const label = "${"中".repeat(12_000)}";`;
+    expect(() => redactSensitiveSource(source, "source.ts", { maxBytes: 32_000 })).toThrow("sensitive_source_unavailable");
+    expect(redactSensitiveSource(source, "source.ts", { maxBytes: Buffer.byteLength(source) })).toBe(source);
+  });
+
   it.each(["tsx", "jsx"])("redacts JSX credentials while preserving ordinary UI evidence in %s", extension => {
     const source = 'const ui = <Panel password="fixture-value" apiToken={"fixture-value"} label="保存">\n' +
       '<p>password: fixture-value</p><button aria-label="保存">保存成功</button>\n</Panel>;';
