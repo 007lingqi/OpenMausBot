@@ -1,5 +1,11 @@
 # Meta 协作验证记录
 
+## 2026-09-08 读取修复固定镜像发布及模型检查纠正
+
+- 30c709：81eae83受测六个bundle与bc55cbc4…镜像逐项SHA256一致，离线构建、隔离健康schema37通过。ce0036配置生成fixture通过，仅改固定镜像及监督器身份；d4e709先前fixture失败系跨VM realm的deepStrictEqual原型差异，修正fixture运行环境后通过，没有修改发布断言或产品源码。
+- 38caed/131b54：第一次首启已ready/connected/execute且监督器匹配，后续socket检测误用root（cap_drop ALL），自动回退ff49且保留CURRENT数据。590085权限错误与2939d6既有501:1000身份成功构成诊断证据。未删除失败守卫、备份或增加能力。
+- 62b88e新批次准备；de38a4/0485ba单次首启、新私有副本检查、Owner/13事件/42sent/13superseded全部保留；a53c16 Docker健康通过。6ddf68确认首启90秒连接无断开/错误并再次双检查/备份；de67dc正式systemd交接终态0，当前6d1146cc…、bc55cbc4…、fence54与StartedAt/boot匹配，ready/connected/execute、active/enabled、unless-stopped、restarts0。业务重试及真实交付尚未进行。
+
 ## 2026-09-08 真实群执行失败的源码视图大小不一致修复
 
 - d869ee真实新输入及3条已发Outbox；24d727原run needs_configuration/provider_sandbox_unavailable，changed_paths为空。95b8ec真实containment已登记且Git基线/干净状态匹配，2a7501不是OOM；c6887d对同一候选使用原生产源码只读复现JSON视图失败，全部JSON合法。

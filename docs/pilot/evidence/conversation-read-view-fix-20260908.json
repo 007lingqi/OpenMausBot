@@ -1,6 +1,6 @@
 {
   "format": "conversation-read-view-fix-v1",
-  "status": "full_regression_passed_not_deployed",
+  "status": "deployed_verified_waiting_for_real_owner_retry",
   "workItem": "WI-5C68D17B361E",
   "externalEvent": "65d9e05d-30c8-4f6b-9d66-a1072b7ec1de",
   "run": "e137025c-2ccc-4a8b-bd64-be25fb3f9070",
@@ -59,8 +59,76 @@
     "brokerTestsPassed": 7,
     "nodeTestsPassed": 32,
     "packagedAndHeadlessSmokePassed": true,
-    "fixedServiceDeployed": false,
+    "fixedServiceDeployed": true,
     "realDeliveryComplete": false
+  },
+  "release": {
+    "source": "81eae83c3513096d3ddfa304442993a6fb589277",
+    "image": "sha256:bc55cbc4d7805d74edd68952150f5751ac542d077caa1107617368f29c61e6d8",
+    "rollback": "sha256:ff49b7de6113b260bc49dbc8a940c28c9254cacf4bc61747f86d88d2b1fb496f",
+    "sixBundledArtifactHashesMatchTestedFiles": true,
+    "isolatedHealthSchema": 37,
+    "sourceConfigurationChanges": ["image", "OMB_DOCKER_COORDINATOR_IMAGE"],
+    "credentialsOrPermissionsChanged": false,
+    "firstActivation": {
+      "status": "rolled_back_after_incorrect_postflight_identity",
+      "candidateConnected": true,
+      "coordinatorMatched": true,
+      "cause": "root_without_DAC_capability_cannot_traverse_relay_uid501_private_directory",
+      "correctConfiguredIdentityProbePassed": true,
+      "sameSchemaRollbackVerified": true,
+      "currentDataPreserved": true,
+      "failedGuardAndBackupRetained": true,
+      "receipts": ["38caed", "131b54", "590085", "2939d6"]
+    },
+    "correctedReleaseDirectory": "/var/lib/openmausbot-collaboration-pilot/releases/81eae83-relaycheck",
+    "singleStart": {
+      "status": "passed",
+      "containerId": "ee9110e94c730b96edc14c8448585506b4b66d1e0691532916da0f56048269f9",
+      "startedAt": "2026-09-08T06:30:49.022598456Z",
+      "fence": 53,
+      "restartPolicy": "no",
+      "upstreamProbeAndRelayIdentitySocketPassed": true,
+      "ready": true,
+      "connected": true,
+      "executionMode": "execute",
+      "privateBackupVerified": true,
+      "events": 13,
+      "outboxSent": 42,
+      "outboxSuperseded": 13,
+      "ownerUnchanged": true,
+      "tenInflightCountsZero": true,
+      "receipts": ["de38a4", "0485ba"]
+    },
+    "systemdHandoff": {
+      "status": "passed",
+      "containerId": "6d1146cca95a29948bc15d24bf0640b0c99edc57c1b59c4b655e0d59db52ac30",
+      "startedAt": "2026-09-08T06:32:20.932060329Z",
+      "fence": 54,
+      "hostGeneration": "3afdc10e-7efc-450f-b53f-309b532e79ea",
+      "restartPolicy": "unless-stopped",
+      "restartCount": 0,
+      "systemdActive": true,
+      "systemdEnabled": true,
+      "ready": true,
+      "connected": true,
+      "executionMode": "execute",
+      "newPrivateBackupVerified": true,
+      "events": 13,
+      "outboxSent": 42,
+      "outboxSuperseded": 13,
+      "ownerUnchanged": true,
+      "tenInflightCountsZero": true,
+      "previousSingleStartStableSeconds": 90,
+      "receipts": ["a53c16", "6ddf68", "de67dc"]
+    }
+  },
+  "handoff": {
+    "businessAttemptRetried": false,
+    "nextAction": "真实唯一Owner在群里自然发送：重试刚才的优先级筛选任务",
+    "noLedgerResetOrNewDuplicateWorkItem": true,
+    "overallGoalComplete": false,
+    "liveConversationAndDeliveryAcceptanceStillRequired": true
   },
   "receipts": {
     "inbound": "d869ee",
@@ -72,6 +140,9 @@
     "expandedGreen": ["5d4c02", "02ff9b"],
     "originalCandidateAfterFix": "8cf141",
     "idleGateWithNewEvent": "094635",
-    "fullRegression": ["8c568b", "1ac37c", "ec4bf4"]
+    "fullRegression": ["8c568b", "1ac37c", "ec4bf4"],
+    "offlineImageAndHashes": "30c709",
+    "releaseConfigurationFixture": "ce0036",
+    "correctedPreparation": "62b88e"
   }
 }

@@ -1,5 +1,7 @@
 # 内部研发助手 Meta 协作规范
 
+当前运行补充（2026-09-08）：源码读取修复81eae83/bc55cbc4…已正式交接systemd，当前6d1146cc…、fence54，真实ready/connected/execute；下方052b42c/ff49为上一版本历史。真实WI-5C68D17B361E仍保留attempt1失败，等待唯一Owner自然重试；服务更新不代表业务修改完成。新目标及验收范围不变。
+
 源码读取边界（2026-09-08）：可信Provider视图允许每文件最多512KiB、总计最多8MiB，脱敏必须在同一有界范围内完成；不能因内部默认32KB限额拒绝范围内的合法锁文件。普通脱敏调用默认限额保持，JSON只解析不执行、包装字节显式计入；输入和输出都检查上限，超限/语法不明仍拒绝。实际修改、隔离证明与测试通过不得由“视图可读”替代。
 
 最新运行状态（2026-09-08）：最终纯对话候选 052b42c/ff49b7de…已通过真实单次启动并完成 systemd 正式交接，当前 6de2840e…实际 ready/connected/execute、unless-stopped、重启0，systemd active/enabled；原生新目标 active。旧“未启用/兼容版/paused”描述均为历史。精确证据见 docs/pilot/evidence/conversation-final-activation-052b42c.json；真实群C1–C6、完整交付/并发/在途恢复、VM重启和本人最终验收仍未完成。
