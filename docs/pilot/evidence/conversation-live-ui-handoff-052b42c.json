@@ -3,6 +3,19 @@
   "sourceRevision": "052b42ca964af8bf4518be6e7f4e2adf7982b687",
   "date": "2026-09-08",
   "status": "awaiting_user_verified_platform_send",
+  "blockedAudit": {
+    "consecutiveGoalTurns": 3,
+    "previousContinuationClassification": "no_progress",
+    "lastSuccessfulBackendReceipt": "225276",
+    "lastSuccessfulBackendEventCount": 12,
+    "lastSuccessfulBackendHadRunningJobs": false,
+    "currentBackendQueryAndOneRetry": "approval_timeout_before_execution",
+    "currentUiDraftStillPresent": true,
+    "newUserVerificationOrSendConfirmationReceived": false,
+    "nativeGoalStatus": "blocked",
+    "nativeGoalUpdatedAt": 1788846689,
+    "goalComplete": false
+  },
   "groupDisplayName": "研发_1",
   "botDisplayName": "研发助手",
   "preflight": {
