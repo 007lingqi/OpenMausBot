@@ -107,7 +107,7 @@ function seedRunningRun(dataDirectory: string, ownerId: string): { proof: Contai
 }
 
 describe("production-isomorphic collaboration runtime", () => {
-  it("wires natural approval to the durable service and fences it before writes after lease loss", async () => {
+  it.each(["performNaturalApproval", "performNaturalRetry"] as const)("wires %s to the durable service and fences it before writes after lease loss", async method => {
     const dataDirectory = temporaryDirectory();
     let now = 1000;
     let sinks: RuntimeDingTalkSinks | undefined;
@@ -119,11 +119,12 @@ describe("production-isomorphic collaboration runtime", () => {
     const db = new DatabaseSync(join(dataDirectory, "collaboration", "collaboration.sqlite"));
     try {
       expect(sinks).toBeDefined();
-      expect(sinks!.performNaturalApproval({ ...message("natural-command"), text: "批准这次改动" }))
+      const text = method === "performNaturalApproval" ? "批准这次改动" : "重试优先级筛选任务";
+      expect(sinks![method]({ ...message("natural-command"), text }))
         .toMatchObject({ allowed: false, reason: "owner_not_configured" });
       expect(db.prepare("SELECT count(*) n FROM collaboration_owner_text_commands").get()).toEqual({ n: 1 });
       now = 2001;
-      expect(() => sinks!.performNaturalApproval({ ...message("lost-lease"), text: "批准这次改动" })).toThrow();
+      expect(() => sinks![method]({ ...message("lost-lease"), text })).toThrow();
       expect(db.prepare("SELECT count(*) n FROM collaboration_owner_text_commands").get()).toEqual({ n: 1 });
       expect(db.prepare("SELECT count(*) n FROM collaboration_control_events").get()).toEqual({ n: 0 });
     } finally { await runtime.stop(); db.close(); }

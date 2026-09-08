@@ -113,12 +113,13 @@ export function readConversationContext(db: DatabaseSync, job: ConversationJob):
   });
   // Only successful deliveries are model-visible as assistant speech. A queued
   // plan or failed send is not something the person could have replied to.
-  const sent = db.prepare("SELECT o.id,o.payload_json,o.sent_at,o.delivery_sequence,w.created_by,e.principal_id,j.proposal_json,c.outcome_json AS natural_approval_json," +
+  const sent = db.prepare("SELECT o.id,o.payload_json,o.sent_at,o.delivery_sequence,w.created_by,e.principal_id,j.proposal_json," +
+    "CASE WHEN json_extract(c.outcome_json,'$.kind')='natural_approval' THEN c.outcome_json END AS natural_approval_json," +
     "COALESCE(w.id,j.target_work_item_id,nw.id) AS work_item_id FROM collaboration_outbox o " +
     "LEFT JOIN collaboration_work_items w ON w.id=o.aggregate_id AND o.aggregate_type IN ('work_item','plan') " +
     "LEFT JOIN collaboration_external_events e ON e.id=o.aggregate_id AND o.aggregate_type='association' " +
     "LEFT JOIN collaboration_conversation_intents j ON j.event_id=e.id " +
-    "LEFT JOIN collaboration_owner_text_commands c ON c.source_event_id=o.source_event_id AND json_extract(c.outcome_json,'$.kind')='natural_approval' " +
+    "LEFT JOIN collaboration_owner_text_commands c ON c.source_event_id=o.source_event_id AND json_extract(c.outcome_json,'$.kind') IN ('natural_approval','natural_retry') " +
     "LEFT JOIN collaboration_conversation_aliases a ON a.source='dingtalk' AND a.external_id=json_extract(c.outcome_json,'$.conversationId') " +
     "LEFT JOIN collaboration_work_items nw ON nw.id=json_extract(c.outcome_json,'$.workItemId') AND nw.conversation_id=a.conversation_id " +
     "WHERE COALESCE(w.conversation_id,e.conversation_id,a.conversation_id)=? AND o.delivery_state='sent' AND o.delivery_sequence<=? " +

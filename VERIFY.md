@@ -1,5 +1,13 @@
 # Meta 协作验证记录
 
+## 2026-09-08 真实具名自然重试链路
+
+- 44bb7a、0f6bc7：第14条真实消息精确匹配用户原句，Owner及原WI关联正确，但通用控制拒绝，无新执行。bc439f/ad5380进一步确认实际run为needs_configuration，且存在已完成同名历史事项。
+- 8a4d88：真实Stream入口回归红灯，新增控制sink未调用且错误走普通入站ACK；c06a00新增service测试确认入口缺失。57bb86补获真实needs_configuration及已送达重试回复遗漏于上下文的红灯；364dcb确认旧同名任务导致歧义；3e498e运行测试确认配置更低次数上限需传递。
+- 4a3ebf：扩大8文件335项及typecheck/diff通过；aadc9b随后2文件64项及typecheck/diff通过。4f89e8、152b99最终只读真实对象核对通过，原WI/run/失败Outbox固定一致，没有真实控制写入。
+- 首次完整回归受沙箱本机端口限制，多个服务测试无法启动并跳过，已针对本轮Vitest进程发送SIGINT；01f786终态130，不记作产品失败或验证通过。授权本机完整回归3883be/session91346已终态0（47b727/c9841a）：主集317文件通过/1文件跳过，3937通过/18跳过；broker7、Node32、打包/headless冒烟及typecheck/diff全部通过。
+- 1d66e5新批次发布配置fixture通过，仅image/coordinator image变化；1b0e4b Linux脚本语法与传输SHA256一致，当前运行服务未切换。旧守卫和数据保留。
+
 ## 2026-09-08 Owner 重试等待复核
 
 836fc4只读真实账本：schema37/quick_check ok/外键违规0/唯一Owner1且哈希不变，13事件/42sent/13superseded、十项在途0。同一真实Owner输入依赖连续第三个目标轮次仍未解除，原生目标已标blocked（updatedAt1788851020）。本轮无产品改动、消息发送、业务重试、模型调用或重复回归；已通过证据不撤销，整体完成不成立。

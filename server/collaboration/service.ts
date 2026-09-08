@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { recheckPlanMaterials } from "./plan-material-readiness.ts";
 import type { NaturalApprovalOutcome } from "./natural-approval.ts";
+import type { NaturalRetryOutcome } from "./natural-retry.ts";
 
 import type { DingTalkInboundMessage } from "../integrations/dingtalk/types.ts";
 import {
@@ -72,6 +73,7 @@ export interface CollaborationService {
   performOwnerAction(input: PerformOwnerActionInput): OwnerActionOutcome;
   performDirectOwnerAction(input: PerformDirectOwnerActionInput): OwnerActionOutcome;
   performNaturalApproval(message: DingTalkInboundMessage, now?: number, assertActive?: () => void): NaturalApprovalOutcome | null;
+  performNaturalRetry(message: DingTalkInboundMessage, now?: number, assertActive?: () => void, maxAttempts?: number): NaturalRetryOutcome | null;
   pendingOutbox(): CollaborationOutboxEntry[];
   close(): void;
 }
@@ -259,6 +261,15 @@ export function startCollaborationService(options: CollaborationServiceOptions):
       if (closed) throw new Error("Collaboration service is closed");
       assertServiceArmed();
       try { return actions.performNaturalApproval(message, now, assertActive); }
+      catch (error) {
+        if (isSqliteFailure(error)) serviceDegradedReason = "audit_unwritable";
+        throw error;
+      }
+    },
+    performNaturalRetry(message, now, assertActive, maxAttempts) {
+      if (closed) throw new Error("Collaboration service is closed");
+      assertServiceArmed();
+      try { return actions.performNaturalRetry(message, now, assertActive, maxAttempts); }
       catch (error) {
         if (isSqliteFailure(error)) serviceDegradedReason = "audit_unwritable";
         throw error;

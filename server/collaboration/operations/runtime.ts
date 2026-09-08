@@ -108,6 +108,7 @@ export interface RuntimeStream {
 
 export interface RuntimeDingTalkSinks {
   performNaturalApproval(message: DingTalkInboundMessage): ReturnType<CollaborationService["performNaturalApproval"]>;
+  performNaturalRetry(message: DingTalkInboundMessage): ReturnType<CollaborationService["performNaturalRetry"]>;
   reviewDeliveries(message: DingTalkInboundMessage): ReturnType<typeof requestDeliveryReview>;
   recoverRequirements(message: DingTalkInboundMessage): ReturnType<typeof recoverNaturalIntake>;
   recoverProjection(message: DingTalkInboundMessage): ReturnType<typeof recoverAttachmentProjection>;
@@ -919,6 +920,19 @@ export class CollaborationHeadlessRuntime {
       assertCurrentInstanceLease(this.database!, this.lease!, this.clock.now());
     });
     if (result?.workItemId && !result.duplicate) this.syncMetaBundleBestEffort(result.workItemId, true);
+    return result;
+  }
+
+  performDingTalkNaturalRetry(message: DingTalkInboundMessage): ReturnType<CollaborationService["performNaturalRetry"]> {
+    this.assertOperational();
+    const result = this.service!.performNaturalRetry(message, this.clock.now(), () => {
+      this.assertOperational();
+      assertCurrentInstanceLease(this.database!, this.lease!, this.clock.now());
+    }, this.options.execution?.limits.maxAttempts ?? 1);
+    if (result?.workItemId && !result.duplicate && result.allowed) {
+      this.syncMetaBundleBestEffort(result.workItemId, true);
+      this.scheduleReadyExecution(result.workItemId);
+    }
     return result;
   }
 
@@ -1878,6 +1892,7 @@ export class CollaborationHeadlessRuntime {
             : {}),
           perform: (action) => this.performDingTalkOwnerAction(action),
           performNaturalApproval: (message) => this.performDingTalkNaturalApproval(message),
+          performNaturalRetry: (message) => this.performDingTalkNaturalRetry(message),
           performCommand: (command) => this.performDingTalkOwnerTextCommand(command),
           recoverProjection: (message) => this.recoverDingTalkAttachmentProjection(message),
           recoverRequirements: (message) => this.recoverDingTalkRequirements(message),

@@ -9,6 +9,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { DingTalkInboundMessage, DingTalkSender } from "../integrations/dingtalk/types.ts";
 import { startCollaborationService, type CollaborationService } from "./service.ts";
 import { parseDingTalkOwnerTextAction } from "../integrations/dingtalk/text-actions.ts";
+import { enqueueInboundCard } from "./outbox.ts";
+import { renderDingTalkSessionMessage } from "../integrations/dingtalk/session-message.ts";
+import { readConversationContext, type ConversationJob } from "./conversation-context.ts";
 
 const scratch: string[] = [];
 const CANDIDATE_SHA = "a".repeat(40);
@@ -178,6 +181,19 @@ function seedExecution(
   }
   database.close();
   return { runId, candidateSha: CANDIDATE_SHA };
+}
+
+function retryFixture() {
+  const f = harness();
+  const { runId } = seedExecution(f.databaseFile, f.workItemId, { candidateState: "test_failed", evidence: false });
+  const db = new DatabaseSync(f.databaseFile);
+  db.prepare("UPDATE collaboration_work_items SET title='检查项列表增加优先级筛选，与状态筛选组合'").run();
+  db.prepare("UPDATE collaboration_runs SET status='failed'").run();
+  enqueueInboundCard(db, { sourceEventId: `candidate:${runId}`, aggregateType: "plan", aggregateId: f.workItemId,
+    aggregateVersion: 1, now: 1200, card: { type: "plan_status_card", headline: "执行未完成", status: "execution_failed",
+      workItemId: f.workItemId, planRevision: 1, failures: ["provider_sandbox_unavailable"] } });
+  db.prepare("UPDATE collaboration_outbox SET delivery_state='sent',sent_at=1300,delivery_sequence=rowid").run();
+  return { ...f, runId, db };
 }
 
 function item(databaseFile: string, workItemId: string): Record<string, unknown> {
@@ -500,6 +516,95 @@ describe("Owner action tokens and Work Item controls", () => {
     ]);
     afterSuccess.close();
     context.service.close();
+  });
+
+  it.each(["重试刚才的优先级筛选任务", "请重试优先级筛选", "@研发助手 重试优先级筛选任务。"])("retries the named, delivered failure through natural Owner ingress: %s", text => {
+    const f = retryFixture();
+    try {
+      // The captured pilot run was needs_configuration, not a generic failed run.
+      if (text === "重试刚才的优先级筛选任务") {
+        f.db.prepare("UPDATE collaboration_runs SET status='needs_configuration'").run();
+        f.db.prepare("UPDATE collaboration_work_nodes SET execution_status='needs_configuration' WHERE node_id='modify'").run();
+      }
+      const input = { ...message({ sourceEventId: "natural-retry", text, sender: ownerSender() }), receivedAt: 2000 };
+      expect(f.service.performNaturalRetry(input, 2000)).toMatchObject({ allowed: true, action: "retry", workItemId: f.workItemId, workItemVersion: 2 });
+      const receipt = f.db.prepare("SELECT outcome_json FROM collaboration_owner_text_commands WHERE source_event_id='natural-retry'").get()!;
+      expect(JSON.parse(String(receipt.outcome_json))).toMatchObject({ kind: "natural_retry", retryRunId: f.runId });
+      const reply = f.service.pendingOutbox().find(row => row.sourceEventId === "natural-retry")!;
+      const rendered = renderDingTalkSessionMessage(reply.card);
+      expect(JSON.stringify(rendered)).toContain("已重新安排");
+      expect(JSON.stringify(rendered)).not.toMatch(/WI-|审批|修改完成|受控执行/u);
+      f.db.prepare("UPDATE collaboration_outbox SET delivery_state='sent',sent_at=2050,delivery_sequence=10 WHERE source_event_id='natural-retry'").run();
+      const current = f.db.prepare("SELECT * FROM collaboration_external_events WHERE source_event_id='event-1'").get()!;
+      const history = readConversationContext(f.db, { ...current, context_outbox_sequence: 10, requested_work_item_id: null,
+        status: "pending", target_work_item_id: null, proposal_json: null, source_hash: "test" } as unknown as ConversationJob);
+      expect(history.history.some(row => row.role === "assistant" && row.workItemId === f.workItemId && row.text.includes("已重新安排"))).toBe(true);
+      const before = f.db.prepare("SELECT * FROM collaboration_control_events").all();
+      f.service.close(); f.service = startCollaborationService({ dataDirectory: f.root });
+      expect(f.service.performNaturalRetry(input, 2100)).toMatchObject({ allowed: true, duplicate: true });
+      expect(f.db.prepare("SELECT * FROM collaboration_control_events").all()).toEqual(before);
+      expect(f.db.prepare("SELECT count(*) n FROM collaboration_runs").get()).toEqual({ n: 1 });
+      expect(f.db.prepare("SELECT attempt FROM collaboration_runs").get()).toEqual({ attempt: 1 });
+      expect(f.db.prepare("SELECT count(*) n FROM collaboration_candidates").get()).toEqual({ n: 1 });
+      expect(f.db.prepare("SELECT execution_status FROM collaboration_work_nodes WHERE node_id='modify'").get()).toEqual({ execution_status: "not_started" });
+      expect(() => f.service.performNaturalRetry({ ...input, text: "重试支付筛选任务" }, 2200)).toThrow(/conflict/u);
+    } finally { f.db.close(); f.service.close(); }
+  });
+
+  it.each(["not_owner", "unstable", "wrong_group", "undelivered", "new_version", "new_plan", "running", "cancelled", "attempt_limit", "unknown_topic", "ambiguous"])("does not retry without current unambiguous authority/evidence: %s", boundary => {
+    const f = retryFixture();
+    try {
+      const input = { ...message({ sourceEventId: "natural-denied", text: "重试刚才的优先级筛选任务", sender: ownerSender() }), receivedAt: 2000 };
+      if (boundary === "not_owner") input.sender = contributorSender();
+      if (boundary === "unstable") input.sender = { senderId: "owner-1", displayName: "Owner" };
+      if (boundary === "wrong_group") input.conversationId = "another-group";
+      if (boundary === "unknown_topic") input.text = "重试支付筛选任务";
+      if (boundary === "undelivered") f.db.prepare("UPDATE collaboration_outbox SET delivery_state='pending',sent_at=NULL WHERE source_event_id=?").run(`candidate:${f.runId}`);
+      if (boundary === "new_version") f.db.prepare("UPDATE collaboration_work_items SET version=2").run();
+      if (boundary === "new_plan") f.db.prepare("UPDATE collaboration_work_items SET current_plan_revision=NULL").run();
+      if (boundary === "running") f.db.prepare("UPDATE collaboration_runs SET status='running',finished_at=NULL").run();
+      if (boundary === "cancelled") f.db.prepare("UPDATE collaboration_work_items SET control_state='cancelled'").run();
+      if (boundary === "attempt_limit") f.db.prepare("UPDATE collaboration_runs SET attempt=3").run();
+      if (boundary === "ambiguous") {
+        f.service.ingestDingTalkMessage({ ...message({ sourceEventId: "other-task", text: "新任务：优先级筛选的另一个页面" }), receivedAt: 1700 });
+      }
+      expect(f.service.performNaturalRetry(input, 2000)?.allowed).toBe(false);
+      expect(f.db.prepare("SELECT count(*) n FROM collaboration_control_events").get()).toEqual({ n: 0 });
+      const reply = f.service.pendingOutbox().find(row => row.sourceEventId === input.sourceEventId)!;
+      expect(JSON.stringify(renderDingTalkSessionMessage(reply.card))).not.toMatch(/WI-|需要由负责人确认具体动作/u);
+    } finally { f.db.close(); f.service.close(); }
+  });
+
+  it.each(["不要重试优先级筛选任务", "重试优先级筛选任务吗？", "如果成功就重试优先级筛选任务", "他说重试优先级筛选任务", "重试优先级筛选任务，然后部署", "重试刚才的任务", "重试 WI-INVALID", "重试“优先级筛选”任务"])("keeps uncertain/quoted retry text out of control: %s", text => {
+    const f = retryFixture();
+    try {
+      expect(f.service.performNaturalRetry({ ...message({ sourceEventId: "discussion", text, sender: ownerSender() }), receivedAt: 2000 }, 2000)).toBeNull();
+      expect(f.db.prepare("SELECT count(*) n FROM collaboration_control_events").get()).toEqual({ n: 0 });
+    } finally { f.db.close(); f.service.close(); }
+  });
+
+  it("never reinterprets an already ingested event, and rolls back a retry when its reply cannot persist", () => {
+    const f = retryFixture();
+    try {
+      const input = { ...message({ sourceEventId: "old-event", text: "重试刚才的优先级筛选任务", sender: ownerSender() }), receivedAt: 2000 };
+      f.service.ingestDingTalkMessage(input);
+      expect(f.service.performNaturalRetry(input, 2100)).toBeNull();
+      f.db.exec("CREATE TRIGGER fixture_reply_failure BEFORE INSERT ON collaboration_outbox BEGIN SELECT RAISE(ABORT,'fixture_retry_reply_failure'); END");
+      expect(() => f.service.performNaturalRetry({ ...input, sourceEventId: "fresh-retry" }, 2100)).toThrow("fixture_retry_reply_failure");
+      expect(f.db.prepare("SELECT count(*) n FROM collaboration_control_events").get()).toEqual({ n: 0 });
+      expect(f.db.prepare("SELECT count(*) n FROM collaboration_owner_text_commands").get()).toEqual({ n: 0 });
+    } finally { f.db.close(); f.service.close(); }
+  });
+
+  it("resolves '刚才' from the last actually delivered failure even with an older completed namesake", () => {
+    const f = retryFixture();
+    try {
+      const old = f.service.ingestDingTalkMessage({ ...message({ sourceEventId: "old-namesake", text: "新任务：优先级筛选的旧页面" }), receivedAt: 1050 }).workItemId!;
+      f.db.prepare("UPDATE collaboration_work_items SET status='accepted',control_state='accepted' WHERE id=?").run(old);
+      const input = { ...message({ sourceEventId: "recent-retry", text: "重试刚才的优先级筛选任务", sender: ownerSender() }), receivedAt: 2000 };
+      expect(f.service.performNaturalRetry({ ...input, text: "重试优先级筛选任务", sourceEventId: "ambiguous-name" }, 2000)).toMatchObject({ allowed: false });
+      expect(f.service.performNaturalRetry(input, 2100)).toMatchObject({ allowed: true, workItemId: f.workItemId });
+    } finally { f.db.close(); f.service.close(); }
   });
 
   it("records an Owner retry request while preserving the failed candidate", () => {

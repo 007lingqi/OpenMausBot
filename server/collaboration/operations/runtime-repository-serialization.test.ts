@@ -271,6 +271,36 @@ async function stopHarness(harness: RuntimeHarness): Promise<void> {
 }
 
 describe("runtime repository single-writer scheduling", () => {
+  it.each([1, 3])("natural Owner retry dispatches the same failed work only within the configured attempt limit (%s)", async maxAttempts => {
+    const h = createHarness([createRepository(temporaryDirectory(), "natural-retry")]);
+    h.options.execution!.limits.maxAttempts = maxAttempts;
+    h.options.outboxDelivery = { deliver: async () => ({ outcome: "sent" as const }) };
+    const service = startCollaborationService({ dataDirectory: h.options.dataDirectory });
+    service.bootstrapOwnerLocally({ senderCorpId: "corp", senderStaffId: "owner", now: Date.now() }); service.close();
+    const db = new DatabaseSync(h.databaseFile);
+    try {
+      await h.runtime.start();
+      await waitFor(() => h.agent.startedWorkItems.length === 1, "first attempt did not start");
+      h.agent.resolve(h.items[0].workItemId, "fail");
+      await waitFor(() => Boolean(db.prepare("SELECT 1 FROM collaboration_outbox WHERE json_extract(payload_json,'$.status')='execution_failed'").get()), "failure was not recorded");
+      for (let i = 0; i < 10; i++) {
+        await h.runtime.drainOnce();
+        if (db.prepare("SELECT 1 FROM collaboration_outbox WHERE json_extract(payload_json,'$.status')='execution_failed' AND delivery_state='sent'").get()) break;
+      }
+      expect(db.prepare("SELECT delivery_state FROM collaboration_outbox WHERE json_extract(payload_json,'$.status')='execution_failed'").get()).toEqual({ delivery_state: "sent" });
+      const input = { ...inbound({ sourceEventId: "natural-owner-retry", conversationId: h.items[0].conversationId, text: "重试刚才的修改仓库 1任务" }),
+        sender: { senderCorpId: "corp", senderStaffId: "owner", senderId: "owner", displayName: "Owner" } };
+      const result = h.runtime.performDingTalkNaturalRetry(input);
+      expect(result?.allowed).toBe(maxAttempts > 1);
+      if (maxAttempts === 1) expect(result?.reason).toBe("retry_attempt_limit");
+      expect(h.runtime.performDingTalkNaturalRetry(input)).toMatchObject({ allowed: maxAttempts > 1, duplicate: true });
+      if (maxAttempts > 1) {
+        await waitFor(() => h.agent.startedWorkItems.length === 2, "natural retry did not dispatch");
+        expect(h.agent.startedWorkItems).toEqual([h.items[0].workItemId, h.items[0].workItemId]);
+        expect(db.prepare("SELECT attempt FROM collaboration_runs ORDER BY attempt").all()).toEqual([{ attempt: 1 }, { attempt: 2 }]);
+      } else expect(h.agent.startedWorkItems).toHaveLength(1);
+    } finally { await stopHarness(h); db.close(); }
+  });
   it("rechecks old unread material at restart even without a planner, without reserving or starting execution", async () => {
     const h = createHarness([createRepository(temporaryDirectory(), "legacy-material")]);
     const db = new DatabaseSync(h.databaseFile);

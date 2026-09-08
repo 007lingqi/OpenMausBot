@@ -114,6 +114,21 @@ class FakeSdk implements DingTalkStreamSdkPort {
 }
 
 describe("DingTalk Stream adapter", () => {
+  it("routes a named natural retry to durable Owner control before intake and only ACKs after commit", async () => {
+    const sdk = new FakeSdk(), ingest = vi.fn((input: DingTalkInboundMessage) => inboundOutcome(input));
+    const performNaturalRetry = vi.fn().mockRejectedValueOnce(new Error("fixture_ledger_unavailable"))
+      .mockResolvedValue({ ...ownerOutcome(), action: "retry", kind: "natural_retry" });
+    const adapter = new DingTalkStreamAdapter(sdk, { ingest }, { perform: () => ownerOutcome(), performNaturalRetry }, new DingTalkSessionReplyRegistry());
+    await adapter.start();
+    try {
+      const packet = envelope("bot-message-text.json", "natural-retry");
+      const payload = JSON.parse(packet.data); payload.text.content = "重试刚才的优先级筛选任务";
+      const input = { ...packet, data: JSON.stringify(payload) };
+      await sdk.emit("robot", input); expect(sdk.acknowledgements).toEqual([]);
+      await sdk.emit("robot", input); expect(sdk.acknowledgements).toEqual(["natural-retry"]);
+      expect(ingest).not.toHaveBeenCalled(); expect(performNaturalRetry).toHaveBeenCalledTimes(2);
+    } finally { adapter.stop(); }
+  });
   it("routes natural approval to the durable control sink before ingress and ACKs only after commit", async () => {
     const sdk = new FakeSdk(), ingest = vi.fn((input: DingTalkInboundMessage) => inboundOutcome(input));
     const performNaturalApproval = vi.fn().mockRejectedValueOnce(new Error("fixture_ledger_unavailable"))

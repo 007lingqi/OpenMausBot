@@ -184,6 +184,11 @@ export class DingTalkStreamAdapter {
         });
         return;
       }
+      const naturalRetry = this.ownerActions.performNaturalRetry ? await this.ownerActions.performNaturalRetry(normalized.message) : null;
+      if (naturalRetry) {
+        this.acknowledge(envelope.headers.messageId);
+        return;
+      }
       const naturalApproval = await this.ownerActions.performNaturalApproval?.(normalized.message);
       if (naturalApproval) {
         this.acknowledge(envelope.headers.messageId);

@@ -23,6 +23,7 @@ import { approvalConversation, latestApprovalConversationDisplay, uninterruptedA
 import { enqueueInboundCard } from "./outbox.ts";
 import { renderConversationReplyCard } from "./message-renderer.ts";
 import { redactSensitiveText } from "./sensitive-text.ts";
+import { naturalRetryTopic, naturalRetryHash, currentShownRetryTarget, naturalRetryReply, type NaturalRetryOutcome } from "./natural-retry.ts";
 
 const TOKEN_VERSION = 1 as const;
 const DEFAULT_TOKEN_TTL_MS = 15 * 60_000;
@@ -602,6 +603,57 @@ export class OwnerActionController {
     return this.performDirectTransaction(input);
   }
 
+  /** Named natural retry is authenticated and fixed to a delivered, still-current
+   * failed run in the same transaction. Models never invoke this control entry. */
+  performNaturalRetry(message: DingTalkInboundMessage, now = Date.now(), assertActive = () => {}, maxAttempts = 3): NaturalRetryOutcome | null {
+    this.assertOpen();
+    const hash = naturalRetryHash(message);
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      assertActive(); assertLedgerArmed(this.database);
+      const previous = this.database.prepare("SELECT payload_hash,outcome_json FROM collaboration_owner_text_commands WHERE source_event_id=?")
+        .get(message.sourceEventId) as TextCommandRow | undefined;
+      if (previous && JSON.parse(previous.outcome_json).kind === "natural_retry") {
+        if (previous.payload_hash !== hash) throw new Error("natural_retry_event_conflict");
+        this.database.exec("COMMIT"); return { ...JSON.parse(previous.outcome_json), duplicate: true };
+      }
+      // A previously acknowledged discussion is never upgraded to a command.
+      if (this.database.prepare("SELECT 1 FROM collaboration_external_events WHERE source='dingtalk' AND source_event_id=?")
+        .get(message.sourceEventId)) { this.database.exec("ROLLBACK"); return null; }
+      const topic = naturalRetryTopic(message);
+      if (!topic) { this.database.exec("ROLLBACK"); return null; }
+      const receivedAt = message.receivedAt ?? now;
+      if (!message.sourceEventId || message.sourceEventId.trim() !== message.sourceEventId || message.sourceEventId.length > 256 ||
+          !message.conversationId.trim() || message.conversationId.length > 512 ||
+          /[\u0000-\u001f\u007f]/u.test(message.sourceEventId + message.conversationId) ||
+          !Number.isSafeInteger(receivedAt) || receivedAt < 0 || !Number.isSafeInteger(now) || now < receivedAt) throw new Error("natural_retry_input_invalid");
+      if (previous || this.database.prepare("SELECT 1 FROM collaboration_outbox WHERE source='dingtalk' AND source_event_id=? " +
+        "UNION ALL SELECT 1 FROM collaboration_attachment_recovery_requests WHERE source_event_id=? " +
+        "UNION ALL SELECT 1 FROM collaboration_natural_intake_recovery_requests WHERE source_event_id=?")
+        .get(message.sourceEventId, message.sourceEventId, message.sourceEventId)) throw new Error("natural_retry_event_conflict");
+      const policy = evaluateOwnerPolicy(this.database, { sender: message.sender, capability: capabilityForAction("retry"), now });
+      const recent = /^(?:请)?重试\s*刚才/u.test(directControlText(message) ?? "");
+      const resolved = policy.decision === "allow" ? currentShownRetryTarget(this.database, message.conversationId, topic, receivedAt, recent, maxAttempts) : null;
+      const target = resolved?.target;
+      let decision: NaturalRetryOutcome;
+      if (target) {
+        decision = this.performDirectTransaction({ sourceEventId: message.sourceEventId, conversationId: message.conversationId,
+          action: "retry", workItemId: target.workItemId, sender: message.sender, now },
+          { managed: false, hash, retryTarget: target }) as NaturalRetryOutcome;
+      } else {
+        const reason = policy.decision !== "allow" ? policy.reason : resolved?.reason ?? "retry_target_unavailable";
+        decision = { ...outcome({ allowed: false, action: "retry", reason }), kind: "natural_retry", conversationId: message.conversationId };
+        appendControlAudit(this.database, { actorPrincipalId: policy.principalId, requestId: randomUUID(), action: "control.retry",
+          outcome: "deny", policyRule: "natural-retry-current-failure-v1", resource: { sourceEventIdHash: stateHash(message.sourceEventId) }, error: reason, now });
+        this.database.prepare("INSERT INTO collaboration_owner_text_commands(source_event_id,payload_hash,outcome_json,processed_at) VALUES(?,?,?,?)")
+          .run(message.sourceEventId, hash, JSON.stringify(decision), now);
+      }
+      enqueueInboundCard(this.database, { sourceEventId: message.sourceEventId, aggregateType: "association", aggregateId: message.sourceEventId,
+        aggregateVersion: 1, now, card: renderConversationReplyCard(naturalRetryReply(decision, redactSensitiveText(topic))) });
+      this.database.exec("COMMIT"); return decision;
+    } catch (error) { this.database.exec("ROLLBACK"); throw error; }
+  }
+
   /** Only the authenticated transport calls this entry point. It resolves an
    * already displayed object under the same write lock as the sole apply core. */
   performNaturalApproval(message: DingTalkInboundMessage, now = Date.now(), assertActive = () => {}): NaturalApprovalOutcome | null {
@@ -688,7 +740,8 @@ export class OwnerActionController {
     } catch (error) { this.database.exec("ROLLBACK"); throw error; }
   }
 
-  private performDirectTransaction(input: PerformDirectOwnerActionInput, options: { managed?: boolean; hash?: string; presentationId?: string } = {}): OwnerActionOutcome {
+  private performDirectTransaction(input: PerformDirectOwnerActionInput, options: { managed?: boolean; hash?: string; presentationId?: string;
+    retryTarget?: { runId: string; outboxId: string } } = {}): OwnerActionOutcome {
     this.assertOpen();
     const now = input.now ?? Date.now();
     const sourceEventId = input.sourceEventId.trim();
@@ -868,6 +921,7 @@ export class OwnerActionController {
       }
       if (input.conversationId !== undefined) decision!.conversationId = input.conversationId;
       if (options.presentationId) Object.assign(decision!, { kind: "natural_approval", approvalPresentationId: options.presentationId });
+      if (options.retryTarget) Object.assign(decision!, { kind: "natural_retry", retryRunId: options.retryTarget.runId, retryOutboxId: options.retryTarget.outboxId });
       this.database.prepare(
         "INSERT INTO collaboration_owner_text_commands " +
           "(source_event_id, payload_hash, outcome_json, processed_at) VALUES (?, ?, ?, ?)",
