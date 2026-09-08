@@ -1,5 +1,11 @@
 # Meta 协作验证记录
 
+## 2026-09-08 长准备回复与真实读取原因回归
+
+- ad570d只读真实账本仍13事件/42sent/13superseded、十项在途0，未收到重试。01fa25：四文件79项中5项预期失败，覆盖JSON/TS读取错误和长准备回复/通俗失败说明；初次41c0fa夹具错误已依据当前实现纠正。
+- 090e72/43810d/cc4da1：修复后79项及typecheck/diff终态0。扩充到源码读取→executor→Ledger→Outbox→真实session格式，以及公开消息入口重放、清理未知、模型伪造诊断、Unicode/转义，623996确认8文件157项及typecheck/diff终态0。93f652仅为先前使用底层插入helper重放导致唯一键拒绝，未修改底层幂等保护。
+- 7012c8/7a2d9a完整pnpm test、typecheck、diff终态0：主集317文件3909通过/18跳过，broker7、Node32、打包及headless冒烟通过。303025实际session格式预览未发送到群，不能替代真实用户验收。8aebfa发布配置fixture通过，09c1eb仅暂存脚本。证据见conversation-reply-fix-20260908.json。
+
 ## 2026-09-08 读取修复固定镜像发布及模型检查纠正
 
 - 30c709：81eae83受测六个bundle与bc55cbc4…镜像逐项SHA256一致，离线构建、隔离健康schema37通过。ce0036配置生成fixture通过，仅改固定镜像及监督器身份；d4e709先前fixture失败系跨VM realm的deepStrictEqual原型差异，修正fixture运行环境后通过，没有修改发布断言或产品源码。

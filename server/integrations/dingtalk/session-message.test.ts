@@ -143,6 +143,41 @@ describe("natural DingTalk session replies", () => {
     expectBusinessOnly(reply.text);
   });
 
+  it("uses an explicitly shortened topic for a long ready message, without changing the full requirement", () => {
+    const summary = "发布验收室增加优先级筛选。" + "与状态和搜索组合，空结果保持原提示。".repeat(12) + "不得修改账号权限。";
+    const card = renderPlanStatusCard({ workItemId: "WI-INTERNAL", status: "ready_for_execution", summary });
+    const before = structuredClone(card), reply = markdown(card);
+    expect(reply.text).toContain("发布验收室增加优先级筛选");
+    expect(reply.text).toContain("…");
+    expect(reply.text).toContain("完整要求保持不变");
+    expect(reply.text.length).toBeLessThan(200);
+    expect(reply.text).not.toContain(summary);
+    expect(reply.text).not.toMatch(/修改完成|批准|接受/u);
+    expect(card).toEqual(before);
+    expectBusinessOnly(reply.text);
+  });
+
+  it("explains a proven source-read failure without calling it an isolation failure or exposing details", () => {
+    const reply = markdown({ ...renderPlanStatusCard({ workItemId: "WI-INTERNAL", status: "execution_failed", failures: ["provider_source_unavailable"] }), ...internalEvidence });
+    expect(reply.text).toContain("项目文件未能安全读取");
+    expect(reply.text).toContain("还没有开始修改");
+    expect(reply.text).toContain("负责人");
+    expect(reply.text).not.toMatch(/provider_|执行环境|已完成/u);
+    expectBusinessOnly(reply.text);
+    expect(markdown(renderPlanStatusCard({ workItemId: "WI-INTERNAL", status: "verification_blocked", failures: ["provider_source_unavailable"] })).text)
+      .not.toContain("还没有开始修改");
+  });
+
+  it("keeps a shortened ready excerpt escaped and does not split Unicode characters", () => {
+    const summary = "界面" + "🧪".repeat(130) + "<script>不得执行</script>";
+    const reply = markdown(renderPlanStatusCard({ workItemId: "WI-INTERNAL", status: "ready_for_execution", summary }));
+    expect(reply.text).toContain("…");
+    expect(reply.text).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u);
+    const markup = markdown(renderPlanStatusCard({ workItemId: "WI-INTERNAL", status: "ready_for_execution", summary: "<测试>*筛选*" + "普通内容".repeat(40) }));
+    expect(markup.text).toContain("&lt;测试&gt;\\*筛选\\*");
+    expect(markup.text).not.toContain("<测试>");
+  });
+
   it("keeps concrete completed results, removes duplicate highlights, and does not invent a generic change", () => {
     const summary = "登录失败后会保留用户名，密码仍会清空。";
     const reply = markdown(renderPlanStatusCard({ workItemId: "WI-INTERNAL", status: "completed", summary,

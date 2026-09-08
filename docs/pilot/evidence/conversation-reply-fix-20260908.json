@@ -1,0 +1,64 @@
+{
+  "format": "conversation-reply-fix-v1",
+  "status": "full_regression_passed_not_deployed",
+  "incidentWorkItem": "WI-5C68D17B361E",
+  "startingSource": "140fa86",
+  "existingDeployedImage": "sha256:bc55cbc4d7805d74edd68952150f5751ac542d077caa1107617368f29c61e6d8",
+  "observedProblem": [
+    "ready notice repeats a long complete requirement",
+    "trusted source-read exception was collapsed into sandbox unavailable"
+  ],
+  "changes": {
+    "readyTopicLimitUnicodeCharacters": 96,
+    "longExcerptExplicitlyMarked": true,
+    "originalSpecSourcesAndCardPayloadUnchanged": true,
+    "shortReadySummaryAndQuestionsUnchanged": true,
+    "sourceReadCauseOnlyBeforeModelAndApplyGates": true,
+    "registeredContainmentRetained": true,
+    "cleanupUnknownStillBlocksAndRetainsOccupancy": true,
+    "untrustedModelCannotSetTrustedSourceCause": true,
+    "rawParserDiagnosticsNotReturned": true,
+    "ownerControlAndAttemptPolicyUnchanged": true
+  },
+  "verification": {
+    "redRegressionFailures": 5,
+    "focusedTestsPassed": 79,
+    "expandedTestsPassed": 157,
+    "expandedFilesPassed": 8,
+    "typecheckPassed": true,
+    "publicMessageReplayLeavesOutboxUnchanged": true,
+    "sourceCauseSurvivesExecutorLedgerOutboxSessionRendering": true,
+    "fullRegression": "passed_session_83660_exit_0",
+    "mainTestFilesPassed": 317,
+    "mainTestsPassed": 3909,
+    "mainTestsSkipped": 18,
+    "brokerTestsPassed": 7,
+    "nodeTestsPassed": 32,
+    "packagedAndHeadlessSmokePassed": true
+  },
+  "realPilot": {
+    "events": 13,
+    "outboxSent": 42,
+    "outboxSuperseded": 13,
+    "tenInflightCountsZero": true,
+    "ownerRetryReceived": false,
+    "businessDeliveryComplete": false,
+    "overallGoalComplete": false
+  },
+  "receipts": {
+    "realLedger": "ad570d",
+    "redAfterFixtureCorrection": "01fa25",
+    "focusedGreen": ["090e72", "43810d", "cc4da1"],
+    "expandedGreen": "623996",
+    "fullRegressionStart": "072c9f",
+    "fullRegressionComplete": ["7012c8", "7a2d9a"],
+    "actualSessionFormatPreview": "303025",
+    "releaseFixture": "8aebfa",
+    "stagedReleaseScripts": "09c1eb"
+  },
+  "release": {
+    "status": "not_built_or_deployed",
+    "newReleaseDirectory": "/var/lib/openmausbot-collaboration-pilot/releases/reply-20260908",
+    "rollbackUsesCurrentData": true
+  }
+}

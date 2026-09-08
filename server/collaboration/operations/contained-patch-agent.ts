@@ -153,10 +153,18 @@ export class DockerContainedPatchAgent implements AgentRunPort {
       const proof = await containment.issueProof(id, request.containmentBinding);
       await unlessCancelled(request.signal, () => request.registerContainment(proof));
       assertActive(request.signal);
-      const baseSha = execFileSync("git", ["--no-optional-locks", "-C", source, "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "rev-parse", "--verify", "HEAD^{commit}"],
-        { env: { ...isolatedExecutionEnvironment(process.env, source), GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
-          timeout: 5000, maxBuffer: 4096, stdio: ["ignore", "pipe", "pipe"] }).toString("utf8").trim();
-      view = createProviderReadView({ source, destination: join(directory, "view"), baseSha, readScope: request.readScope, denyScope: request.denyScope });
+      try {
+        const baseSha = execFileSync("git", ["--no-optional-locks", "-C", source, "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "rev-parse", "--verify", "HEAD^{commit}"],
+          { env: { ...isolatedExecutionEnvironment(process.env, source), GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
+            timeout: 5000, maxBuffer: 4096, stdio: ["ignore", "pipe", "pipe"] }).toString("utf8").trim();
+        view = createProviderReadView({ source, destination: join(directory, "view"), baseSha, readScope: request.readScope, denyScope: request.denyScope });
+      } catch {
+        // The supervisor has already registered containment, but the model and
+        // applier gates are still closed. Keep this known cause without source
+        // diagnostics. The outer finally must still prove successful cleanup.
+        return { threadId: request.threadId, turnId: request.turnId, status: "needs_configuration",
+          need: "provider_source_unavailable", sandboxEnforced: true, containmentProof: proof };
+      }
       writeControl(directory, "request.json", { request: safeRequest, files: view.files });
       assertActive(request.signal);
       if (heartbeatError) throw Error("contained_heartbeat_failed");

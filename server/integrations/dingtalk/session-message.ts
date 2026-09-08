@@ -50,6 +50,18 @@ function userFacingSummary(value: unknown, fallback: string): string {
   return /[\u3400-\u9fff]/u.test(summary) ? summary : fallback;
 }
 
+function readySummary(value: unknown): string {
+  const summary = userFacingSummary(value, "会按已确认的需求开始修改。");
+  const characters = Array.from(summary.replace(/\s+/gu, " "));
+  if (characters.length <= 96) return summary;
+  const prefix = characters.slice(0, 96).join("");
+  const boundary = prefix.search(/[。！？；]/u);
+  const excerpt = boundary >= 8 ? prefix.slice(0, boundary) : prefix;
+  // This is visibly a topic excerpt, never a replacement Spec or a claim
+  // that omitted constraints were removed. The original card is unchanged.
+  return `这次处理：“${excerpt}…”，完整要求保持不变。`;
+}
+
 const PLAN_HEADLINES: Record<string, string> = {
   planning: "正在整理修改方案",
   ready_for_execution: "准备开始修改",
@@ -71,6 +83,9 @@ function failureGuidance(value: unknown, status: string): string[] {
     .filter((item) => /[\u3400-\u9fff]/u.test(item) && item !== "未知计划错误")
     .slice(0, 3);
   if (readable.length) return readable;
+  if (status === "execution_failed" && failures.includes("provider_source_unavailable")) {
+    return ["项目文件未能安全读取，还没有开始修改。请负责人检查文件读取配置后重试。"];
+  }
   if (status === "execution_failed" && failures.includes("provider_sandbox_unavailable")) {
     return ["执行环境暂不可用，这次修改没有完成。请负责人检查后再决定是否重试。"];
   }
@@ -199,7 +214,7 @@ export function renderDingTalkSessionMessage(payload: unknown): Record<string, u
     } else if (status === "ready_for_execution") {
       lines.push(
         "",
-        text(userFacingSummary(card?.summary, "会按已确认的需求开始修改。"), "按已确认的需求执行。", 1_000),
+        text(readySummary(card?.summary), "按已确认的需求执行。", 1_000),
         "",
         "完成后会告诉你改动结果和验证情况。",
       );

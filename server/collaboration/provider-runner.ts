@@ -46,7 +46,7 @@ export interface AgentRunResult {
   turnId: string;
   status: "completed" | "failed" | "needs_configuration";
   message?: string;
-  need?: "network" | "dependency_installation";
+  need?: "network" | "dependency_installation" | "provider_source_unavailable";
   sandboxEnforced: boolean;
   /** Required before candidate output can cross the runtime trust boundary. */
   containmentProof?: import("./containment.ts").ContainmentProof;

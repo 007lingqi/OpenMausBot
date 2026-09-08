@@ -17,7 +17,7 @@ function message(id: string, text: string, group = "group") {
   return { sourceEventId: id, transportMessageId: id, conversationId: group, addressedToBot: true, text,
     sender: { senderId: "product", senderCorpId: "synthetic-corp", senderStaffId: "product", displayName: "product" }, receivedAt: Date.now() };
 }
-function setup(options: { clarify?: boolean; failPlanning?: boolean; beforeInterpret?: () => Promise<void> } = {}) {
+function setup(options: { clarify?: boolean; failPlanning?: boolean; planSummary?: string; beforeInterpret?: () => Promise<void> } = {}) {
   const dataDirectory = mkdtempSync(join(tmpdir(), "conversation-notifications-")); directories.push(dataDirectory);
   const naturalIntake = new ModelNaturalIntakeInterpreter({ async complete(envelope) {
     const input = JSON.parse(envelope.user);
@@ -29,7 +29,7 @@ function setup(options: { clarify?: boolean; failPlanning?: boolean; beforeInter
       acceptance: options.clarify ? [] : [{ description: input.event.text, observation: input.event.text, quote: input.event.text }],
       answers: [], questions: options.clarify ? [{ id: "copy", question: "账号或密码错误时希望显示什么提示？", reason: "确认具体效果", role: "requester", respondent: null }] : [] };
   } });
-  const config = { dataDirectory, planning: { planner: { propose() { if (options.failPlanning) throw new Error("synthetic-planner-failure"); return validProposal(); } },
+  const config = { dataDirectory, planning: { planner: { propose() { if (options.failPlanning) throw new Error("synthetic-planner-failure"); return { ...validProposal(), ...(options.planSummary ? { summary: options.planSummary } : {}) }; } },
     policy, naturalIntake, defaultDefinition: { repository: policy.allowedRepositories[0], acceptanceConditions: [] } } };
   const service = startCollaborationService(config), db = new DatabaseSync(join(dataDirectory, "collaboration", "collaboration.sqlite"));
   return { service, db, config };
@@ -53,6 +53,21 @@ async function deliver(db: DatabaseSync) {
 }
 
 describe("conversational notifications avoid duplicate receipts without hiding real progress", () => {
+  it("keeps the complete long requirement in the ledger while sending only a brief ready notice", async () => {
+    const requirement = "发布验收室增加优先级筛选。" + "与状态和搜索组合，空结果保持原提示。".repeat(12) + "不得修改账号权限。";
+    const h = setup({ planSummary: requirement });
+    try {
+      h.service.ingestDingTalkMessage(message("new", requirement)); await h.service.processNaturalIntake();
+      const before = requirements(h.db), replies = await deliver(h.db);
+      expect(replies).toHaveLength(1);
+      expect(replies[0].text).toContain("发布验收室增加优先级筛选");
+      expect(replies[0].text.length).toBeLessThan(200);
+      expect(replies[0].text).not.toContain(requirement);
+      expect(requirements(h.db)).toEqual(before);
+      expect(JSON.stringify(before)).toContain("不得修改账号权限");
+    } finally { h.service.close(); h.db.close(); }
+  });
+
   it.each(["clarification", "ready", "planning-failed"])("sends one current %s reply, not a receipt followed by the same stage", async stage => {
     const h = setup({ clarify: stage === "clarification", failPlanning: stage === "planning-failed" });
     try {

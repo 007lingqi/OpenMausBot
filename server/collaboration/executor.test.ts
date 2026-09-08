@@ -14,6 +14,8 @@ import { reserveVerification, settleVerification } from "./verification-lifecycl
 import { FakeDingTalkAdapter } from "../integrations/dingtalk/fake-adapter.ts";
 import type { DingTalkInboundMessage, DingTalkSender } from "../integrations/dingtalk/types.ts";
 import { policy, validProposal } from "./planner.test-fixtures.ts";
+import { enqueueExecutionOutcomeStatus } from "./operations/runtime.ts";
+import { renderDingTalkSessionMessage } from "../integrations/dingtalk/session-message.ts";
 import {
   containmentBindingHash,
   runtimeIdentityFingerprint,
@@ -549,6 +551,34 @@ describe("trusted candidate executor", () => {
     expect(database.prepare("SELECT status FROM collaboration_runs").get()).toEqual({ status: "needs_configuration" });
     expect(database.prepare("SELECT count(*) AS n FROM collaboration_execution_settlements").get()).toEqual({ n: 0 });
     database.close();
+  });
+
+  it("keeps the trusted source-read cause in the ledger without creating candidate code or running tests", async () => {
+    const h = setup({ agent: new FakeAgent(request => ({ ...completed(request), status: "needs_configuration", need: "provider_source_unavailable" })) });
+    try {
+      const outcome = await h.service.executeCurrentPlan(h.workItemId);
+      expect(outcome).toMatchObject({ resultSha: null, changedPaths: [], evidence: [],
+        report: { state: "needs_configuration", reasons: ["provider_source_unavailable"] } });
+      expect((h.commandRunner as FakeSandboxedCommandRunner).requests).toEqual([]);
+      const db = ledger(h.root);
+      try {
+        expect(db.prepare("SELECT state,result_sha,changed_paths_json,violations_json FROM collaboration_candidates").get())
+          .toEqual({ state: "needs_configuration", result_sha: null, changed_paths_json: "[]", violations_json: '["provider_source_unavailable"]' });
+        expect(db.prepare("SELECT count(*) n FROM collaboration_execution_settlements").get()).toEqual({ n: 1 });
+        enqueueExecutionOutcomeStatus({ database: db, outcome, now: Date.now() });
+        // Replay the platform entry point, not the non-idempotent low-level insert helper.
+        const beforeReplay = db.prepare("SELECT * FROM collaboration_outbox ORDER BY rowid").all();
+        h.service.ingestDingTalkMessage(inbound());
+        expect(db.prepare("SELECT * FROM collaboration_outbox ORDER BY rowid").all()).toEqual(beforeReplay);
+        const rows = db.prepare("SELECT payload_json FROM collaboration_outbox WHERE source_event_id=?").all(`candidate:${outcome.runId}`);
+        expect(rows).toHaveLength(1);
+        const card = JSON.parse(String(rows[0].payload_json));
+        expect(card).toMatchObject({ status: "execution_failed", failures: ["provider_source_unavailable"] });
+        const reply = renderDingTalkSessionMessage(card).markdown as { text: string };
+        expect(reply.text).toContain("项目文件未能安全读取");
+        expect(reply.text).not.toMatch(/provider_|执行环境|修改完成/u);
+      } finally { db.close(); }
+    } finally { h.service.close(); }
   });
 
   it("requires a sandbox runner and rejects incomplete sandbox attestations", async () => {

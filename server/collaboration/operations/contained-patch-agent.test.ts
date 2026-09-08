@@ -47,7 +47,7 @@ function fixture(mode: "success" | "provider-failure" | "register-failure" | "so
     const path = join(control, "proposal.json");
     if (!existsSync(path)) {
       if (mode === "source-drift") writeFileSync(join(cwd, "src/main.ts"), "export const value = 'concurrent';\n");
-      writeFileSync(path, JSON.stringify(mode === "provider-failure" ? { status: "needs_configuration", summary: "unclear", changes: [] } : { status: "completed", summary: "updated", changes: [{ path: "src/main.ts", contents: "export const value = 'P2';\n" }] }), { mode: 0o600 });
+      writeFileSync(path, JSON.stringify(mode === "provider-failure" ? { status: "needs_configuration", summary: "unclear", need: "provider_source_unavailable", changes: [] } : { status: "completed", summary: "updated", changes: [{ path: "src/main.ts", contents: "export const value = 'P2';\n" }] }), { mode: 0o600 });
     }
     if (existsSync(join(control, "apply.start"))) {
       const approved = JSON.parse(readFileSync(join(control, "apply.json"), "utf8"));
@@ -56,10 +56,38 @@ function fixture(mode: "success" | "provider-failure" | "register-failure" | "so
       if (mode !== "hang-exit") { running = false; finishWait?.(result("0")); }
     }
   }, 5);
-  return { root, cwd, exchange, agent, request, containment, docker, calls, controller, stop() { clearInterval(timer); }, control: () => control };
+  return { root, cwd, exchange, agent, request, containment, docker, calls, controller, git, stop() { clearInterval(timer); }, control: () => control };
 }
 
 describe("independent contained patch Agent", () => {
+  it.each(["json", "ts"])("reports a trusted %s read failure without losing registered containment or opening the model gate", async extension => {
+    const f = fixture();
+    const source = extension === "json" ? '{"password":"synthetic-private-value", invalid}' : 'const password = "synthetic-private-value"; const broken = ;';
+    try {
+      writeFileSync(join(f.cwd, `src/broken.${extension}`), source); f.git("add", "."); f.git("commit", "-qm", "unreadable fixture");
+      const result = await f.agent.run(f.request);
+      expect(result).toMatchObject({ status: "needs_configuration", need: "provider_source_unavailable", sandboxEnforced: true });
+      expect(f.request.registerContainment).toHaveBeenCalledExactlyOnceWith(result.containmentProof);
+      expect(JSON.stringify(result)).not.toContain("synthetic-private-value");
+      expect(f.calls.some(args => args[0] === "wait")).toBe(false);
+      expect(f.containment.terminateBoundContainer).toHaveBeenCalledOnce();
+      expect(readdirSync(f.exchange)).toEqual([]);
+      expect(readFileSync(join(f.cwd, "src/main.ts"), "utf8")).toContain("P1");
+      expect(readFileSync(join(f.cwd, `src/broken.${extension}`), "utf8")).toBe(source);
+    } finally { f.stop(); }
+  });
+
+  it("does not hide uncertain cleanup behind a readable-source failure", async () => {
+    const f = fixture("cleanup-unknown");
+    try {
+      writeFileSync(join(f.cwd, "src/broken.json"), "{invalid}"); f.git("add", "."); f.git("commit", "-qm", "unreadable fixture");
+      await expect(f.agent.run(f.request)).rejects.toHaveProperty("name", "CommandCleanupError");
+      expect(existsSync(f.control())).toBe(true);
+      expect(existsSync(join(f.control(), "proposal.start"))).toBe(false);
+      await expect(f.agent.interrupt(f.request.runId)).rejects.toHaveProperty("name", "CommandCleanupError");
+    } finally { f.stop(); }
+  });
+
   it("reconciles a lost create reply from a fresh agent without starting, releasing or backfilling proof", async () => {
     const f = fixture(), original = f.docker.run; let createdArgs: readonly string[] = [];
     f.docker.run = vi.fn(async args => {
@@ -100,7 +128,9 @@ describe("independent contained patch Agent", () => {
   });
   it("keeps valid containment on a provider configuration failure without applying", async () => {
     const f = fixture("provider-failure"); try {
-      expect(await f.agent.run(f.request)).toMatchObject({ status: "needs_configuration", sandboxEnforced: true, containmentProof: expect.any(Object) });
+      const result = await f.agent.run(f.request);
+      expect(result).toMatchObject({ status: "needs_configuration", sandboxEnforced: true, containmentProof: expect.any(Object) });
+      expect(result).not.toHaveProperty("need"); // Model JSON cannot claim the coordinator's pre-model source-read cause.
       expect(readFileSync(join(f.cwd, "src/main.ts"), "utf8")).toContain("P1");
       expect(f.containment.terminateBoundContainer).toHaveBeenCalled();
     } finally { f.stop(); }
