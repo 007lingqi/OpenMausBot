@@ -1,8 +1,9 @@
 {
   "format": "conversation-reply-fix-v1",
-  "status": "full_regression_passed_not_deployed",
+  "status": "deployed_verified_waiting_for_real_owner_retry",
   "incidentWorkItem": "WI-5C68D17B361E",
   "startingSource": "140fa86",
+  "source": "e9b86a0cfcc2d12ef371c8d32de371cc4aadb2a2",
   "existingDeployedImage": "sha256:bc55cbc4d7805d74edd68952150f5751ac542d077caa1107617368f29c61e6d8",
   "observedProblem": [
     "ready notice repeats a long complete requirement",
@@ -54,11 +55,64 @@
     "fullRegressionComplete": ["7012c8", "7a2d9a"],
     "actualSessionFormatPreview": "303025",
     "releaseFixture": "8aebfa",
-    "stagedReleaseScripts": "09c1eb"
+    "stagedReleaseScripts": "09c1eb",
+    "builtImageAndHashes": "ff3356",
+    "preparedConfiguration": "6fa000",
+    "singleStart": ["8ee366", "9f5a4d"],
+    "singleStartDockerHealth": "b17971",
+    "systemdHandoff": ["cdfddc", "eea548"],
+    "finalLiveHealth": "8ffc9a"
   },
   "release": {
-    "status": "not_built_or_deployed",
+    "status": "systemd_handoff_passed",
     "newReleaseDirectory": "/var/lib/openmausbot-collaboration-pilot/releases/reply-20260908",
-    "rollbackUsesCurrentData": true
+    "rollbackUsesCurrentData": true,
+    "image": "sha256:e7b730953247f19b0fdf2bb544cb113b436ae4bbc0e71974def9138760d21fdf",
+    "rollback": "sha256:bc55cbc4d7805d74edd68952150f5751ac542d077caa1107617368f29c61e6d8",
+    "sixBundleHashesMatchTestedArtifacts": true,
+    "isolatedHealthSchema": 37,
+    "configurationChanges": ["image", "OMB_DOCKER_COORDINATOR_IMAGE"],
+    "credentialsOrPermissionsChanged": false,
+    "singleStart": {
+      "containerId": "80f69d50173df6fd99c3e05b00a3442152970f67e25f43019ffbfcb67aa902f4",
+      "startedAt": "2026-09-08T06:56:10.175828873Z",
+      "fence": 55,
+      "restartPolicy": "no",
+      "restartCount": 0,
+      "ready": true,
+      "connected": true,
+      "executionMode": "execute",
+      "newBackupVerified": true,
+      "ownerAndDataPreserved": true,
+      "modelSocketCheckedWithConfiguredIdentity": true
+    },
+    "systemdHandoff": {
+      "containerId": "ad55e18d778487f587b38eff3bba3e91d936c6a1e734f8b0cd8831a5ac4b28e8",
+      "startedAt": "2026-09-08T06:57:29.151781233Z",
+      "fence": 56,
+      "hostGeneration": "3afdc10e-7efc-450f-b53f-309b532e79ea",
+      "restartPolicy": "unless-stopped",
+      "restartCount": 0,
+      "systemdActive": true,
+      "systemdEnabled": true,
+      "ready": true,
+      "connected": true,
+      "executionMode": "execute",
+      "newBackupVerified": true,
+      "ownerAndDataPreserved": true,
+      "previousSingleStartStableSeconds": 77,
+      "finalInstanceObservedStableSeconds": 165,
+      "dockerHealth": "healthy",
+      "disconnects": 0,
+      "errorLines": 0
+    }
+  },
+  "handoff": {
+    "nativeGoalComplete": false,
+    "awaitingRealOwnerRetry": true,
+    "consecutiveGoalTurnsObservingThisDependency": 2,
+    "thisTurnMadeProductAndReleaseProgress": true,
+    "nextAction": "唯一Owner在真实群里自然发送：重试刚才的优先级筛选任务",
+    "noBusinessRetryOrLedgerResetPerformed": true
   }
 }

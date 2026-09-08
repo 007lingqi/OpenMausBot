@@ -4,24 +4,24 @@
 
 ## 当前证据与缺口
 
-真实C1输入已由用户发送并落库，自然理解/规划成功、群回复明确未完成；实际执行被合法锁文件触发的内部限额不一致阻塞。该问题已修复、完整回归并发布81eae83/bc55cbc4…，等待唯一Owner自然重试原事项；根因、红绿及正式交接证据见 [源码视图修复](evidence/conversation-read-view-fix-20260908.json)。准备通知重复完整需求、失败说明笼统仍需优化；C1交付及C2–C6仍未通过。旧 [UI交接](evidence/conversation-live-ui-handoff-052b42c.json) 仅为发送前历史。
+真实C1输入已由用户发送并落库，自然理解/规划成功、群回复明确未完成；实际执行被合法锁文件触发的内部限额不一致阻塞。根因见 [源码视图修复](evidence/conversation-read-view-fix-20260908.json)；后续长准备回复和读取失败说明已修复并发布e9b86a0/e7b73095…，见 [回复修复](evidence/conversation-reply-fix-20260908.json)。等待唯一Owner自然重试原事项；C1交付及C2–C6仍未通过，文案本地验证/发布不等于真实群体验验收。旧 [UI交接](evidence/conversation-live-ui-handoff-052b42c.json) 仅为发送前历史。
 
 | 验收面 | 可复用证据及限制 | 剩余工作 |
 | --- | --- | --- |
 | 自然新需求、短回答、多轮归并 | TBNnjl 真实 Astra 七场景 24 轮；来源/关联有本地测试，但群、参与者和发送合成 | 最终候选真实平台 C1–C4，尤其至少两位真实成员的补充、更正和定向提醒 |
-| 简短自然、查询解释致谢 | D-143–145 通知合并、直接追问和进度解释修复；逐轮模型审阅通过 | C5 实际可见文案和发送节奏；未知自由文本解释不能以固定词义表宣称全面支持 |
-| 可验证研发交付 | 当前81eae83完整回归ec4bf4退出0；候选/自测/独立复测/Meta成对证据有回归保护 | C1真实任务attempt1失败，待Owner重试、两级测试与当前Spec/候选/验收绑定；读取成功不算真实交付 |
+| 简短自然、查询解释致谢 | D-143–145及D-152通知/追问/解释/长准备回复修复；真实序列化与账本保留回归通过 | C5实际可见文案和发送节奏；未知自由文本解释不能以固定词义表宣称全面支持 |
+| 可验证研发交付 | 当前e9b86a0完整回归7a2d9a退出0；候选/自测/独立复测/Meta成对证据有回归保护 | C1真实任务attempt1失败，待Owner重试、两级测试与当前Spec/候选/验收绑定；读取成功不算真实交付 |
 | 风险与唯一 Owner | 自然审批覆盖固定展示、本次稳定身份、版本/有效期、原子控制及重放 | C6 真实非 Owner 拒绝及 Owner 对固定安全案例的真实决定；不能用合成身份通过 |
 | 上下文精简与可接续 | 已有有限上下文、来源/版本和状态投影；本次目标将当前索引与历史分开 | 验收中核对实际执行/验证输入及重启恢复依据，不把更新 Markdown 当成运行时证明 |
-| 固定候选安全启用 | bc55cbc4…单次首启/90秒稳定、十项在途双检查/新私有备份/Owner保留，正式systemd交接de67dc通过 | 此阶段已完成；初次后检身份错误已纠正，失败批次守卫保留，不重跑；仍需真实业务与恢复 |
-| 当前真实服务 | 6d1146cc…/bc55cbc4…，StartedAt06:32:20.932Z，实际ready/connected/execute；监督器fence54匹配，active/enabled、unless-stopped、restarts0 | 已是真实修复候选运行证据；但空闲连接不证明业务交付，不沿用前实例观察时长 |
+| 固定候选安全启用 | e7b73095…单次首启/77秒稳定、十项在途双检查/新私有备份/Owner保留，正式systemd交接eea548通过 | 此阶段已完成；保留全部守卫不重跑；仍需真实业务与恢复 |
+| 当前真实服务 | ad55e18d…/e7b73095…，StartedAt06:57:29.151Z，实际ready/connected/execute；监督器fence56匹配，active/enabled、unless-stopped、restarts0 | 已是真实修复候选运行证据；但空闲连接不证明业务交付，不沿用前实例观察时长 |
 | 同仓库串行、跨仓库并发 | 本地受控 Agent 测试；部分旧版隔离/停止证据 | 当前 Linux/Docker 下真实独立任务、同仓库互斥、跨仓库并发和监督器绑定 |
 | Linux VM 空闲重启 | d8bef2/4805ef真实boot改变、systemd恢复；ff76d0新boot监督器，f3cb8b真实模型恢复探针通过 | 已通过服务/模型恢复；宿主Docker CLI旧转发另外修复，未来重启时CLI自动恢复未验证 |
 | 幂等与在途恢复 | 本地持久入口/Outbox/控制/恢复测试、数据迁移保留；VM空闲恢复通过 | 原始平台事件重放、在途服务重启仍待验证。相似新消息、重新打开 SQLite 和空闲VM重启均不代替 |
 | 平台入口与安全边界 | 本地自然入口和 Owner/白名单/业务响应回归 | @、未 @、引用回复的实测可达性和标识；明确不支持项，不暗中扩大监听权限 |
 | 最终验收 | 尚无 Owner 本人确认 | 自动部分通过后汇总真实对话/交付证据交本人确认；此前不标整体完成 |
 
-当前实际启用、交接、数据和副本校验回执见 [读取修复及发布](evidence/conversation-read-view-fix-20260908.json)，上一版本见 [最终启用证据](evidence/conversation-final-activation-052b42c.json)，早期构建与迁移见 [发布恢复证据](evidence/conversation-stream-recovery-052b42c.json)。完整回归与模型证据分别见 [VERIFY](../../VERIFY.md) 和 [模型评测](conversation-eval-20260908.md)。本批包含源码读取修复和完整回归，未重做不受影响的旧模型评测。
+当前实际启用、交接、数据和副本校验回执见 [回复修复及发布](evidence/conversation-reply-fix-20260908.json)，此前见 [读取修复及发布](evidence/conversation-read-view-fix-20260908.json) 和 [最终启用证据](evidence/conversation-final-activation-052b42c.json)，早期构建与迁移见 [发布恢复证据](evidence/conversation-stream-recovery-052b42c.json)。完整回归与模型证据分别见 [VERIFY](../../VERIFY.md) 和 [模型评测](conversation-eval-20260908.md)。本批有完整回归，未重做不受影响的旧模型评测。
 
 ## 执行及收束原则
 
