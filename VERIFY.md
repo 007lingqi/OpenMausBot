@@ -1,5 +1,10 @@
 # Meta 协作验证记录
 
+## 2026-09-08 固定纯对话候选发布准备（本地打包通过，Docker审核未完成）
+
+- 9a4be3源码指纹仍匹配TBNnjl；5e2f50将已全套通过的本任务文件提交为13a373c。abc714候选pnpm build:server退出0，e63557独立d5909b6回退源码打包退出0；两者schema37迁移/依赖/打包脚本一致，六bundle哈希见evidence/conversation-release-13a373c-bundles.json。
+- 没有新增产品源码修改，不重复既有3889项完整回归与真实Astra24轮。回退打包不等于容器可用，副本迁移和实际启动仍需执行。
+- 执行审核超时及未产生资源的核对见conversation-release-13a373c.md；2f03f3确认候选镜像tag不存在、原服务ID/镜像/healthy未变，5ccda1确认临时脚本/stage不存在且diff检查通过。无真实群发送或部署，不将审核超时记成产品测试失败。
 ## 2026-09-08 进度解释不再只复读（完整回归与真实模型通过，未部署）
 
 - 249280实际service/临时Ledger/替身模型三轮复现解释只复读，旧机器checks_passed不能覆盖该行为，原报告9oIe7B保留。24cfb2先行正式回归缺模块及实际解释内容失败；270bad确认3文件72项/typecheck通过。

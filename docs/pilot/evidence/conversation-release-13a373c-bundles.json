@@ -1,0 +1,78 @@
+{
+  "format": "offline-release-bundles-v1",
+  "candidate": {
+    "revision": "13a373c968bf92666300d64f7ace07beeb63a958",
+    "schema": 37,
+    "files": [
+      {
+        "source": "dist-server/collaboration-headless.js",
+        "target": "/opt/openmausbot/collaboration-headless.js",
+        "sha256": "7b7fce33b477636f73554b47f5e6fdd4923602a0f3e130fb667822e856b474ca"
+      },
+      {
+        "source": "dist-server/collaboration-docker.js",
+        "target": "/opt/openmausbot/collaboration-docker.js",
+        "sha256": "b635b94aaaf66b365d9e1e76e89589522d62493c79d842344a5cbb82f6e5f9f7"
+      },
+      {
+        "source": "dist-server/collaboration/operations/opencodex-model-channel.js",
+        "target": "/opt/openmausbot/collaboration/operations/opencodex-model-channel.js",
+        "sha256": "1766cd1b4e3ceca3758c6770bcfc973c581fc8c86bba6673212be557a02a0f4e"
+      },
+      {
+        "source": "dist-server/collaboration/operations/online-document-relay.js",
+        "target": "/opt/openmausbot/collaboration/operations/online-document-relay.js",
+        "sha256": "7fcfaea1df1698de48ef42716e630fe7b63345eec9fe6b37405b6c04d4b47a43"
+      },
+      {
+        "source": "dist-server/collaboration/operations/docker-apply-patch.js",
+        "target": "/opt/openmausbot/docker-apply-patch.js",
+        "sha256": "e9086293be497798ec75236fed68f2d37e4541824ab0dd4edeb44c292ee2e044"
+      },
+      {
+        "source": "dist-server/collaboration/operations/contained-patch-worker.js",
+        "target": "/opt/openmausbot/contained-patch-worker.js",
+        "sha256": "706fe5ff58056172960c87e5aaba1c58ffe290d16c5afcc9debdc16bfb2e2074"
+      }
+    ]
+  },
+  "rollback": {
+    "revision": "d5909b6be5a6612706ffb8f17ce7ac0838d03b0b",
+    "schema": 37,
+    "files": [
+      {
+        "source": "dist-server/collaboration-headless.js",
+        "target": "/opt/openmausbot/collaboration-headless.js",
+        "sha256": "e70f21612a7d189fdc4fd82f5f51209552db94db335be210a15022db3bfb5140"
+      },
+      {
+        "source": "dist-server/collaboration-docker.js",
+        "target": "/opt/openmausbot/collaboration-docker.js",
+        "sha256": "b635b94aaaf66b365d9e1e76e89589522d62493c79d842344a5cbb82f6e5f9f7"
+      },
+      {
+        "source": "dist-server/collaboration/operations/opencodex-model-channel.js",
+        "target": "/opt/openmausbot/collaboration/operations/opencodex-model-channel.js",
+        "sha256": "1766cd1b4e3ceca3758c6770bcfc973c581fc8c86bba6673212be557a02a0f4e"
+      },
+      {
+        "source": "dist-server/collaboration/operations/online-document-relay.js",
+        "target": "/opt/openmausbot/collaboration/operations/online-document-relay.js",
+        "sha256": "47afef867075c3531bf4263b7b11ca05f6b9604725ff992502c710fe71c7c7ce"
+      },
+      {
+        "source": "dist-server/collaboration/operations/docker-apply-patch.js",
+        "target": "/opt/openmausbot/docker-apply-patch.js",
+        "sha256": "e9086293be497798ec75236fed68f2d37e4541824ab0dd4edeb44c292ee2e044"
+      },
+      {
+        "source": "dist-server/collaboration/operations/contained-patch-worker.js",
+        "target": "/opt/openmausbot/contained-patch-worker.js",
+        "sha256": "706fe5ff58056172960c87e5aaba1c58ffe290d16c5afcc9debdc16bfb2e2074"
+      }
+    ]
+  },
+  "runtimeBase": "sha256:1f53b346ebf89534c02d831e241681bac2a34191e817373e5121d71606e734eb",
+  "scope": "local bundle hashes only; not proof of Docker build, startup, migration, deployment or real group acceptance",
+  "verifiedSourceFingerprint": "c33337c2c074475c77aa483ef71156405be284fee4e650989dea49fd31c368be"
+}
