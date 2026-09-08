@@ -1,13 +1,22 @@
 # Meta 协作实施进度
 
-## 当前执行：新 Owner 重试已执行，修复结果路由并纠正试点范围（2026-09-08）
+## 当前交接：重试回复和试点范围修复已启用，等待原事项的真实对话更新（2026-09-08）
+
+- 已重新读取当前AGENTS与相关技能；复用上一批完整回归，不重复跑测试。源码3841359已提交；137a58确认固定镜像5e8119a6…六bundle匹配、隔离健康通过。临时构建目录防护失败及准备文件权限通配符失败均已修正，前者未构建、后者未切换服务；没有绕过权限或覆盖旧发布守卫。
+- 0bff5c单次首启通过；14701b确认首启173秒连接稳定并完成第二份新备份，6196d8正式systemd交接终态0。当前fe5eda33…/5e8119a6…、StartedAt08:58:53.208Z、fence60匹配；0f348f独立观察本实例186秒连接1/断开0/错误0，healthy/ready/connected/execute、active/enabled、unless-stopped/restarts0。
+- 实际配置已恢复固定非生产仓库原约定app/**、tests/**；保留旧deny，新增依赖/本机配置/manifest保护，尝试上限收紧至3。模型仍OpenCodex/gpt-6-astra/medium，基线与凭据身份不变。once/handoff成功守卫和各自私有新备份均保留，不重跑；其他容器未操作。
+- 3abae2再次确认原WI-5C68D17B361E仍attempt2失败、无resultSha，原plan1写入范围仍pilot-output.txt；没有业务重试、旧通知补发或数据改写。14事件/44sent/14superseded/1dead_letter，十项在途0。发布解决产品缺陷，不等于页面筛选已经修改完成。
+- 下一步需要真实群内自然补充原优先级筛选需求，由正式入口在同一事项生成新Spec/plan；不要再次直接重试旧计划，不SQL覆盖、不新建同需求清零次数。此前新鲜Owner输入阻塞已被本次消息解除；原生get_goal仍blocked，本地未冒充恢复或创建重复目标，新依赖从本次交接起重新记录。C1交付、C2–C6、真实多人/重放/并发/在途恢复及本人最终验收仍缺。
+- 工具执行会话全部终态；用户outputs/保留。精确回执、版本和状态见[本轮修复与发布证据](docs/pilot/evidence/conversation-retry-result-fix-20260908.json)。
+
+## 本轮诊断历史：新 Owner 重试已执行，修复结果路由并纠正试点范围（2026-09-08）
 
 - 用户“已发送”后5b40a4/275058实查Owner自然重试已接受，同一WI-5C68D17B361E进入attempt2（b2c88a94…），随后needs_configuration/provider_configuration、无resultSha，现无在途。重试确认已送达，执行失败结果a5b07d2a…却dead_letter/delivery_unroutable；普通external_events仍14不代表新控制消息没收到。上一输入阻塞已解除；原生查询仍blocked，本地没有冒充状态API恢复，后续若需阻塞审计重新计数。
 - 2221e4经真实runtime→delivery路径红灯复现结果误用原需求过期session；修复仅从持久结果、同群Owner重试回执、控制事件及相邻attempt关联回复来源，不用最新无关消息。扩大6文件166项通过，测试载荷类型错误修正后75ae5e定向/typecheck/diff通过。完整回归首申请审核超时未启动，允许的一次重试4d8602/session59319已由1546b6确认终态0，包含主集门槛/broker/Node/打包及headless冒烟/typecheck/diff；不重跑以补取被输出截断的测试计数。
 - eba6db/275058确认运行配置和原计划均只允许pilot-output.txt；3ebc80确认实际固定基线的AGENTS及manifest原约定app/**、tests/**。配置与UI需求确定冲突；原模型说明未保留，不能断言已排除其他原因。已准备限定同一非生产仓库的配置修正、收紧次数至3和额外deny范围，尚未部署或修改原不可变计划，不清零attempt、不新建同需求、不重发失败Outbox。
 - 009875配置fixture及脚本语法通过；下一步保存本批固定源码和发布预检。既有计划仍须通过真实自然补充形成新版本，不能用SQL覆盖旧计划或把本地开发授权当Owner业务重试；runtime按整个事项累计attempt，新计划不清零。证据见[本轮诊断与修复](docs/pilot/evidence/conversation-retry-result-fix-20260908.json)。工具测试会话均终态，用户outputs/保留。
 
-## 当前目标状态：受阻，等待新鲜真实 Owner 群消息（2026-09-08）
+## 历史目标状态：受阻，等待新鲜真实 Owner 群消息（2026-09-08，已被本次输入解除）
 
 - 自然重试发布轮有实际进展，后续b4aff7复核轮无新业务进展；本轮a93fc0确认仍14事件/43sent/14superseded、十项在途0，原69688856…/42cc07ca…健康运行、restarts0。不是等待已在运行的执行任务。
 - 新鲜Owner消息依赖自发布交接轮、上一续跑、本轮连续三轮未解除；不沿用此前13事件时的旧阻塞计数。原生update_goal实际返回blocked（updatedAt1788854207），整体未完成；停止无进展续跑，不停服务、不改账本、不重复测试/发布/模型调用。

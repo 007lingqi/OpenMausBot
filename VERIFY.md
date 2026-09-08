@@ -1,5 +1,13 @@
 # Meta 协作验证记录
 
+## 2026-09-08 重试结果修复固定发布与实际配置核验
+
+- 176c95定位构建临时root仍指向旧批次，防护在build前已拒绝；只修路径后137a58离线镜像5e8119a6…绑定受测3841359，六bundle的宿主/镜像SHA256一致、隔离健康schema37通过。产品源码未变，复用1546b6完整回归终态0。
+- 准备第一次请求审核超时未执行；允许的一次重试b33e89复制成功，但受保护目录使普通用户glob未展开，chmod退出1，尚未生成配置或切换。5a1d3c用明确路径恢复准备并验证只变更image/coordinator、writeScope/deny/maxAttempts，旧密钥原样保留不输出。
+- ee29aa/0bff5c首启完成；6cd24f实际写入范围app/**、tests/**，deny新增package.json/package-lock.json/.openai/**/PILOT_MANIFEST.json，max3、Astra/medium、固定base保持。14701b首启173秒连接稳定，再次双空闲检查/新备份；6196d8正式交接session39805终态0。两阶段各有成功守卫，不能重跑。
+- 0f348f正式fe5eda33…/5e8119a6…、StartedAt08:58:53.208Z、healthy/unless-stopped/restarts0，unit匹配candidate；6196d8监督器fence60匹配且systemd active/enabled。新实例独立观察186秒连接1/断开0/错误0，不沿用首启时长。
+- 3abae2只读确认原计划pilot-output.txt与attempt1/2失败记录均保留，未生成结果、未补发dead_letter、未触发新attempt。Owner/完整性及14事件/44sent/14superseded/1dead_letter保持，十项在途0。本轮发布不证明C1业务交付；真实对话补充形成新版本仍待进行。详见conversation-retry-result-fix-20260908.json。
+
 ## 2026-09-08 真实重试结果路由与试点范围冲突
 
 - 5b40a4/275058：同一事项Owner重试允许、attempt2在13.6秒后needs_configuration/provider_configuration；重试确认实际sent，最终结果dead_letter/delivery_unroutable。eba6db及3ebc80证明运行/计划writeScope仍pilot-output.txt，与固定试点app/**、tests/**不一致。原模型说明未保留，未以推断冒充原始输出。
