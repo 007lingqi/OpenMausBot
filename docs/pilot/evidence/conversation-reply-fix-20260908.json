@@ -1,6 +1,6 @@
 {
   "format": "conversation-reply-fix-v1",
-  "status": "deployed_verified_waiting_for_real_owner_retry",
+  "status": "deployed_verified_native_goal_blocked_waiting_for_real_owner_retry",
   "incidentWorkItem": "WI-5C68D17B361E",
   "startingSource": "140fa86",
   "source": "e9b86a0cfcc2d12ef371c8d32de371cc4aadb2a2",
@@ -61,7 +61,8 @@
     "singleStart": ["8ee366", "9f5a4d"],
     "singleStartDockerHealth": "b17971",
     "systemdHandoff": ["cdfddc", "eea548"],
-    "finalLiveHealth": "8ffc9a"
+    "finalLiveHealth": "8ffc9a",
+    "thirdGoalTurnLedgerCheck": "836fc4"
   },
   "release": {
     "status": "systemd_handoff_passed",
@@ -110,8 +111,11 @@
   "handoff": {
     "nativeGoalComplete": false,
     "awaitingRealOwnerRetry": true,
-    "consecutiveGoalTurnsObservingThisDependency": 2,
-    "thisTurnMadeProductAndReleaseProgress": true,
+    "consecutiveGoalTurnsObservingThisDependency": 3,
+    "previousTurnMadeProductAndReleaseProgress": true,
+    "latestTurnHasNoNewBusinessInputOrLiveWork": true,
+    "nativeGoalStatus": "blocked",
+    "nativeGoalUpdatedAt": 1788851020,
     "nextAction": "唯一Owner在真实群里自然发送：重试刚才的优先级筛选任务",
     "noBusinessRetryOrLedgerResetPerformed": true
   }
