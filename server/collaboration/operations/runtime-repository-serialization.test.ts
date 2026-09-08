@@ -29,6 +29,11 @@ import { startCollaborationService } from "../service.ts";
 import { currentInstanceLease } from "../leases.ts";
 import { recordPreparationResult } from "../execution-preparation.ts";
 import { CollaborationHeadlessRuntime, type CollaborationHeadlessRuntimeOptions } from "./runtime.ts";
+import { createDingTalkDelivery } from "../../collaboration-headless.ts";
+import { DingTalkSessionReplyRegistry } from "../../integrations/dingtalk/reply-router.ts";
+import type { OutboxDeliveryPort } from "../outbox.ts";
+import { naturalRetryResultOrigin } from "../delivery-routing.ts";
+import { FetchDingTalkInteractiveCardSender } from "../../integrations/dingtalk/interactive-card-sender.ts";
 
 const scratch: string[] = [];
 
@@ -271,6 +276,75 @@ async function stopHarness(harness: RuntimeHarness): Promise<void> {
 }
 
 describe("runtime repository single-writer scheduling", () => {
+  it("delivers the retried task result through the fresh Owner session when the original session is gone", async () => {
+    const h = createHarness([createRepository(temporaryDirectory(), "retry-result-route")]);
+    h.options.execution!.limits.maxAttempts = 3;
+    let currentDelivery: OutboxDeliveryPort | undefined;
+    const delivered: Parameters<OutboxDeliveryPort["deliver"]>[0][] = [];
+    h.options.outboxDelivery = { deliver: async message => {
+      if (!currentDelivery) return { outcome: "sent" as const };
+      const result = await currentDelivery.deliver(message);
+      if (result.outcome === "sent") delivered.push(message);
+      return result;
+    } };
+    const service = startCollaborationService({ dataDirectory: h.options.dataDirectory });
+    service.bootstrapOwnerLocally({ senderCorpId: "corp", senderStaffId: "owner", now: Date.now() }); service.close();
+    const db = new DatabaseSync(h.databaseFile);
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ errcode: 0 })));
+    vi.stubGlobal("fetch", fetcher);
+    try {
+      await h.runtime.start();
+      await waitFor(() => h.agent.startedWorkItems.length === 1, "first attempt did not start");
+      h.agent.resolve(h.items[0].workItemId, "fail");
+      await waitFor(() => Boolean(db.prepare("SELECT 1 FROM collaboration_outbox WHERE json_extract(payload_json,'$.status')='execution_failed'").get()), "failure missing");
+      for (let i = 0; i < 10; i++) {
+        await h.runtime.drainOnce();
+        if (db.prepare("SELECT 1 FROM collaboration_outbox WHERE json_extract(payload_json,'$.status')='execution_failed' AND delivery_state='sent'").get()) break;
+      }
+      const input = { ...inbound({ sourceEventId: "fresh-retry-session", conversationId: h.items[0].conversationId, text: "重试刚才的修改仓库 1任务" }),
+        sender: { senderCorpId: "corp", senderStaffId: "owner", senderId: "owner", displayName: "Owner" } };
+      const sessions = new DingTalkSessionReplyRegistry();
+      sessions.capture({ sourceEventId: input.sourceEventId, webhookUrl: "https://api.dingtalk.com/fresh-retry-fixture", expiresAt: Date.now() + 60_000 });
+      currentDelivery = createDingTalkDelivery(sessions, {}, h.options.dataDirectory);
+      expect(h.runtime.performDingTalkNaturalRetry(input)).toMatchObject({ allowed: true });
+      await waitFor(() => h.agent.startedWorkItems.length === 2, "retry did not start");
+      h.agent.resolve(h.items[0].workItemId, "fail");
+      await waitFor(() => Boolean(db.prepare("SELECT 1 FROM collaboration_runs WHERE attempt=2 AND finished_at IS NOT NULL").get()), "retry did not finish");
+      for (let i = 0; i < 10; i++) await h.runtime.drainOnce();
+      const result = db.prepare("SELECT o.delivery_state,o.last_error FROM collaboration_outbox o JOIN collaboration_runs r ON o.source_event_id='candidate:'||r.id WHERE r.attempt=2").get();
+      expect(result).toEqual({ delivery_state: "sent", last_error: null });
+      expect(delivered.some(message => message.aggregateType === "plan" && message.dedupeKey.startsWith("dingtalk:event:candidate:"))).toBe(true);
+      expect(fetcher.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(h.runtime.performDingTalkNaturalRetry(input)).toMatchObject({ duplicate: true });
+      await h.runtime.drainOnce();
+      expect(h.agent.startedWorkItems).toHaveLength(2);
+      const resultMessage = delivered.find(message => message.aggregateType === "plan" && message.dedupeKey.startsWith("dingtalk:event:candidate:"))!;
+      if (resultMessage.payload.type !== "plan_status_card") throw new Error("Expected persisted retry result");
+      expect(naturalRetryResultOrigin(h.databaseFile, resultMessage)).toBe(input.sourceEventId);
+      for (const altered of [
+        { ...resultMessage, id: "unknown-result" },
+        { ...resultMessage, aggregateId: "another-work-item" },
+        { ...resultMessage, aggregateVersion: resultMessage.aggregateVersion + 1 },
+        { ...resultMessage, dedupeKey: "dingtalk:event:candidate:forged:ack" },
+        { ...resultMessage, source: "other-source" },
+        { ...resultMessage, payload: { ...resultMessage.payload, workItemId: "forged" } },
+      ]) expect(naturalRetryResultOrigin(h.databaseFile, altered)).toBeUndefined();
+      // A later accepted retry is not the origin of this already completed attempt.
+      const later = { ...input, sourceEventId: "later-retry-session", receivedAt: Date.now() };
+      expect(h.runtime.performDingTalkNaturalRetry(later)).toMatchObject({ allowed: true });
+      expect(naturalRetryResultOrigin(h.databaseFile, resultMessage)).toBe(input.sourceEventId);
+      const send = vi.spyOn(FetchDingTalkInteractiveCardSender.prototype, "send").mockResolvedValue({ ok: true, status: 200 });
+      // With no in-memory session after restart, only an explicit map for the
+      // receipt's original group may carry the same durable result.
+      const restartedDelivery = createDingTalkDelivery(new DingTalkSessionReplyRegistry(), {
+        OMB_DINGTALK_ALLOWED_CONVERSATION_IDS: h.items[0].conversationId,
+        OMB_DINGTALK_PROACTIVE_CONVERSATION_MAP: JSON.stringify({ [h.items[0].conversationId]: "open-original-group" }),
+      }, h.options.dataDirectory);
+      expect(await restartedDelivery.deliver(resultMessage)).toMatchObject({ outcome: "sent" });
+      expect(send).toHaveBeenCalledWith(expect.objectContaining({ proactiveOpenConversationId: "open-original-group" }));
+    } finally { await stopHarness(h); db.close(); vi.unstubAllGlobals(); vi.restoreAllMocks(); }
+  });
+
   it.each([1, 3])("natural Owner retry dispatches the same failed work only within the configured attempt limit (%s)", async maxAttempts => {
     const h = createHarness([createRepository(temporaryDirectory(), "natural-retry")]);
     h.options.execution!.limits.maxAttempts = maxAttempts;

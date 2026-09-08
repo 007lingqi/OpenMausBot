@@ -3,6 +3,40 @@ import type { OutboxDeliveryPort } from "./outbox.ts";
 
 const FIELD = "OMB_DINGTALK_PROACTIVE_CONVERSATION_MAP";
 
+/** A retried run's result belongs to the authenticated retry that started that
+ * exact next attempt, not the old requirement's expired session. The receipt,
+ * control event, prior failure and result are all durable coordinator records;
+ * neither message text nor the latest unrelated command grants a destination. */
+export function naturalRetryResultOrigin(databaseFile: string, message: Parameters<OutboxDeliveryPort["deliver"]>[0]): string | undefined {
+  if (message.source !== "dingtalk" || message.aggregateType !== "plan") return undefined;
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    const rows = db.prepare(`SELECT DISTINCT c.source_event_id FROM collaboration_outbox o
+      JOIN collaboration_runs r ON o.source_event_id='candidate:'||r.id AND o.aggregate_id=r.work_item_id AND o.aggregate_version=r.plan_revision
+      JOIN collaboration_work_items w ON w.id=r.work_item_id
+      JOIN collaboration_owner_text_commands c ON json_extract(c.outcome_json,'$.workItemId')=r.work_item_id
+      JOIN collaboration_runs previous ON previous.id=json_extract(c.outcome_json,'$.retryRunId')
+        AND previous.work_item_id=r.work_item_id AND previous.plan_revision=r.plan_revision AND previous.node_id=r.node_id
+        AND previous.attempt+1=r.attempt
+      JOIN collaboration_outbox failure ON failure.id=json_extract(c.outcome_json,'$.retryOutboxId')
+        AND failure.source='dingtalk' AND failure.source_event_id='candidate:'||previous.id
+        AND failure.aggregate_type='plan' AND failure.aggregate_id=r.work_item_id AND failure.aggregate_version=r.plan_revision
+      JOIN collaboration_control_events control ON control.work_item_id=r.work_item_id AND control.action='retry'
+        AND control.work_item_version=json_extract(c.outcome_json,'$.workItemVersion') AND control.created_at=c.processed_at
+      JOIN collaboration_conversation_aliases a ON a.conversation_id=w.conversation_id AND a.source='dingtalk'
+        AND a.external_id=json_extract(c.outcome_json,'$.conversationId')
+      WHERE o.id=? AND o.dedupe_key=? AND o.aggregate_id=? AND o.aggregate_version=? AND o.payload_json=?
+        AND o.source='dingtalk' AND o.aggregate_type='plan'
+        AND json_extract(c.outcome_json,'$.kind')='natural_retry' AND json_extract(c.outcome_json,'$.action')='retry'
+        AND json_extract(c.outcome_json,'$.allowed')=1 AND json_extract(c.outcome_json,'$.reason')='owner_action_applied'
+        AND previous.status IN ('failed','needs_configuration','invalid','timed_out')
+        AND previous.finished_at<=c.processed_at AND c.processed_at<=r.started_at AND r.started_at<=o.created_at
+        AND failure.delivery_state='sent' AND failure.sent_at<=c.processed_at
+      LIMIT 2`).all(message.id, message.dedupeKey, message.aggregateId, message.aggregateVersion, JSON.stringify(message.payload)) as Array<{ source_event_id: string }>;
+    return rows.length === 1 ? rows[0].source_event_id : undefined;
+  } finally { db.close(); }
+}
+
 /** Resolve only a persisted outbound binding, never strip a user-looking prefix
  * and hope it names a real event or borrow another task's latest destination. */
 export function conversationReplyOrigin(databaseFile: string, message: Parameters<OutboxDeliveryPort["deliver"]>[0]): string | undefined {

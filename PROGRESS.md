@@ -1,5 +1,12 @@
 # Meta 协作实施进度
 
+## 当前执行：新 Owner 重试已执行，修复结果路由并纠正试点范围（2026-09-08）
+
+- 用户“已发送”后5b40a4/275058实查Owner自然重试已接受，同一WI-5C68D17B361E进入attempt2（b2c88a94…），随后needs_configuration/provider_configuration、无resultSha，现无在途。重试确认已送达，执行失败结果a5b07d2a…却dead_letter/delivery_unroutable；普通external_events仍14不代表新控制消息没收到。上一输入阻塞已解除；原生查询仍blocked，本地没有冒充状态API恢复，后续若需阻塞审计重新计数。
+- 2221e4经真实runtime→delivery路径红灯复现结果误用原需求过期session；修复仅从持久结果、同群Owner重试回执、控制事件及相邻attempt关联回复来源，不用最新无关消息。扩大6文件166项通过，测试载荷类型错误修正后75ae5e定向/typecheck/diff通过。完整回归首申请审核超时未启动，允许的一次重试4d8602/session59319已由1546b6确认终态0，包含主集门槛/broker/Node/打包及headless冒烟/typecheck/diff；不重跑以补取被输出截断的测试计数。
+- eba6db/275058确认运行配置和原计划均只允许pilot-output.txt；3ebc80确认实际固定基线的AGENTS及manifest原约定app/**、tests/**。配置与UI需求确定冲突；原模型说明未保留，不能断言已排除其他原因。已准备限定同一非生产仓库的配置修正、收紧次数至3和额外deny范围，尚未部署或修改原不可变计划，不清零attempt、不新建同需求、不重发失败Outbox。
+- 009875配置fixture及脚本语法通过；下一步保存本批固定源码和发布预检。既有计划仍须通过真实自然补充形成新版本，不能用SQL覆盖旧计划或把本地开发授权当Owner业务重试；runtime按整个事项累计attempt，新计划不清零。证据见[本轮诊断与修复](docs/pilot/evidence/conversation-retry-result-fix-20260908.json)。工具测试会话均终态，用户outputs/保留。
+
 ## 当前目标状态：受阻，等待新鲜真实 Owner 群消息（2026-09-08）
 
 - 自然重试发布轮有实际进展，后续b4aff7复核轮无新业务进展；本轮a93fc0确认仍14事件/43sent/14superseded、十项在途0，原69688856…/42cc07ca…健康运行、restarts0。不是等待已在运行的执行任务。

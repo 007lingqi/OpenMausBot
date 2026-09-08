@@ -1,0 +1,70 @@
+{
+  "date": "2026-09-08",
+  "status": "verified_pending_release",
+  "workItemId": "WI-5C68D17B361E",
+  "incident": {
+    "realOwnerRetryAccepted": true,
+    "retryReceiptAt": 1788855087403,
+    "runId": "b2c88a94-a39b-4b88-a8a2-31badc619ff7",
+    "attempt": 2,
+    "status": "needs_configuration",
+    "error": "provider_configuration",
+    "resultSha": null,
+    "resultOutboxId": "a5b07d2a-31ac-4a90-a79e-2aa1f1cb8995",
+    "resultDeliveryState": "dead_letter",
+    "resultDeliveryError": "delivery_unroutable",
+    "retryAcknowledgementSent": true,
+    "inflight": 0
+  },
+  "diagnosis": {
+    "replyRouting": "Result delivery selected the old requirement event, ignoring the accepted retry receipt and its fresh session",
+    "replyRoutingConfidence": "high; captured live failure and faithful runtime-to-delivery red/green regression",
+    "configuredWriteScopes": ["pilot-output.txt"],
+    "persistedPlanWriteScopes": ["pilot-output.txt"],
+    "fixedRepositoryBase": "0837a3fc6f02be0c6b067f63749f19d8d7104154",
+    "repositoryDeclaredWriteScopes": ["app/**", "tests/**"],
+    "scopeConflictConfirmed": true,
+    "modelOriginalExplanationRetained": false,
+    "modelCauseLimitation": "The allowed path cannot implement the UI requirement; the original model explanation was discarded, so other model-reported blockers cannot be excluded",
+    "proactiveDeliveryConfigured": false
+  },
+  "verification": {
+    "originalRuntimeSignal": "dead_letter/delivery_unroutable instead of sent through the fresh retry session",
+    "focusedFiles": 6,
+    "focusedPassed": 166,
+    "testTypingErrorCorrected": true,
+    "typecheckPassed": true,
+    "fullRegressionSession": 59319,
+    "fullRegressionComplete": true,
+    "fullRegressionExit": 0,
+    "fullRegressionCommand": "pnpm test && pnpm typecheck && git diff --check",
+    "packagedAndHeadlessSmokePassed": true,
+    "releaseConfigurationFixturePassed": true
+  },
+  "receipts": {
+    "initialLedger": "b18904",
+    "realRetryAndFailedDelivery": "5b40a4",
+    "persistedScopesAndCandidate": "275058",
+    "deployedNonsecretConfiguration": "eba6db",
+    "repositoryContract": "3ebc80",
+    "routingRed": "2221e4",
+    "firstGreen": "2f2e01",
+    "expandedGreenWithTestTypingFailure": "90a4a0",
+    "typingCorrectedAndFocusedGreen": "75ae5e",
+    "fullRegressionStarted": "4d8602",
+    "fullRegressionCompleted": "1546b6",
+    "releaseConfigurationFixture": "009875",
+    "realLedgerReadOnlyOriginMatched": "f82daa"
+  },
+  "deployment": {
+    "status": "not_started",
+    "preparedRelease": "/var/lib/openmausbot-collaboration-pilot/releases/retry-result-20260908",
+    "runningSource": "9f02905913fcf328c643ee22da821d0dd86e74e6",
+    "runningImage": "sha256:42cc07ca3b87e29f6ecd7f9abc35e69454f1787dad446d4606a53b6ec00ae684",
+    "preparedWriteScopes": ["app/**", "tests/**"],
+    "preparedMaxAttempts": 3,
+    "existingPlanChanged": false,
+    "oldDeliveryResent": false
+  },
+  "overallGoalComplete": false
+}

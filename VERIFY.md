@@ -1,5 +1,11 @@
 # Meta 协作验证记录
 
+## 2026-09-08 真实重试结果路由与试点范围冲突
+
+- 5b40a4/275058：同一事项Owner重试允许、attempt2在13.6秒后needs_configuration/provider_configuration；重试确认实际sent，最终结果dead_letter/delivery_unroutable。eba6db及3ebc80证明运行/计划writeScope仍pilot-output.txt，与固定试点app/**、tests/**不一致。原模型说明未保留，未以推断冒充原始输出。
+- 2221e4：真实runtime→Outbox→createDingTalkDelivery回归先行红灯，精确复现当前session存在仍发不出重试结果。2f2e01首次绿；90a4a0扩大6文件166项通过但新增伪造载荷类型不合法导致typecheck失败，修正为合法形状但错误事项的载荷后75ae5e定向/typecheck/diff通过。覆盖重复控制不多跑、旧结果不被后续已接受重试夺走、结果ID/版本/载荷等不一致拒绝绑定、无session时仅显式同群主动路由可发送。
+- 完整回归首申请审核超时未执行；按工具允许一次重试4d8602启动session59319，1546b6确认全链终态0：pnpm test（主集门槛、broker、Node、打包/headless冒烟）、typecheck、diff通过。中途产品源码未改变，不因原生输出截断重复回归或编造精确主集数量。009875配置转换fixture及脚本语法通过，尚未变更真实配置或旧计划。
+
 ## 2026-09-08 自然重试发布后的输入阻塞核查
 
 b4aff7与a93fc0两次真实只读复核均为14事件/43sent/14superseded、十项在途0，唯一Owner及完整性正常，69688856…/42cc07ca…仍健康运行、restarts0。与发布交接轮e55d4f共同构成连续三个目标轮次的新鲜Owner消息依赖，前轮无进展而非运行任务等待；原生update_goal已返回blocked（updatedAt1788854207）。未重试业务、改账本、重复回归/部署或停服务；当前成果不撤销，真实验收缺口保留。

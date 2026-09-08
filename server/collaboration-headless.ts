@@ -74,7 +74,7 @@ import { readDingTalkAllowedConversationIds } from "./integrations/dingtalk/conf
 export { readDingTalkAllowedConversationIds } from "./integrations/dingtalk/config.ts";
 import { DocumentResourceJournal } from "./collaboration/operations/document-resource-journal.ts";
 import { DocumentResourceRecovery } from "./collaboration/operations/document-resource-recovery.ts";
-import { proactiveConversationRoutes, proactiveDestination, hasOwnerTextCommandReceipt, conversationReplyOrigin } from "./collaboration/delivery-routing.ts";
+import { proactiveConversationRoutes, proactiveDestination, hasOwnerTextCommandReceipt, conversationReplyOrigin, naturalRetryResultOrigin } from "./collaboration/delivery-routing.ts";
 
 interface HeadlessArguments {
   dataDirectory: string;
@@ -229,6 +229,8 @@ export function createDingTalkDelivery(
   function routeEvent(message: Parameters<OutboxDeliveryPort["deliver"]>[0]): string | undefined {
       const eventId = sourceEventId(message.dedupeKey);
       if (message.aggregateType === "association" && /^conversation(?:-failed)?:/u.test(eventId ?? "")) return conversationReplyOrigin(databaseFile, message);
+      const retryOrigin = naturalRetryResultOrigin(databaseFile, message);
+      if (retryOrigin) return retryOrigin;
       const routedSourceEventId =
         hasOwnerTextCommandReceipt(databaseFile, eventId) ? eventId : eventId?.startsWith("attachment-feedback:")
           ? latestWorkItemSourceEventId(databaseFile, message.aggregateId, eventId)
