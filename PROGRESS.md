@@ -1,5 +1,14 @@
 # Meta 协作实施进度
 
+## 当前运行：最终纯对话候选已启用并交接 systemd（2026-09-08）
+
+- 原生新目标 active；目标正文与当前纯对话范围已同步，创建/准备阶段文档已由 fae292 提交 d9817b4。最终候选 ff49b7de…现在已真正启用，不再是兼容修复版；源码 052b42c 没有后续产品修改，既有完整回归继续有效。
+- 231873/e31b0d 单次首启实例 c7351924…实际 ready/connected/execute、restart=no；8e9eb0 监督器与实际容器/镜像匹配，3bd2af 观察518秒一次连接、0断开/错误。双检查十项在途全零，schema37/Owner/事件12及Outbox39sent/10superseded保持，私有新备份通过。
+- 3bd2af/38298a 正式交接发生一次预期重建，当前 6de2840e…/ff49b7de…运行，unless-stopped、重启0、systemd active/enabled。a8023f 最新监督器fence49匹配当前ID/镜像；6e0f40模型 Astra/medium 和 relay UID501，7d7a23实际有UID501进程。f5515b当前实例275秒一次连接、0断开/错误，实际ready/connected/execute。
+- 11ccbf 辅助文件所有者错误在停机前拦截，修正只影响非敏感脚本归属；5ed3b3停机后只读SQLite辅助文件问题触发自动回退，原服务恢复且CURRENT数据未覆盖。改为对停机后的私有副本复核后成功；没有添加容器能力。精确ID、哈希、回执和两个新备份见 docs/pilot/evidence/conversation-final-activation-052b42c.json。
+- 单次首启/正式交接脚本均有已存在成功守卫及备份，不能再次直接运行或删除守卫。当前systemd入口是candidate.conf，不再是rollback.conf；旧回退镜像/数据保留。全部启用会话终态，未执行真实群新消息、Owner操作、在途恢复或VM重启。
+- 下一步：核对宿主模型通道与VM恢复前提，继续受限交付、并发/重放/恢复和真实群C1–C6；真实多人/Owner本人确认不能模拟代替。systemd启用不是重启验收。旧文档中“最终候选未启动/paused/仍运行兼容版”是历史，不覆盖本节。
+
 ## 当前执行：新目标已正式创建，准备最终候选单次安全切换（2026-09-08）
 
 - 用户要求设置新目标并实施；本轮 get_goal 返回 null，随后 create_goal 成功，正文匹配 pmo-conversation-goal.md，status=active，未指定预算。没有虚标旧目标完成或绕过应用限制；下方 paused/未同步描述均为上一轮历史。

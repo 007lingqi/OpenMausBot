@@ -1,5 +1,7 @@
 # 非生产切换中的钉钉连接核验
 
+最新完成（2026-09-08）：最终ff49b7de…已单次启动并正式交接systemd；当前6de2840e…实际ready/connected/execute、unless-stopped/重启0，已单独观察275秒无断连。原生新Goal active。下方“最终未启动/兼容版运行/paused”均为之前阶段；当前证据见evidence/conversation-final-activation-052b42c.json和PROGRESS顶部。未据此宣布真实群业务、VM重启或最终Owner验收通过。
+
 ## 最终状态（覆盖下方中间阶段）
 
 修复052b42c已全套回归并提交。两套固定镜像构建及六文件核验通过：最终候选ff49b7de…、兼容修复版d55df162…。兼容修复版真实运行790秒没有再重连，形成原症状修复证据。最终候选仅创建，未能通过首启安全配置的执行审核；未启动、未冒充上线。

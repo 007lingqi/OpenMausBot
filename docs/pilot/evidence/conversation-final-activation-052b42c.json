@@ -1,0 +1,138 @@
+{
+  "format": "conversation-final-activation-v1",
+  "observedAt": "2026-09-08",
+  "sourceRevision": "052b42ca964af8bf4518be6e7f4e2adf7982b687",
+  "goal": {
+    "created": true,
+    "statusObserved": "active",
+    "createdAt": 1788840630,
+    "tokenBudgetSpecified": false
+  },
+  "candidateImage": "sha256:ff49b7de6113b260bc49dbc8a940c28c9254cacf4bc61747f86d88d2b1fb496f",
+  "compatibleRollbackImage": "sha256:d55df16243ffc6def93ed0b692e730a798027069277eb17304a4127d876c1c35",
+  "singleStart": {
+    "containerId": "c7351924f9391dd7c489c8b77058270942c6e40b52c1e1f9e2966d04fee006a1",
+    "restartPolicy": "no",
+    "restartCount": 0,
+    "coordinatorFence": 48,
+    "stableSeconds": 518,
+    "connections": 1,
+    "disconnects": 0,
+    "errorLines": 0,
+    "ready": true,
+    "dingtalk": "connected",
+    "executionMode": "execute"
+  },
+  "systemdHandoff": {
+    "expectedRecreation": true,
+    "containerId": "6de2840e425ad095f2f90e836339f9b51e3f4068ab08b01c4f976f13f34cb713",
+    "startedAt": "2026-09-08T04:47:31.059888704Z",
+    "coordinatorFence": 49,
+    "coordinatorMatches": true,
+    "restartPolicy": "unless-stopped",
+    "restartCount": 0,
+    "active": true,
+    "enabled": true,
+    "stableSeconds": 275,
+    "connections": 1,
+    "disconnects": 0,
+    "errorLines": 0,
+    "ready": true,
+    "dingtalk": "connected",
+    "executionMode": "execute"
+  },
+  "configuration": {
+    "model": "gpt-6-astra",
+    "reasoningEffort": "medium",
+    "relayUid": 501,
+    "actualNonRootProcessObserved": true,
+    "hostGenerationFile": "/proc/sys/kernel/random/boot_id",
+    "credentialOrOwnerChanged": false,
+    "capabilitiesAdded": false,
+    "otherContainersModified": false
+  },
+  "data": {
+    "schema": 37,
+    "integrity": "ok",
+    "foreignKeyViolations": 0,
+    "activeOwners": 1,
+    "ownerHash": "5fe9525037ba8ac251261cd02a5ca7185899452e81f033680920326729077865",
+    "events": 12,
+    "outbox": {
+      "sent": 39,
+      "superseded": 10
+    },
+    "inflight": {
+      "runs": 0,
+      "nodes": 0,
+      "outbox": 0,
+      "natural": 0,
+      "association": 0,
+      "conversation": 0,
+      "onlineRead": 0,
+      "attachments": 0,
+      "execution": 0,
+      "verification": 0
+    },
+    "currentDataRestoredFromBackup": false,
+    "backups": [
+      "/var/lib/openmausbot-collaboration-pilot/releases/052b42c/offline-before-final-new-goal-1788840630",
+      "/var/lib/openmausbot-collaboration-pilot/releases/052b42c/offline-before-handoff-new-goal-1788840630"
+    ],
+    "offlineChecksUsePrivateCopy": true
+  },
+  "operationalArtifacts": {
+    "directory": "/var/lib/openmausbot-collaboration-pilot/releases/052b42c",
+    "oneShotFile": "compose.once.json",
+    "oneShotSha256": "d707313f3cb46636b4993c29fdb25cb5aaff15e0f112e29d4efcb79431711b45",
+    "singleStartScriptSha256": "49fdc7841270bf982210bca7b9babf5a4a4ea5886dc8b502051734367608cdcf",
+    "handoffScriptSha256": "1b94c04dbebb1f3a1b94bc58f879935f1be118506b221e6303a4b39c2c549ef2",
+    "gateSha256": "aa71810a617bfe79fa03300b92515b54ff89e0c837a4e7baef8fe9b6683d8258",
+    "liveFilterSha256": "4b51ddf3532f81091533251c829e71fc7b6091d452f52217a7f352a1a36b950f"
+  },
+  "resolvedFailures": [
+    {
+      "receipt": "11ccbf",
+      "cause": "copied diagnostic file owner incompatible with cap-drop ALL and mode0400",
+      "serviceStopped": false,
+      "fix": "only auxiliary files chown root; no extra container capabilities"
+    },
+    {
+      "receipt": "5ed3b3",
+      "cause": "stopped SQLite WAL required auxiliary-file creation on read-only mount",
+      "serviceRestored": true,
+      "fix": "check fresh offline private copy; original database is not made writable to diagnostics"
+    }
+  ],
+  "acceptance": {
+    "finalCandidateActivated": true,
+    "systemdHandoff": true,
+    "realGroupBusinessScenarios": false,
+    "realModelCallThroughCurrentCandidate": false,
+    "inflightServiceRestart": false,
+    "vmReboot": false,
+    "ownerFinalAcceptance": false,
+    "complete": false
+  },
+  "receipts": {
+    "goalDocsCommit": "fae292",
+    "oneShotCreated": "0d65a6",
+    "configDiff": "e2714f",
+    "images": "feb5ce",
+    "dryRun": "2943f7",
+    "expandedPreflight": "06bde9",
+    "singleStart": [
+      "231873",
+      "e31b0d"
+    ],
+    "singleCoordinator": "8e9eb0",
+    "handoff": [
+      "3bd2af",
+      "38298a"
+    ],
+    "finalCoordinator": "a8023f",
+    "modelConfiguration": "6e0f40",
+    "processIdentity": "7d7a23",
+    "finalStable": "f5515b"
+  }
+}

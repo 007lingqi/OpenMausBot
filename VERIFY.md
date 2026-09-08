@@ -1,5 +1,14 @@
 # Meta 协作验证记录
 
+## 2026-09-08 最终候选真实首启与正式 systemd 交接通过
+
+- 231873/e31b0d 首启为 c7351924…/ff49b7de…，restart=no/重启0、实际ready/connected/execute；8e9eb0监督器fence48对应真实容器/镜像。3bd2af在交接前确认518秒一次连接、0断开/错误，不只检查Docker健康探针。
+- 3bd2af停机前/私有停机副本复核十项在途全0、schema37/完整性ok/外键0/Owner1/身份摘要不变、事件12/Outbox39sent及10superseded。两份新离线备份在固定发布目录保留，数据库内容比对通过，没有用备份覆盖CURRENT数据。
+- 38298a正式交接exit0，发生一次预期Compose重建，当前6de2840e…/ff49b7de…，unless-stopped/重启0，systemd active/enabled。a8023f最新coordinator fence49匹配当前实例；6e0f40仅白名单字段确认gpt-6-astra/medium、relay UID501与boot_id来源；7d7a23实际UID501进程。f5515b最终实例275秒连接1/断开0/错误0、ready/connected/execute。
+- 11ccbf文件归属与0400/cap-drop冲突，尚未停机即被拦截；5ed3b3原始只读挂载在停机后无法创建SQLite辅助文件，自动恢复兼容版，数据未覆盖。修正为只在私有停机副本允许辅助文件写入，原账本诊断仍只读，不增加容器权限。最终运行脚本哈希和回执已存conversation-final-activation-052b42c.json；失败证据保留，未声称首次即成功。
+- 本批没有产品源码变化、真实群新消息或当前候选真实模型调用；不重复既有全套，也不将首启/空闲交接/模型配置正确当完整业务、在途恢复或VM重启通过。所有启用会话已终态，已存在成功守卫不得重跑。
+- cb8140结构化证据与9个本地引用检查通过，确认整体/真实群/在途恢复/VM重启/Owner验收仍为false；server/scripts相对HEAD无变化，git diff --check通过。原生Goal再次实查active，正文与项目完全一致。23eca0只读核对其他容器均exited且restart=no；601390确认模型socket仍为UID501私有目录0700/套接字0600，尚未实施VM重启。
+
 ## 2026-09-08 新目标设置与单次启动前置
 
 - get_goal 返回 null 后，按用户明确“设置这个新目标”调用 create_goal 成功：active，正文来自当前目标文档的完整纯对话正文，未传 token_budget。不是覆盖未完成目标或把旧目标虚标完成。

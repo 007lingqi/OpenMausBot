@@ -1,5 +1,7 @@
 # 纯对话候选发布准备
 
+当前入口（2026-09-08）：含Stream修复的最终052b42c/ff49b7de…现已实际启用并完成systemd交接，当前6de2840e…健康且真实Stream已连接。详见PROGRESS顶部和evidence/conversation-final-activation-052b42c.json；下方恢复兼容版/尚未启用等均为历史，不能据此重复切换或回滚。真实业务与VM重启/本人验收仍未完成。
+
 最新接续（2026-09-08）：本候选曾完成真实库31→37迁移/66旧表保留和单次启动，但实际Stream反复重连，未作为可用版本交接。根因是旧版也存在的可选REGISTERED误判，修复已提交052b42c并全套通过。目前恢复到含同一修复的d590兼容版，实际连接与systemd正常；最终052b42c候选受执行审核超时影响尚未启用。以PROGRESS顶部、dingtalk-stream-connectivity-20260908.md及evidence/conversation-stream-recovery-052b42c.json为当前入口，下文保留各阶段历史。
 
 用户已于2026-09-08明确允许本地提交和非生产Docker试点直接继续，无需重复业务授权。最新进展覆盖下方上一轮“尚无镜像”：本轮独立构建和主要预检已实际执行，自动权限审核仍间歇超时，不是用户未许可。

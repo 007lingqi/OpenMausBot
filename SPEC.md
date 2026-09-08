@@ -1,5 +1,7 @@
 # 内部研发助手 Meta 协作规范
 
+最新运行状态（2026-09-08）：最终纯对话候选 052b42c/ff49b7de…已通过真实单次启动并完成 systemd 正式交接，当前 6de2840e…实际 ready/connected/execute、unless-stopped、重启0，systemd active/enabled；原生新目标 active。旧“未启用/兼容版/paused”描述均为历史。精确证据见 docs/pilot/evidence/conversation-final-activation-052b42c.json；真实群C1–C6、完整交付/并发/在途恢复、VM重启和本人最终验收仍未完成。
+
 最新目标状态（2026-09-08）：用户明确要求设置并实施新目标。本轮原生查询为 null 后正式创建，当前 active，正文已同步为纯对话范围且未加预算；没有将旧目标虚标完成。当前运行仍是兼容修复版，最终候选待安全启用。以下 paused/未同步为上一轮历史，执行入口以 PROGRESS 顶部及当前对话目标为准。
 
 当前目标与运行状态（2026-09-08）：用户要求优化现有暂停目标，原生状态实查 paused；完整替换正文、当前事实和恢复后验收顺序统一见 [当前对话目标](docs/pilot/pmo-conversation-goal.md)。应用内正文暂不能通过可用工具改写，本轮没有恢复目标或切换服务。取消文档/表格/附件/DWS/cardTemplateId 前置，不沿用无用户来源的默认预算，保留真实交付、唯一 Owner 和安全门禁；主 Agent 使用精简状态/证据索引恢复，不逐批复制完整历史。
