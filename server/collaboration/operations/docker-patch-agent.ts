@@ -8,6 +8,7 @@ import { redactSensitiveText } from "../sensitive-text.ts";
 import { clearProviderOwnedHome } from "./provider-home-cleanup.ts";
 import { signalProviderProcess } from "./provider-process-signal.ts";
 import { CommandCleanupError } from "../execution-limits.ts";
+import { ProviderFailure } from "./provider-failure.ts";
 import {
   DockerCliContainmentSupervisor,
   type DockerCommandPort,
@@ -452,10 +453,12 @@ export class CodexReadOnlyPatchProvider implements ReadOnlyPatchProvider {
     try {
       await this.runProcess(request.runId, args, prompt, request.signal, localCodexHome);
       const raw = readFileSync(output);
-      if (raw.length < 2 || raw.length > 2 * 1024 * 1024) throw new Error("provider_patch_output_size_invalid");
-      const parsed = JSON.parse(raw.toString("utf8")) as PatchProposal;
+      if (raw.length < 2 || raw.length > 2 * 1024 * 1024) throw new ProviderFailure("provider_output_invalid", "provider_patch_output_size_invalid");
+      let parsed: PatchProposal;
+      try { parsed = JSON.parse(raw.toString("utf8")) as PatchProposal; }
+      catch { throw new ProviderFailure("provider_output_invalid", "provider_patch_output_invalid"); }
       if (!parsed || !["completed", "failed", "needs_configuration"].includes(parsed.status) || typeof parsed.summary !== "string" || !Array.isArray(parsed.changes)) {
-        throw new Error("provider_patch_output_invalid");
+        throw new ProviderFailure("provider_output_invalid", "provider_patch_output_invalid");
       }
       return { ...parsed, readOnlyEnforced: true };
     } finally {
@@ -534,7 +537,7 @@ export class CodexReadOnlyPatchProvider implements ReadOnlyPatchProvider {
       let markClosed!:()=>void;
       const active={child,closed:new Promise<void>(resolve=>{markClosed=resolve;}),didClose:false,stopRequested:false};
       this.active.set(runId, active);
-      let stderr = Buffer.alloc(0);
+      let timedOut = false;
       let settled = false;
       let inputFailed = false;
       let processFailed = false;
@@ -546,12 +549,11 @@ export class CodexReadOnlyPatchProvider implements ReadOnlyPatchProvider {
         });
       };
       signal.addEventListener("abort", stop, { once: true });
-      const timer = setTimeout(stop, this.timeoutMs);
+      const timer = setTimeout(() => { timedOut = true; stop(); }, this.timeoutMs);
       timer.unref?.();
-      child.stderr?.on("data", (chunk: Buffer) => {
-        stderr = Buffer.concat([stderr, chunk]).subarray(0, 64 * 1024);
-      });
-      child.once("error", (error) => {
+      // Drain the pipe without retaining untrusted CLI output or secrets.
+      child.stderr?.resume();
+      child.once("error", () => {
         if (settled) return;
         // Node can report a stdin EPIPE on ChildProcess before its close event.
         // A known PID still needs the same bounded stop/close path; only a
@@ -562,7 +564,7 @@ export class CodexReadOnlyPatchProvider implements ReadOnlyPatchProvider {
         signal.removeEventListener("abort", stop);
         // A spawn error without a PID cannot leave a provider process behind.
         if(!child.pid)this.active.delete(runId);
-        rejectPromise(error);
+        rejectPromise(new ProviderFailure("provider_launch_failed", "codex_patch_provider_failed:launch_error"));
       });
       child.once("close", (code) => {
         active.didClose=true;markClosed();
@@ -571,11 +573,12 @@ export class CodexReadOnlyPatchProvider implements ReadOnlyPatchProvider {
         settled = true;
         clearTimeout(timer);
         signal.removeEventListener("abort", stop);
-        if (inputFailed) rejectPromise(new Error("codex_patch_provider_input_failed"));
-        else if(processFailed)rejectPromise(new Error('codex_patch_provider_failed:process_error'));
-        else if(active.stopRequested)rejectPromise(new Error('codex_patch_provider_failed:interrupted'));
+        if (timedOut) rejectPromise(new ProviderFailure("provider_timeout", "codex_patch_provider_failed:timeout"));
+        else if (inputFailed) rejectPromise(new ProviderFailure("provider_input_failed", "codex_patch_provider_input_failed"));
+        else if(processFailed)rejectPromise(new ProviderFailure('provider_process_failed','codex_patch_provider_failed:process_error'));
+        else if(active.stopRequested)rejectPromise(new ProviderFailure('provider_interrupted','codex_patch_provider_failed:interrupted'));
         else if (code === 0) resolvePromise();
-        else rejectPromise(new Error(`codex_patch_provider_failed:${stderr.toString("utf8").slice(0, 500)}`));
+        else rejectPromise(new ProviderFailure("provider_process_failed", "codex_patch_provider_failed:nonzero_exit"));
       });
       // An early CLI exit must reject this run, not raise an unhandled EPIPE in
       // the shared headless process. Even a valid-looking output is unusable if

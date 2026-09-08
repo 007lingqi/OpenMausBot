@@ -1,5 +1,11 @@
 # Meta 协作验证记录
 
+## 2026-09-08 真实自然补充与第三次执行的失败分类
+
+- a6edd9/3530ec：本次真实文本进入原事项version3/Spec4/plan2，5项验收、0待问、app/**与tests/**范围正确；attempt3真实运行。ad8537终态失败且最终通知sent，原worktree无改动/无测试/无复测；24fd4b原任务pid0、15事件/47sent/18superseded、十项在途0、Owner/完整性不变。不是新建任务或重置次数，失败详情未保留，不能追溯诊断成超时。
+- 5a0136：6项预期红灯复现原Provider异常无安全分类、超时与中止混同、worker将越界提案与未知模型错误混同。补丁后406f7f首批32项绿，但未用参数导致typecheck失败；修正后5360fc扩大7文件147项及typecheck/diff全部通过。新增真实进程夹具与relay监督包装、worker回执、实际钉钉格式的贯通检查；未知/伪造code不可信，取消仍无回执/无启动，异常路径不写项目。
+- 599acb完整pnpm test/typecheck/diff启动session35898，03e2e7确认终态0，包含主集数量门槛、broker/Node、打包/headless启动及类型/diff；输出截断不重跑补数。该诊断修复未部署；未新增真实模型调用或原事项attempt，不以本地测试取代真实C1交付。精确事实见conversation-supplement-attempt3-20260908.json。
+
 ## 2026-09-08 重试结果修复固定发布与实际配置核验
 
 - 176c95定位构建临时root仍指向旧批次，防护在build前已拒绝；只修路径后137a58离线镜像5e8119a6…绑定受测3841359，六bundle的宿主/镜像SHA256一致、隔离健康schema37通过。产品源码未变，复用1546b6完整回归终态0。

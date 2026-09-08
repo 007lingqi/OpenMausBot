@@ -5,6 +5,30 @@ import { setTimeout as delay } from "node:timers/promises";
 import type { AgentRunRequest } from "../provider-runner.ts";
 import { CONTAINED_VIEW_ROOT, type ContainedProviderRequest, validateContainedProposal } from "./contained-patch-protocol.ts";
 import type { ProviderReadViewFile } from "./provider-read-view.ts";
+import { ProviderFailure, providerFailureSummary } from "./provider-failure.ts";
+import { superviseDockerService, type ManagedService } from "./docker-service-supervisor.ts";
+
+/** Preserve only locally classified failures across the relay lifecycle wrapper.
+ * Successful output remains untrusted and is validated by the worker below. */
+export async function superviseContainedProposal(options: {
+  signal: AbortSignal;
+  startRelay(): ManagedService;
+  propose(): Promise<unknown>;
+  interrupt(): Promise<void>;
+}): Promise<unknown> {
+  let proposal: unknown, failure: unknown, completed = false;
+  const code = await superviseDockerService({ signal: options.signal, startRelay: options.startRelay,
+    startHeadless: () => ({ exited: Promise.resolve().then(options.propose).then(value => {
+      proposal = value; completed = true; return 0;
+    }, error => { failure = error; return 1; }), stop: () => { void options.interrupt().catch(() => {}); } }),
+  });
+  if (options.signal.aborted) throw Error('contained_worker_cancelled');
+  if (code !== 0 || !completed) {
+    if (failure !== undefined) throw failure;
+    throw new ProviderFailure('provider_channel_failed');
+  }
+  return proposal;
+}
 
 /** No executable entrypoint in this module: importing/bundling it cannot start
  * a relay, provider or writer. The trusted container main supplies those. */
@@ -72,7 +96,7 @@ export async function runContainedPatchWorker(options: {
       Object.values(request.capabilities).some(value => value !== false) || !Array.isArray(files))
       throw Error("contained_worker_request_invalid");
     let abort!: () => void;
-    let proposal;
+    let proposal, validating = false;
     try {
       const raw = await new Promise<unknown>((resolve, reject) => {
         abort = () => reject(failure ?? Error("contained_worker_cancelled"));
@@ -83,12 +107,15 @@ export async function runContainedPatchWorker(options: {
             registerContainment: async () => { throw Error("contained_nested_registration_denied"); } });
         }).then(resolve, reject);
       });
+      validating = true;
       proposal = validateContainedProposal(request, raw, files);
-    } catch {
+    } catch (error) {
       active();
       // Neither private upstream diagnostics nor malformed model output crosses
       // into the controller's business reply. Never retry the model here.
-      proposal = { status: "failed" as const, summary: "模型未能完成本次修改建议。", changes: [] };
+      proposal = { status: "failed" as const, summary: validating
+        ? "改动建议未通过格式或范围检查，项目尚未修改。"
+        : providerFailureSummary(error) ?? "模型未能完成本次修改建议。", changes: [] };
     } finally { signal.removeEventListener("abort", abort); }
     write("proposal.json", proposal);
     if (proposal.status !== "completed") return;

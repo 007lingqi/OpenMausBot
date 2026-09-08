@@ -2,9 +2,9 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { CONTAINED_CANDIDATE_ROOT } from "./contained-patch-protocol.ts";
-import { runContainedPatchWorker } from "./contained-patch-worker-core.ts";
+import { runContainedPatchWorker, superviseContainedProposal } from "./contained-patch-worker-core.ts";
 import { CodexReadOnlyPatchProvider } from "./docker-patch-agent.ts";
-import { relayLaunchConfiguration, superviseDockerService, type ManagedService } from "./docker-service-supervisor.ts";
+import { relayLaunchConfiguration, type ManagedService } from "./docker-service-supervisor.ts";
 
 function relayProcess(child: ChildProcess, url: string): ManagedService {
   const exited = new Promise<number>(resolve => { child.once("error", () => resolve(1)); child.once("exit", code => resolve(code ?? 1)); });
@@ -49,15 +49,11 @@ export async function runContainedWorkerMain(environment: NodeJS.ProcessEnv = pr
           exchangeRoot: "/tmp/provider-state", providerHome: "/tmp", providerUid: 10001, providerGid: 10001,
           launcher: { executable: "/usr/bin/setpriv", args: ["--reuid=10001", "--regid=10001", "--clear-groups", "--inh-caps=-all", "--ambient-caps=-all", "--no-new-privs"] } });
         const channel = "/opt/openmausbot/collaboration/operations/opencodex-model-channel.js";
-        let proposal: unknown;
-        const code = await superviseDockerService({ signal: request.signal,
+        return superviseContainedProposal({ signal: request.signal,
           startRelay: () => relayProcess(spawn("/usr/bin/setpriv", [...config.args, process.execPath, channel, ...config.channelArgs],
             { env: config.environment, stdio: ["pipe", "pipe", "ignore"] }), config.url),
-          startHeadless: () => ({ exited: provider.propose(request).then(value => { proposal = value; return 0; }, () => 1),
-            stop: () => { void provider.interrupt(request.runId).catch(() => {}); } }),
+          propose: () => provider.propose(request), interrupt: () => provider.interrupt(request.runId),
         });
-        if (code !== 0 || !proposal) throw Error("contained_provider_failed");
-        return proposal;
       },
     });
   } finally { process.off("SIGTERM", abort); process.off("SIGINT", abort); }

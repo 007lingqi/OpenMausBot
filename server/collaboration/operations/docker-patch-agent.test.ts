@@ -59,6 +59,35 @@ const proof: ContainmentProof = {
 };
 
 describe("Docker patch Agent", () => {
+  it.each([
+    { output: '{invalid private-upstream-detail', exit: 0, code: 'provider_output_invalid' },
+    { output: '', exit: 0, code: 'provider_output_invalid' },
+    { output: '{}', exit: 0, code: 'provider_output_invalid' },
+    { output: '{}', exit: 7, code: 'provider_process_failed' },
+  ])("keeps a safe diagnostic for provider output/exit failure: $code ($output)", async ({output,exit,code}) => {
+    const directory=mkdtempSync(join(tmpdir(),'provider-diagnostic-')),executable=join(directory,'cli.mjs');
+    writeFileSync(executable,`#!/usr/bin/env node\nimport{writeFileSync}from'node:fs';for await(const c of process.stdin){};const a=process.argv.slice(2);writeFileSync(a[a.indexOf('--output-last-message')+1],${JSON.stringify(output)});process.stderr.write('private-upstream-detail');process.exit(${exit});`,{mode:0o700});
+    const provider=new CodexReadOnlyPatchProvider({executable,exchangeRoot:join(directory,'exchange')});
+    const error=await provider.propose(request()).then(()=>null,e=>e);
+    expect(error).toHaveProperty('diagnosticCode',code);
+    expect(String(error)).not.toContain('private-upstream-detail');
+    expect(existsSync(join(directory,'exchange','omb-run-1-provider'))).toBe(false);
+  });
+
+  it("distinguishes a diagnostic timeout from a user interruption", async () => {
+    const directory=mkdtempSync(join(tmpdir(),'provider-diagnostic-timeout-')),executable=join(directory,'cli.mjs');
+    writeFileSync(executable,"#!/usr/bin/env node\nprocess.stdin.resume();setInterval(()=>{},1000);",{mode:0o700});
+    const provider=new CodexReadOnlyPatchProvider({executable,exchangeRoot:join(directory,'exchange'),timeoutMs:100,forceKillGraceMs:50});
+    await expect(provider.propose(request())).rejects.toHaveProperty('diagnosticCode','provider_timeout');
+  });
+  it("classifies a failed launch without leaking the executable path", async()=>{
+    const root=mkdtempSync(join(tmpdir(),'provider-diagnostic-launch-'));
+    const provider=new CodexReadOnlyPatchProvider({executable:join(root,'private-upstream-detail'),exchangeRoot:join(root,'exchange')});
+    const error=await provider.propose(request()).then(()=>null,e=>e);
+    expect(error).toHaveProperty('diagnosticCode','provider_launch_failed');
+    expect(String(error)).not.toContain('private-upstream-detail');
+  });
+
   it("does not launch a provider for an already cancelled request", async () => {
     const directory=mkdtempSync(join(tmpdir(),'provider-pre-abort-'));
     const marker=join(directory,'launched'),executable=join(directory,'cli.mjs');
