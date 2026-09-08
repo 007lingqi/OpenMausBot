@@ -1,0 +1,147 @@
+{
+  "format": "conversation-stream-recovery-v1",
+  "sourceRevision": "052b42ca964af8bf4518be6e7f4e2adf7982b687",
+  "candidate": {
+    "image": "sha256:ff49b7de6113b260bc49dbc8a940c28c9254cacf4bc61747f86d88d2b1fb496f",
+    "sixFilesVerified": true,
+    "files": {
+      "collaboration-docker.js": "b635b94aaaf66b365d9e1e76e89589522d62493c79d842344a5cbb82f6e5f9f7",
+      "collaboration/operations/opencodex-model-channel.js": "1766cd1b4e3ceca3758c6770bcfc973c581fc8c86bba6673212be557a02a0f4e",
+      "docker-apply-patch.js": "e9086293be497798ec75236fed68f2d37e4541824ab0dd4edeb44c292ee2e044",
+      "contained-patch-worker.js": "706fe5ff58056172960c87e5aaba1c58ffe290d16c5afcc9debdc16bfb2e2074",
+      "collaboration-headless.js": "a490f38a6ebdd47963539b140fe395efedebdd9bab7508df83084248569eb6e5",
+      "collaboration/operations/online-document-relay.js": "7fcfaea1df1698de48ef42716e630fe7b63345eec9fe6b37405b6c04d4b47a43"
+    },
+    "built": true,
+    "started": false
+  },
+  "compatibleRepair": {
+    "baseRevision": "d5909b6be5a6612706ffb8f17ce7ac0838d03b0b",
+    "streamPatchRevision": "052b42ca964af8bf4518be6e7f4e2adf7982b687",
+    "image": "sha256:d55df16243ffc6def93ed0b692e730a798027069277eb17304a4127d876c1c35",
+    "sixFilesVerified": true,
+    "files": {
+      "collaboration-docker.js": "b635b94aaaf66b365d9e1e76e89589522d62493c79d842344a5cbb82f6e5f9f7",
+      "collaboration/operations/opencodex-model-channel.js": "1766cd1b4e3ceca3758c6770bcfc973c581fc8c86bba6673212be557a02a0f4e",
+      "docker-apply-patch.js": "e9086293be497798ec75236fed68f2d37e4541824ab0dd4edeb44c292ee2e044",
+      "contained-patch-worker.js": "706fe5ff58056172960c87e5aaba1c58ffe290d16c5afcc9debdc16bfb2e2074",
+      "collaboration-headless.js": "e8535aafb9831c93b63718d017af6f0e637ac3c8fbfbb7fb7ed63d751355d4ce",
+      "collaboration/operations/online-document-relay.js": "47afef867075c3531bf4263b7b11ca05f6b9604725ff992502c710fe71c7c7ce"
+    },
+    "firstStableObservation": {
+      "startupHealth": {
+        "state": "running",
+        "status": "healthy",
+        "ready": true,
+        "dingtalk": {
+          "enabled": true,
+          "state": "connected"
+        },
+        "executionMode": "execute"
+      },
+      "transportOpened": 1,
+      "lastOpened": "2026-09-08T01:48:41.806Z",
+      "stableSeconds": 790,
+      "disconnects": 0,
+      "errorLines": 0
+    },
+    "currentContainer": {
+      "id": "d5252db1f642a1ed2a10722c250359dcc5a670fc79d7864ac5422c8bcde1cc0c",
+      "image": "sha256:d55df16243ffc6def93ed0b692e730a798027069277eb17304a4127d876c1c35",
+      "status": "Up 48 seconds (healthy)"
+    },
+    "currentLiveObservation": {
+      "startupHealth": {
+        "state": "running",
+        "status": "healthy",
+        "ready": true,
+        "dingtalk": {
+          "enabled": true,
+          "state": "connected"
+        },
+        "executionMode": "execute"
+      },
+      "transportOpened": 1,
+      "lastOpened": "2026-09-08T02:23:24.673Z",
+      "stableSeconds": 139,
+      "disconnects": 0,
+      "errorLines": 0
+    },
+    "restartCount": 0,
+    "restartPolicy": "unless-stopped",
+    "systemdActive": true,
+    "systemdEnabled": true
+  },
+  "migration": {
+    "from": 31,
+    "to": 37,
+    "oldBusinessTablesPreserved": 66,
+    "integrity": "ok",
+    "foreignKeyViolations": 0,
+    "firstBackup": "/var/lib/openmausbot-collaboration-pilot/releases/13a373c/offline-data",
+    "currentSchemaBackup": "/var/lib/openmausbot-collaboration-pilot/releases/052b42c/offline-data"
+  },
+  "regression": {
+    "command": "pnpm test && pnpm typecheck && git diff --check",
+    "exitCode": 0,
+    "sessionId": 50474,
+    "receipt": "4c1de5",
+    "focused": {
+      "files": 5,
+      "tests": 199,
+      "receipt": "24b3eb"
+    },
+    "newRegressionRed": "fb8a71"
+  },
+  "failure": {
+    "symptom": "authenticated idle connection was disconnected every 30 seconds because an optional REGISTERED frame never arrived",
+    "originalConnects": 16,
+    "originalDisconnects": 15,
+    "rootCauseConfidence": "high",
+    "preExistingIn247f99a": true,
+    "liveProtocolProbe": {
+      "durationSeconds": 40,
+      "opened": true,
+      "systemFrames": 0,
+      "businessFrames": 0,
+      "exitCode": 0
+    },
+    "resolvedInCompatibleRepair": true
+  },
+  "scope": {
+    "nonProduction": true,
+    "finalCandidateActivated": false,
+    "compatibleRepairRestored": true,
+    "realGroupBusinessAcceptance": false,
+    "hostRebootTested": false,
+    "ownerFinalAcceptance": false,
+    "ownerOrCredentialsChanged": false,
+    "goalStatusObserved": "paused"
+  },
+  "blocker": {
+    "kind": "execution_approval_timeouts",
+    "userAuthorizationMissing": false,
+    "finalCandidateNeverStarted": true,
+    "oneShotOverrideNotCreated": true,
+    "currentDataPreserved": true,
+    "unsafeSchema31RollbackUsed": false
+  },
+  "receipts": {
+    "images": [
+      "f2bfdc",
+      "3782ff"
+    ],
+    "imageHashes": [
+      "de9fef",
+      "9f68c4"
+    ],
+    "currentSchemaBackup": "ce1388",
+    "rollbackStable": "84a095",
+    "finalCandidateCreated": "3db583",
+    "restore": "6fd5f0",
+    "currentContainer": "e84b1c",
+    "currentStream": "bf8454",
+    "systemd": "6f4cb6",
+    "restartPolicy": "88a246"
+  }
+}

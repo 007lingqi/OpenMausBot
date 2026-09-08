@@ -1,5 +1,14 @@
 # Meta 协作实施进度
 
+## 当前状态：连接修复版已恢复，最终新版未启用（2026-09-08）
+
+- 3498ae已本地提交受测修复052b42c，用户AGENTS.md/outputs保留、未push。f2bfdc/3782ff构建最终候选ff49b7de…和兼容修复d55df162…；de9fef/9f68c4六文件哈希匹配。完整回归结果4c1de5仍有效，无后续产品源码变化。
+- 原13a373c真实库迁移/66旧表保留已完成；ce1388另备份当前schema37到VM releases/052b42c/offline-data。修复回退版第一次实际运行84a095观察790秒、一次连接、0断开/错误、runtime ready/connected/execute，原30秒重连问题得到实测修复。
+- 08b2f7与7f7f8a再次停机双检查均无在途，最终候选0209cc8a…已创建但始终没有启动。首次restart=no更新1865/1866、声明式单次启动配置1867/1868均在执行审核前超时，未执行；不继续重复同一操作，不以容器Created当作发布成功。
+- 6fd5f0恢复已验证的固定兼容修复版并保留CURRENT数据。e84b1c/88a246最终实例d5252db1…为d55df162…、running/healthy、restarts0、unless-stopped。bf8454实际运行报告ready=true、Stream connected、execute，当前实例观察139秒、一次连接、0断开/错误。6f4cb6确认systemd active/enabled，没有做主机重启。
+- 整体Goal仍为宿主paused，最终纯对话候选未启用、真实六类业务/Owner最终验收未完成。当前阻塞是执行审核持续超时，不是缺用户许可；同类可恢复操作仍按既有授权执行，不再索要同样授权。所有工具和构建/测试会话已终态，无后台重试或新自动化。
+- 恢复入口：固定目录releases/052b42c含candidate/rollback配置，当前systemd使用rollback.conf。保留两代私有备份与所有镜像；不要用schema31镜像或用备份覆盖后续消息。下一次执行环境可用时先核对现场/在途，安排最终ff49候选单次安全启动与交接，不能重跑flag=wx准备步骤。完整结构化证据见docs/pilot/evidence/conversation-stream-recovery-052b42c.json。
+
 ## 当前批次：非生产切换发现并修复旧有 Stream 就绪误判（2026-09-08）
 
 - 用户要求直接切换，不重复确认。停机双检查、私有离线备份、真实库31→37迁移及66旧表逐行保留通过，原13a373c候选单次启动/实际coordinator/relay通过；但真实Stream持续重连，不能用Docker探针healthy宣布可用。

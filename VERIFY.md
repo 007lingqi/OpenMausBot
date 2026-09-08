@@ -1,5 +1,13 @@
 # Meta 协作验证记录
 
+## 2026-09-08 真实连接恢复验证与最终发布边界
+
+- f2bfdc/3782ff两套固定修复镜像构建exit0，de9fef/9f68c4六文件逐一匹配受测本地bundle；源码052b42c与同文件补丁的d590兼容回退有独立映射，见conversation-stream-recovery-052b42c.json。
+- 84a095兼容修复版实际Stream观察790秒：healthy/ready/connected/execute，连接1、断开0、错误0。它修复此前16连接/15断开的真实症状，不是仅本地测试或probe-only健康。
+- 最终候选0209cc8a…只有创建证据，首启安全配置的执行审核超时，始终没有启动；没有候选上线或完整业务通过证据。
+- 6fd5f0按固定兼容配置恢复CURRENT数据上的群服务。e84b1c与88a246确认d5252db1…运行d55df162…、healthy、重启0、unless-stopped；bf8454实际Stream已连接/可执行、139秒无重连。6f4cb6确认systemd active/enabled，非主机重启试验。
+- 无真实群内容发送或Owner动作，不声称所有业务场景通过；用户许可已给，不把执行审核问题转写为用户未授权。所有本轮会话终态。
+
 ## 2026-09-08 Stream 可选注册帧不阻塞群服务（本地完整回归通过，修复镜像待切换）
 
 - fb8a71：新增90秒无REGISTERED回归先行失败，实际reconnecting；24b3eb修复后5文件199项、typecheck/diff通过。
