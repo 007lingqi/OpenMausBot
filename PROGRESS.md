@@ -1,5 +1,13 @@
 # Meta 协作实施进度
 
+## 当前运行：Linux VM 空闲重启与服务/模型通道恢复通过（2026-09-08）
+
+- 最终候选及原生新目标保持不变；d8bef2 实际请求 Linux VM 重启，4805ef 确认 boot ID 从 3066c764…变为 3afdc10e…，同一容器 6de2840e…的新 StartedAt 为 2026-09-08T05:05:46.852012964Z，systemd active/enabled。此前“尚未 VM 重启”均为历史记录，不再重复执行。
+- ff76d0 监督器 fence50 同时匹配新 boot ID、容器 ID 与 StartedAt；e45873 仅新启动日志观察552秒，连接1/断开0/错误0、ready/connected/execute。f94607 宿主通道自动采用新 boot ID，f3cb8b 通过受限 UID501/无网络客户端完成真实 Astra medium 合成请求，错误模型请求拒绝。
+- 宿主 Docker CLI 的旧 SSH 转发 socket 未自动恢复；204f96 保留旧 socket 后恢复既有 SSH master 的原样 LocalForward，363786 确认 CLI 可用、其他容器仍退出。此项是额外修复，不能声称自动恢复；未来 VM 再次重启的 CLI 恢复未验证。
+- 重启前空闲双检查和新私有备份通过；b8a19d 核对 schema37/完整性/Owner/事件及 Outbox 计数保持。不是所有表逐行哈希验证，不证明在途任务恢复。精确结果见 docs/pilot/evidence/conversation-vm-reboot-052b42c.json。
+- 下一步是真实钉钉 C1–C6 与受限代码交付、重放/并发/在途恢复；截至本检查点尚未发送本轮新群消息。真实多人、Owner 决策和最终本人验收不能模拟或代签。整体目标仍未完成。
+
 ## 当前运行：最终纯对话候选已启用并交接 systemd（2026-09-08）
 
 - 原生新目标 active；目标正文与当前纯对话范围已同步，创建/准备阶段文档已由 fae292 提交 d9817b4。最终候选 ff49b7de…现在已真正启用，不再是兼容修复版；源码 052b42c 没有后续产品修改，既有完整回归继续有效。

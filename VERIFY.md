@@ -1,5 +1,13 @@
 # Meta 协作验证记录
 
+## 2026-09-08 Linux VM 实际重启、服务及受限模型通道恢复
+
+- d8bef2 在十项空闲双检查和私有新备份后请求 Linux VM reboot，4805ef 验证 boot ID 已改变、同容器新 StartedAt 05:05:46.852Z、systemd active/enabled。ff76d0 新监督器 fence50 绑定新 boot/当前容器/新 StartedAt；e45873 新启动552秒连接1、断开0、错误0，实际 ready/connected/execute。
+- f94607 宿主 relay checkpoint 自动刷新新 boot ID、attempts0。f3cb8b 真实 gpt-6-astra/medium 合成 JSON 请求 completed，通过 UID501、无网络、只读 socket 客户端；错误模型返回400。证明模型通道恢复，不是代码交付或真实群验收。
+- b8a19d 重启后 schema37、quick_check ok、外键0、唯一 Owner 及其摘要、事件12/Outbox39sent/10superseded与十项在途0保持；不是73表逐行哈希比对。没有重启 Mac、改身份凭据或操作其他容器。
+- 851bc6/73b585 宿主 Docker CLI 连接失败，VM内Docker正常；867e31/4011bb 确认旧无监听socket与未重建的SSH静态转发。204f96 仅在所有者/权限/无监听/旧inode复核后保留旧socket并恢复既有SSH master LocalForward；363786 确认CLI恢复。此项不是自动恢复，未来重启仍可能需要平台转发修复。
+- 结构化结果保存在 conversation-vm-reboot-052b42c.json。仅空闲重启通过，在途恢复、六类真实群业务、Owner决定和最终验收仍未通过；没有新产品源码，不重复旧完整回归。
+
 ## 2026-09-08 最终候选真实首启与正式 systemd 交接通过
 
 - 231873/e31b0d 首启为 c7351924…/ff49b7de…，restart=no/重启0、实际ready/connected/execute；8e9eb0监督器fence48对应真实容器/镜像。3bd2af在交接前确认518秒一次连接、0断开/错误，不只检查Docker健康探针。
