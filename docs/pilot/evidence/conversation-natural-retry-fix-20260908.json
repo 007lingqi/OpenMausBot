@@ -130,5 +130,22 @@
     "oldEventDecisionMustRemainUnchanged": true,
     "remaining": ["C1 actual delivery", "C2-C6 live scenarios", "real multiple participants", "real replay and concurrency", "inflight recovery", "final personal Owner acceptance"]
   },
+  "goalFollowup": {
+    "observedStatus": "blocked",
+    "nativeUpdatedAt": 1788854207,
+    "sameInputDependencyTurns": 3,
+    "dependency": "Fresh real sole-Owner group retry message after the old event was answered not executed",
+    "turns": [
+      { "turn": "release_handoff", "classification": "progress", "ledgerReceipt": "e55d4f" },
+      { "turn": "first_continuation", "classification": "no_progress", "ledgerReceipt": "b4aff7" },
+      { "turn": "second_continuation", "classification": "no_progress", "ledgerReceipt": "a93fc0" }
+    ],
+    "events": 14,
+    "outboxSent": 43,
+    "outboxSuperseded": 14,
+    "inflight": 0,
+    "serviceStillRunning": true,
+    "freshAuditRequiredAfterUserResumes": true
+  },
   "overallGoalComplete": false
 }
