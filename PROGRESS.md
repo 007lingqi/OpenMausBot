@@ -1,5 +1,13 @@
 # Meta 协作实施进度
 
+## 当前执行：新目标已正式创建，准备最终候选单次安全切换（2026-09-08）
+
+- 用户要求设置新目标并实施；本轮 get_goal 返回 null，随后 create_goal 成功，正文匹配 pmo-conversation-goal.md，status=active，未指定预算。没有虚标旧目标完成或绕过应用限制；下方 paused/未同步描述均为上一轮历史。
+- 3c2bdd 复查当前唯一运行容器仍为 d5252db1…/兼容修复 d55df162…；其他容器均退出且不操作。e2714f 确认 candidate/rollback 配置仅 image/coordinator image 有差异，首启 override 尚不存在，两个服务配置均只 stop collaboration；feb5ce 确认两套固定镜像仍在本地。
+- 首启准备在服务运行时执行，未确认安全方式前不主动停机。已有 052b42c 完整回归、镜像/迁移/备份证据保持；恢复后优先补最终 ff49 候选启用和真实群业务/恢复验收，不重复无变化的全套测试。
+- 0d65a6 已创建 compose.once.json，556bfa/49eee3 确认内容哈希一致；首次 dry-run 使用 create 不支持的 --no-deps 被拒且无状态改变，改用已知 up 参数后 2943f7 dry-run 通过。93d869 确认仍是原 d5252db1…，预演没有真实切换。
+- c8819f 在无网络/无凭据/只读挂载的独立诊断容器检查六项在途为零；06bde9 扩展至十项仍全零、schema37/完整性/外键正常、Owner1、历史事件12与Outbox39sent/10superseded。首启脚本与两个诊断脚本已通过语法检查并记录哈希（d843a9），此阶段尚未执行停机脚本。
+
 ## 当前交接：已优化暂停目标，未恢复运行（2026-09-08）
 
 - 用户要求按实际情况优化现有已暂停目标；get_goal 实查 paused。当前范围、可替换的完整正文、阶段退出条件和剩余 C1–C6 验收统一在 docs/pilot/pmo-conversation-goal.md；验收差距同步更新，不新建目标、不伪标完成、不恢复文档前置或旧默认预算。
