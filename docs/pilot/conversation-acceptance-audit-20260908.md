@@ -1,27 +1,27 @@
 # 纯对话目标验收核对
 
-更新：2026-09-08。用户确认发送后已收到第13条真实消息；旧发送阻塞解除，修复及发布已完成。连续三轮未收到唯一Owner重试，836fc4实查无新输入或在途任务，原生目标已标blocked，整体未完成。本文件对应 [当前目标](pmo-conversation-goal.md)，不重复定义范围；文档/表格/附件/DWS/cardTemplateId 均不再是前置。已授权同范围可恢复操作无需重复确认。下表真实业务验收缺口仍保留。
+更新：2026-09-08。第14条真实Owner重试消息已收到，却只返回通用控制提示。具名自然重试已接入可信控制流程，9f02905/42cc07ca…完整回归及正式交接通过；原生目标实查active，整体未完成。旧事件不追溯补执行，需要新鲜真实Owner消息。本文件对应 [当前目标](pmo-conversation-goal.md)，不重复定义范围；文档/表格/附件/DWS/cardTemplateId 均不再是前置。已授权同范围可恢复操作无需重复确认。
 
 ## 当前证据与缺口
 
-真实C1输入已由用户发送并落库，自然理解/规划成功、群回复明确未完成；实际执行被合法锁文件触发的内部限额不一致阻塞。根因见 [源码视图修复](evidence/conversation-read-view-fix-20260908.json)；后续长准备回复和读取失败说明已修复并发布e9b86a0/e7b73095…，见 [回复修复](evidence/conversation-reply-fix-20260908.json)。等待唯一Owner自然重试原事项；C1交付及C2–C6仍未通过，文案本地验证/发布不等于真实群体验验收。旧 [UI交接](evidence/conversation-live-ui-handoff-052b42c.json) 仅为发送前历史。
+真实C1输入已落库，自然理解/规划成功、群回复明确未完成；attempt1因源码视图内部限额不一致失败。根因及长回复已修复，后续又修复真实重试只落入通用拒绝的缺失入口，见 [当前修复与发布](evidence/conversation-natural-retry-fix-20260908.json)。原事项及旧决定保留，当前十项在途0，没有业务重试正在运行。C1交付及C2–C6仍未通过，需从新鲜真实Owner重试继续；本地文案/发布证据不等于真实群体验验收。旧 [UI交接](evidence/conversation-live-ui-handoff-052b42c.json) 仅为发送前历史。
 
 | 验收面 | 可复用证据及限制 | 剩余工作 |
 | --- | --- | --- |
 | 自然新需求、短回答、多轮归并 | TBNnjl 真实 Astra 七场景 24 轮；来源/关联有本地测试，但群、参与者和发送合成 | 最终候选真实平台 C1–C4，尤其至少两位真实成员的补充、更正和定向提醒 |
 | 简短自然、查询解释致谢 | D-143–145及D-152通知/追问/解释/长准备回复修复；真实序列化与账本保留回归通过 | C5实际可见文案和发送节奏；未知自由文本解释不能以固定词义表宣称全面支持 |
-| 可验证研发交付 | 当前e9b86a0完整回归7a2d9a退出0；候选/自测/独立复测/Meta成对证据有回归保护 | C1真实任务attempt1失败，待Owner重试、两级测试与当前Spec/候选/验收绑定；读取成功不算真实交付 |
-| 风险与唯一 Owner | 自然审批覆盖固定展示、本次稳定身份、版本/有效期、原子控制及重放 | C6 真实非 Owner 拒绝及 Owner 对固定安全案例的真实决定；不能用合成身份通过 |
+| 可验证研发交付 | 当前9f02905完整回归47b727/c9841a退出0；运行级重试验证同事项attempt2及去重，候选/自测/独立复测/Meta回归保留 | C1真实任务attempt1失败，待新Owner消息及真实两级测试/Spec/候选绑定；只读匹配和发布不算真实交付 |
+| 风险与唯一 Owner | 自然审批及D-153具名重试覆盖稳定Owner、固定对象、当前Spec、实际送达、原子控制/重放和次数上限 | C6真实非Owner拒绝及Owner真实决定仍待；旧重试消息只有拒绝证据，不能冒称控制成功或放宽身份 |
 | 上下文精简与可接续 | 已有有限上下文、来源/版本和状态投影；本次目标将当前索引与历史分开 | 验收中核对实际执行/验证输入及重启恢复依据，不把更新 Markdown 当成运行时证明 |
-| 固定候选安全启用 | e7b73095…单次首启/77秒稳定、十项在途双检查/新私有备份/Owner保留，正式systemd交接eea548通过 | 此阶段已完成；保留全部守卫不重跑；仍需真实业务与恢复 |
-| 当前真实服务 | ad55e18d…/e7b73095…，StartedAt06:57:29.151Z，实际ready/connected/execute；监督器fence56匹配，active/enabled、unless-stopped、restarts0 | 已是真实修复候选运行证据；但空闲连接不证明业务交付，不沿用前实例观察时长 |
+| 固定候选安全启用 | 42cc07ca…单次首启/263秒稳定、十项在途双检查/新私有备份/Owner保留，正式systemd交接4d711f通过 | 此阶段已完成；once/handoff守卫不重跑；仍需真实业务与恢复 |
+| 当前真实服务 | 69688856…/42cc07ca…，StartedAt07:48:57.950Z，ready/connected/execute；fence58匹配，active/enabled、unless-stopped、restarts0 | aa8339新实例独立259秒连接1/断开0/错误0；空闲连接不证明业务交付，不沿用前实例时长 |
 | 同仓库串行、跨仓库并发 | 本地受控 Agent 测试；部分旧版隔离/停止证据 | 当前 Linux/Docker 下真实独立任务、同仓库互斥、跨仓库并发和监督器绑定 |
 | Linux VM 空闲重启 | d8bef2/4805ef真实boot改变、systemd恢复；ff76d0新boot监督器，f3cb8b真实模型恢复探针通过 | 已通过服务/模型恢复；宿主Docker CLI旧转发另外修复，未来重启时CLI自动恢复未验证 |
 | 幂等与在途恢复 | 本地持久入口/Outbox/控制/恢复测试、数据迁移保留；VM空闲恢复通过 | 原始平台事件重放、在途服务重启仍待验证。相似新消息、重新打开 SQLite 和空闲VM重启均不代替 |
 | 平台入口与安全边界 | 本地自然入口和 Owner/白名单/业务响应回归 | @、未 @、引用回复的实测可达性和标识；明确不支持项，不暗中扩大监听权限 |
 | 最终验收 | 尚无 Owner 本人确认 | 自动部分通过后汇总真实对话/交付证据交本人确认；此前不标整体完成 |
 
-当前实际启用、交接、数据和副本校验回执见 [回复修复及发布](evidence/conversation-reply-fix-20260908.json)，此前见 [读取修复及发布](evidence/conversation-read-view-fix-20260908.json) 和 [最终启用证据](evidence/conversation-final-activation-052b42c.json)，早期构建与迁移见 [发布恢复证据](evidence/conversation-stream-recovery-052b42c.json)。完整回归与模型证据分别见 [VERIFY](../../VERIFY.md) 和 [模型评测](conversation-eval-20260908.md)。本批有完整回归，未重做不受影响的旧模型评测。
+当前启用、交接、数据和副本回执见 [自然重试修复及发布](evidence/conversation-natural-retry-fix-20260908.json)，此前见 [回复修复](evidence/conversation-reply-fix-20260908.json)、[读取修复](evidence/conversation-read-view-fix-20260908.json) 和 [最终启用](evidence/conversation-final-activation-052b42c.json)。完整回归与模型证据分别见 [VERIFY](../../VERIFY.md) 和 [模型评测](conversation-eval-20260908.md)。本批有完整回归，重新加载规则不重做未受影响的测试或模型评测。
 
 ## 执行及收束原则
 

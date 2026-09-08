@@ -6,7 +6,10 @@
 - 8a4d88：真实Stream入口回归红灯，新增控制sink未调用且错误走普通入站ACK；c06a00新增service测试确认入口缺失。57bb86补获真实needs_configuration及已送达重试回复遗漏于上下文的红灯；364dcb确认旧同名任务导致歧义；3e498e运行测试确认配置更低次数上限需传递。
 - 4a3ebf：扩大8文件335项及typecheck/diff通过；aadc9b随后2文件64项及typecheck/diff通过。4f89e8、152b99最终只读真实对象核对通过，原WI/run/失败Outbox固定一致，没有真实控制写入。
 - 首次完整回归受沙箱本机端口限制，多个服务测试无法启动并跳过，已针对本轮Vitest进程发送SIGINT；01f786终态130，不记作产品失败或验证通过。授权本机完整回归3883be/session91346已终态0（47b727/c9841a）：主集317文件通过/1文件跳过，3937通过/18跳过；broker7、Node32、打包/headless冒烟及typecheck/diff全部通过。
-- 1d66e5新批次发布配置fixture通过，仅image/coordinator image变化；1b0e4b Linux脚本语法与传输SHA256一致，当前运行服务未切换。旧守卫和数据保留。
+- 1d66e5新批次发布配置fixture通过，仅image/coordinator image变化；1b0e4b Linux脚本语法与传输SHA256一致。e8e6c4首个临时构建误用旧目录，6c02be0b…未部署；修正构建根目录并加Dockerfile首行断言后，b122fa确认正确42cc07ca…镜像绑定9f02905且六bundle匹配。1cb3c1配置生成、804316 dry-run通过。
+- b2366a单次首启终态0；1055f8重新加载规则后确认原389f2e05…仍连续连接249秒且handoff尚未开始，没有重复once。07d0dc首启263秒稳定、十项在途双检查/新私有备份通过，4d711f正式交接session82919终态0：当前69688856…、StartedAt07:48:57.950Z、fence58及boot匹配，ready/connected/execute、unless-stopped/restarts0、systemd active/enabled。
+- e55d4f独立检查正式实例连接48秒、1连接/0断开/0错误、Docker healthy、unit匹配candidate及监督器实际身份；socket继续以既有501:1000检查。账本14事件/43sent/14superseded、十项在途0、schema37/quick_check ok/外键0/Owner不变。两阶段成功守卫与私有副本保留；没有新业务重试，不以发布代替C1交付或真实群验收。详情见conversation-natural-retry-fix-20260908.json。
+- aa8339完成正式实例有界稳定观察：259秒、连接1/断开0/错误0、healthy、unless-stopped/restarts0。不是新增群业务验收，不继续空闲轮询维持续跑。
 
 ## 2026-09-08 Owner 重试等待复核
 
