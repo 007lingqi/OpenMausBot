@@ -1,0 +1,44 @@
+{
+  "format": "conversation-live-ui-handoff-v1",
+  "sourceRevision": "052b42ca964af8bf4518be6e7f4e2adf7982b687",
+  "date": "2026-09-08",
+  "status": "awaiting_user_verified_platform_send",
+  "groupDisplayName": "研发_1",
+  "botDisplayName": "研发助手",
+  "preflight": {
+    "receipt": "a269a4",
+    "allowlistSize": 1,
+    "historicalEvents": 12,
+    "allHistoricalEventsInAllowlist": true,
+    "latestHistoricalReceivedAt": 1788492747492,
+    "latestVisibleOldTextFoundInLedger": false,
+    "uiGroupToAllowlistIdentityVerified": false
+  },
+  "uiObservations": {
+    "realMembersShown": 1,
+    "botListedInLoadedGroupManagement": true,
+    "displayNameDoesNotProveBackendApplicationIdentity": true,
+    "draftVisible": true,
+    "draftContainsNativeMentionVisually": true,
+    "mentionAccessibilityRepresentation": "unknown",
+    "unrelatedQuotePresentInAccessibilityButNotVisuallyResolved": true,
+    "transientUnloadedRobotCountNotUsedAsEvidence": true
+  },
+  "intendedTest": "非生产发布验收室增加全部/P0/P1/P2优先级筛选，与状态筛选和搜索组合；保留空结果提示，自动回归并简述结果。",
+  "send": {
+    "attempts": 1,
+    "result": "rejected_by_safety_review_before_send",
+    "retriedAfterRejection": false,
+    "messageSent": false,
+    "newBusinessAcceptancePassed": false,
+    "draftPreservedForUser": true
+  },
+  "safety": {
+    "noGroupOrBotConfigurationChanged": true,
+    "noCredentialsOrIdentitiesChanged": true,
+    "noOwnerDecisionPerformed": true,
+    "noRawUiTreesOrScreenshotsStored": true
+  },
+  "nextAction": "用户确认研发_1为试点群、检查没有引用其他会话内容并手动发送已准备的自然需求；取得真实新事件后继续后台C1及可复用场景验证。",
+  "unverified": ["C1-C6", "real_code_delivery", "original_event_replay", "same_repo_serialization", "cross_repo_concurrency", "inflight_restart", "final_owner_acceptance"]
+}
