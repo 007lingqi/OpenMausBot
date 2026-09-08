@@ -1,6 +1,6 @@
 # 纯对话目标验收核对
 
-更新：2026-09-08。原生目标active；原事项version3/Spec4/plan2的三次业务执行历史保留。独立只提案诊断已复现旧60秒网关截断正常长响应；修复后同一需求的154秒响应完整返回，CLI0、3文件建议通过格式与范围校验，但未应用或写业务账本，不能标C1交付完成。定向及独立核验通过，完整回归/正式启用进度看PROGRESS及[长响应证据](evidence/conversation-provider-timeout-20260908.json)。本文件对应 [当前目标](pmo-conversation-goal.md)，文档/表格/附件/DWS/cardTemplateId 仍不作为前置。
+更新：2026-09-08。原生目标blocked（updatedAt1788872301），等待唯一Owner明确决定原事项的一次额外恢复；不是完成。原事项version3/Spec4/plan2的三次业务执行历史保留。独立只提案诊断已复现旧60秒网关截断正常长响应；修复后同一需求的154秒响应完整返回，CLI0、3文件建议通过格式与范围校验，但未应用或写业务账本，不能标C1交付完成。定向及独立核验通过，完整回归/正式启用进度看PROGRESS及[长响应证据](evidence/conversation-provider-timeout-20260908.json)。本文件对应 [当前目标](pmo-conversation-goal.md)，文档/表格/附件/DWS/cardTemplateId 仍不作为前置。
 
 ## 当前证据与缺口
 
