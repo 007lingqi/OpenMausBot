@@ -2,6 +2,7 @@
 
 ## 当前现场：本机上线与原事项交付闭环完成（2026-09-09）
 
+- 后续验收检查点：e2260d在11:02:33Z只读实查15条钉钉入站、1位参与者，当前发布后新增入站0；全部执行/复核未结清session均0，Outbox为50sent/17superseded，原事项仍accepted/version4/33421b6。074994确认同一服务启动时间、healthy、无待发或待核查回复。当前没有可等待的验收任务在运行；需要至少第二位真实群成员参与，以及C2–C6和平台入口的真实输入，不代发、不新建重复需求。已将目标与验收索引的当前入口从旧“再次执行授权”纠正到真实剩余项。上一目标轮是交付及收尾提交的进展；本轮新增证据明确人员依赖，首次记录该当前阻塞，原生Goal保持active，尚未满足三轮blocked条件。
 - 0130cf3已提交并构建a6ded47f镜像，31e1bd六bundle字节/双UID/隔离health通过；只更新service/coordinator/provider三pin。实际新容器acdb3571、10:45:22Z启动，schema40、healthy、systemd active/enabled、零重启。原页面仍33421b6、127.0.0.1:3100。
 - 首次activate6d0f79停旧后因WAL无sidecar副本只读挂载无法打开而中止，未启动新服务。44dd15独立copy仅允许其WAL/SHM元数据创建后gate通过，原DB字节与完整停机备份不变。c23ee9使用新一次性resume成功，不重跑备份/迁移/旧activate、不回滚、不清历史。精确新证据见docs/pilot/evidence/conversation-mapping-deadline-release-20260909.json。
 - ca4f76在10:48:00Z首次观察原事项WI-5C68D17B361E已accepted；d621d1在10:50:42Z只读确认version4、control accepted、plan2、候选33421b6不变。execution共两次，没有重复开发；原13项自测及Verifier attempt3的13项独立测试通过，Meta attempt1通过、无未结清session，completedMeta=true。终态普通technical/meta查询为false不撤销该完成证据。
