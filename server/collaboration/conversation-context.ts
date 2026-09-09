@@ -63,9 +63,16 @@ function pendingQuestion(db: DatabaseSync, job: ConversationJob, sent: SentReply
       if (questions.length) { kind = "requirement"; text = questions.map(question => question.question).join("；"); }
     } else if (card.type === "command_status_card" && card.command === "conversation" && row.principal_id === job.principal_id && row.proposal_json) {
       const proposal = JSON.parse(row.proposal_json) as ConversationIntentDecision;
+      // The delivered suggestion remains a discussion even if it asked no new
+      // question. Keep its actual summary as context, not a fabricated prompt.
+      if (proposal.action === "offer_advice") return {
+        kind: "read_only", origin: "advice", sourceEventId: `outbox:${row.id}`, workItemIds: row.work_item_id ? [row.work_item_id] : [],
+        text: redactSensitiveText(proposal.advice.question ?? proposal.advice.summary).slice(0, 500),
+        ...(proposal.advice.question === null ? { answerExpected: false as const } : {}),
+      };
       if (proposal.action === "ask_context") {
-        kind = ["status_query", "explanation"].includes(proposal.intent) || proposal.reason === "pending_read_only" ? "read_only"
-          : proposal.reason === "pending_approval" ? "approval" : "association";
+        kind = proposal.reason === "pending_approval" ? "approval"
+          : ["status_query", "explanation", "advice"].includes(proposal.intent) || proposal.reason === "pending_read_only" ? "read_only" : "association";
         text = card.summary ?? "";
         // A direct question about a read-only/control intent keeps its purpose.
         // Older requirement questions must not turn its next answer into a
@@ -74,6 +81,7 @@ function pendingQuestion(db: DatabaseSync, job: ConversationJob, sent: SentReply
         if (text && (kind === "read_only" || kind === "approval")) return {
           kind, sourceEventId: `outbox:${row.id}`, workItemIds: row.work_item_id ? [row.work_item_id] : [],
           text: redactSensitiveText(text).slice(0, 500),
+          ...(kind === "read_only" && (proposal.intent === "advice" || proposal.origin === "advice") ? { origin: "advice" as const } : {}),
         };
       }
     } else if (card.type === "plan_status_card" && card.status === "candidate_ready" && row.work_item_id && candidates.includes(row.work_item_id)) {
@@ -276,6 +284,10 @@ function clarificationTopics(db: DatabaseSync, request: ConversationIntentReques
 }
 
 export function conversationReply(db: DatabaseSync, result: ConversationIntentDecision, request?: ConversationIntentRequest): string {
+  if (result.action === "offer_advice") return [result.advice.summary,
+    ...result.advice.options.map((option, index) => `${index + 1}. ${option.title}：${option.description} 取舍：${option.tradeoff}`),
+    ...(result.advice.question ? [result.advice.question] : []),
+  ].join("\n\n");
   if (result.action === "acknowledge") return "不客气，有需要继续说。";
   if (result.action === "control_requires_authorization") return "这涉及控制或审批操作，需要由负责人确认具体动作和影响；目前没有执行。";
   if (result.action === "read_status" && result.target) return conversationStatus(db, result.target.id, result.sourceEventId);

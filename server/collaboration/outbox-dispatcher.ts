@@ -13,6 +13,7 @@ import { refreshConversationStatusReply } from "./conversation-context.ts";
 import { confirmApprovalPresentation } from "./approval-presentation.ts";
 import { isCurrentCandidateResultDelivery } from "./candidate-result-completion.ts";
 import { confirmCandidateResultDelivery } from "./candidate-result-evidence.ts";
+import { coalesceConversationNotification } from "./conversation-notifications.ts";
 
 interface DispatchRow {
   id: string;
@@ -116,7 +117,7 @@ export class OutboxDispatcher {
           "AND newer.aggregate_version > collaboration_outbox.aggregate_version " +
           "AND newer.superseded_at IS NULL)",
       ).run(now);
-      const row = this.database
+      const select = this.database
         .prepare(
           "SELECT candidate.id, candidate.source, candidate.source_event_id, candidate.dedupe_key, candidate.aggregate_type, " +
             "candidate.aggregate_id, candidate.aggregate_version, candidate.kind, candidate.payload_json, " +
@@ -128,8 +129,13 @@ export class OutboxDispatcher {
             "WHERE blocker.id <> candidate.id AND blocker.supersession_key = candidate.supersession_key " +
             "AND blocker.claim_owner IS NOT NULL AND blocker.claim_expires_at > ?) " +
             "ORDER BY candidate.created_at, candidate.id LIMIT 1",
-        )
-        .get(now, now, now) as DispatchRow | undefined;
+        );
+      let row = select.get(now, now, now) as DispatchRow | undefined;
+      // A queued legacy receipt must not leak after upgrading the presentation
+      // policy. Only never-attempted rows can be silenced, under this same lock.
+      while (row && row.attempt === 0 && coalesceConversationNotification(this.database, row.id, now) === "superseded") {
+        row = select.get(now, now, now) as DispatchRow | undefined;
+      }
       if (!row) {
         this.database.exec("COMMIT");
         return null;

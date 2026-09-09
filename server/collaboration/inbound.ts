@@ -216,7 +216,7 @@ export class InboundMessageProcessor {
 
     if (deferred) {
       state = "ambiguous";
-      card = renderConversationReplyCard("我先看一下这条消息，确认你是在补充需求还是询问进展。");
+      card = renderConversationReplyCard("消息已保存。");
     } else if (input.association.kind === "create") {
       state = "created";
       selectedWorkItemId = workItemId();
@@ -338,9 +338,8 @@ export class InboundMessageProcessor {
       card,
       now: input.now,
     });
-    // Fast interpretation replaces this acknowledgement before it is sent. Slow
-    // interpretation still has one durable, truthful progress notice.
-    if (deferred) this.database.prepare("UPDATE collaboration_outbox SET next_attempt_at=? WHERE id=?").run(input.now + 15000, outbox.id);
+    // Natural-conversation receipts remain durable for replay, but are silent.
+    // The Outbox presentation policy keeps actual answers/questions deliverable.
     return {
       accepted: true,
       duplicate: false,

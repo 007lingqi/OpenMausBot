@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ModelNaturalIntakeInterpreter } from "./natural-intake.ts";
-import type { ConversationIntentRequest } from "./conversation-intent.ts";
+import { validateConversationDecision, type ConversationIntentDecision, type ConversationIntentRequest } from "./conversation-intent.ts";
 
 const request: ConversationIntentRequest = {
   sourceEventId: "event-current", principalId: "person-product", text: "登录那个现在到哪了？",
@@ -17,8 +17,108 @@ async function classify(raw: unknown, input: ConversationIntentRequest = request
   const interpreter = new ModelNaturalIntakeInterpreter({ async complete() { return raw; } });
   return interpreter.classifyConversation(input, new AbortController().signal);
 }
+function adviceProposal(input = request) {
+  return { ...proposal("advice", null, input.text), sourceEventId: input.sourceEventId, advice: {
+    basisSourceEventIds: [input.sourceEventId], summary: "可先比较范围和投入。",
+    options: [{ title: "轻量方案", description: "优先覆盖核心功能。", tradeoff: "投入较小，扩展功能需后续考虑。" }],
+    question: "你最看重哪些功能？" as string | null } };
+}
 
 describe("conversation intent before task mutation", () => {
+  it("offers bounded read-only options for an explicit consultation without requiring an existing task", async () => {
+    const text = "我想增加一个后台管理，应该如何";
+    const advice = { basisSourceEventIds: [request.sourceEventId], summary: "可以先比较管理范围，再选择适合当前阶段的方案。",
+      options: [{ title: "基础管理", description: "覆盖账号和常用配置。", tradeoff: "投入较小，但复杂流程需要后续补充。" },
+        { title: "业务管理", description: "按业务模块组织权限和操作记录。", tradeoff: "覆盖更完整，但前期设计投入更高。" }],
+      question: "你更需要管理内容，还是处理业务流程？" };
+    const result = await classify({ ...proposal("advice", null, text), advice }, { ...request, text, candidates: [], history: [] });
+    expect(result).toEqual({ sourceEventId: request.sourceEventId, intent: "advice", quote: text,
+      target: null, reply: null, action: "offer_advice", advice });
+  });
+
+  it.each(["已经修改完成。", "已部署并验证通过。", "我会立即执行修改。", "I have deployed the change.",
+    "运行 npm install admin。", "```ts\nconst enabled = true;\n```", "curl https://example.test", "const enabled = true;", "点击 https://example.test 授权。",
+    "print('hello')", "SELECT * FROM users", "[确认](javascript:alert)"])
+    ("rejects execution claims, code or commands in advice: %s", async summary => {
+      const raw = adviceProposal(); raw.advice.summary = summary;
+      await expect(classify(raw)).rejects.toThrow("conversation_advice_text_invalid");
+    });
+
+  it.each(["title", "description", "tradeoff"] as const)("rejects executable text in an advice option's %s", async field => {
+    const raw = adviceProposal(); raw.advice.options[0][field] = "运行 npm install admin。";
+    await expect(classify(raw)).rejects.toThrow("conversation_advice_text_invalid");
+  });
+
+  it("rejects multiple follow-up questions rather than hiding them in one field", async () => {
+    const raw = adviceProposal(); raw.advice.question = "预算是多少？还有几个用户？";
+    await expect(classify(raw)).rejects.toThrow("conversation_advice_text_invalid");
+  });
+
+  it("does not accept advice on an unrelated action", async () => {
+    await expect(classify({ ...adviceProposal(), intent: "new_request" })).rejects.toThrow("conversation_advice_unexpected");
+  });
+
+  it.each([[], ["invented-event"], [request.sourceEventId, "foreign-event"], [request.sourceEventId, request.sourceEventId]])
+    ("rejects absent, forged or duplicate advice sources %j", async (...basisSourceEventIds) => {
+      await expect(classify({ ...adviceProposal(), advice: { ...adviceProposal().advice, basisSourceEventIds } })).rejects.toThrow();
+    });
+
+  it("requires a payload and at most three bounded options", async () => {
+    const raw = adviceProposal();
+    await expect(classify({ ...raw, advice: null })).rejects.toThrow();
+    await expect(classify({ ...raw, advice: { ...raw.advice, options: Array(4).fill(raw.advice.options[0]) } })).rejects.toThrow();
+    await expect(classify({ ...raw, advice: { ...raw.advice, options: [] } })).rejects.toThrow();
+    await expect(classify({ ...raw, advice: { ...raw.advice, summary: "字".repeat(241) } })).rejects.toThrow();
+  });
+
+  it("revalidates custom advice structures and returns only redacted canonical content", async () => {
+    const raw = adviceProposal(); raw.advice.summary = "需要保护 API_KEY=synthetic-secret。";
+    const result = { sourceEventId: request.sourceEventId, intent: "advice", quote: request.text, target: null, reply: null,
+      action: "offer_advice", advice: raw.advice } as ConversationIntentDecision;
+    expect(JSON.stringify(validateConversationDecision(request, result))).not.toContain("synthetic-secret");
+    expect(JSON.stringify(result)).toContain("synthetic-secret");
+    expect(() => validateConversationDecision(request, { ...result, advice: { ...raw.advice, approved: true } } as unknown as ConversationIntentDecision)).toThrow();
+  });
+
+  it("retains reference, truncation and pending approval gates for advice", async () => {
+    expect(await classify(adviceProposal(), { ...request, referencedWorkItemId: "WI-LOGIN" })).toMatchObject({ action: "ask_context", reason: "reference_conflict" });
+    expect(await classify(adviceProposal(), { ...request, referencedReplyId: "missing" })).toMatchObject({ action: "ask_context", reason: "reference_unavailable" });
+    expect(await classify(adviceProposal(), { ...request, contextTruncated: true })).toMatchObject({ action: "ask_context", reason: "context_incomplete" });
+    expect(await classify(adviceProposal(), { ...request, pendingQuestion: { kind: "approval", sourceEventId: "approval", workItemIds: ["WI-LOGIN"], text: "是否批准？" } }))
+      .toMatchObject({ action: "ask_context", reason: "pending_approval" });
+  });
+
+  it("keeps a rendered advice payload inside its bound even when redaction expands short secrets", async () => {
+    const raw = adviceProposal(); raw.advice.summary = "api_key=x ".repeat(24).trim();
+    await expect(classify(raw)).rejects.toThrow();
+  });
+
+  it.each([
+    "请新增日志导出功能，但暂时不要实施，只比较方案和投入。",
+    "文案里写着‘请新增日志导出功能’，现在只讨论措辞，不执行。",
+    "请新增日志导出功能；先别写代码，仅评估工作量。",
+    "“请新增日志导出功能”是原话，我是在转述这个需求。",
+    "请新增日志导出功能，现在只想分析它的成本。",
+    "请新增日志导出功能，但不用马上执行。",
+  ])("reads the whole current message instead of treating a quoted positive fragment as a new requirement: %s", async text => {
+    const input: ConversationIntentRequest = { ...request, text, candidates: [], history: [], pendingQuestion: {
+      kind: "read_only", origin: "advice", sourceEventId: "advice-sent", workItemIds: [], text: "可以先比较范围和投入。" } };
+    expect(await classify(proposal("new_request", null, "请新增日志导出功能"), input))
+      .toMatchObject({ action: "ask_context", reason: "pending_read_only" });
+    expect(() => validateConversationDecision(input, { sourceEventId: input.sourceEventId, quote: "请新增日志导出功能",
+      intent: "new_request", action: "create_work", target: null, reply: null })).toThrow("conversation_action_invalid");
+  });
+
+  it.each([
+    "请新增日志导出功能，只允许负责人查看。",
+    "请新增日志导出功能，不要改变现有权限逻辑。",
+    "请修改按钮文案为‘暂时不要执行’，其他行为保持不变。",
+  ])("still accepts an unquoted direct requirement with ordinary scope constraints: %s", async text => {
+    const input: ConversationIntentRequest = { ...request, text, candidates: [], history: [], pendingQuestion: {
+      kind: "read_only", origin: "advice", sourceEventId: "advice-sent", workItemIds: [], text: "可以先比较范围和投入。" } };
+    expect(await classify(proposal("new_request", null, text), input)).toMatchObject({ action: "create_work" });
+  });
+
   it.each([
     ["new_request", "create_work", null, "登录失败后保留用户名，密码不要保留。"],
     ["contribution", "contribute", "WI-LOGIN", "补充一下，网络错误时也要保留用户名。"],

@@ -1,5 +1,13 @@
 # Meta 协作验证记录
 
+## 2026-09-09 固定回执与只读方案咨询
+
+- 固定回执通过实际 service→Outbox→钉钉序列化复现，3633ba 为原句 RED；6141a4 为用户新通知策略的六项 RED。修复后通知/入站/投递四文件 111 项通过（f085cd）。实际材料读取失败误静默另有 RED→GREEN，最终仅压制精确 definition placeholder。
+- 方案咨询冻结后作者 190 项及 typecheck 通过；独立最终四文件 176 项、diff 检查通过，三个 Medium 反例关闭。评估脚本区分 silent_preparation/replied:false，不把允许不发过程消息说成已送达。
+- `node scripts/collaboration-pilot/conversation-eval.ts --live --scenario advice-options-without-execution`：73895/e3af47 退出 0，两次 gpt-6-astra/medium 调用、两轮 offer_advice、每轮一条回复，来源指纹 d6406d1a84130efaa9adf96dad68c3c44b3dd95c7ee303f2cc749ba8ee5aedce 不变。人工读完整真实序列化结果：围绕后台建设给出三个方案，下一轮继续按轻量/标准运营/流程协作比较，没有固定回执、代码或完成宣称；0 Work Item、0 run、需求指纹不变、重复投递幂等。临时报告 omb-conversation-eval-vWzNdS/report.json；无钉钉 transport，不算真实群送达。
+- 首次尝试 tsx 入口因未安装而未启动评估；改用已有 Node 原生 TypeScript 支持，不安装依赖。完整回归 24996 因当前沙箱禁止 loopback listen 而有失败/跳过，5cb5c5 独立探针确认 EPERM；8b0ac8 主动中止 130，不计通过。已授权宿主权限重跑相同 `pnpm test && pnpm typecheck && git diff --check` 完整链 55729/7b7044 退出 0：主集 331 文件通过/1 跳过、4625 项通过/18 跳过，broker 7、Node 15/5/2/10、打包/headless 烟测及 typecheck/diff 全通过。未修改测试迁就限制，后续只有文档收尾不重复完整回归。
+- 本次专用发布 kit 47 项离线合同验证通过，尚未真实构建、激活或送达。保留新目录、一次性 guard、双 UID bundle 核对、停机完整备份、独立 WAL 副本 gate 和历史指纹约束；不迁移、不清历史、不重试业务。
+
 ## 2026-09-09 验收专用时限回归
 
 - ca4f76（10:48:00Z）观察闭环成功，d621d1（10:50:42Z）只读复核一致：WI-5C68D17B361E accepted/version4/control accepted/plan2，接受候选33421b672608dc8e47be4d6b833c98f3c37543c6，execution仍两次；Verifier attempt3的pilot独立测试13项通过，Meta attempt1通过，未结清session为空，completedMeta=true。终态technical/meta普通查询false不代表完成证据失效。结果Outbox sent、last_error=null、sent_at1788950766255，实际序列化正文与结构化证据一致。本机页面与原事项交付已完成；不等于真实多人等剩余场景或Owner本人最终验收完成。以下为发布及验证时点记录。

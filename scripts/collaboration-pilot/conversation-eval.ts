@@ -23,6 +23,7 @@ export interface ConversationScenario {
 }
 interface TurnReport {
   scenario: string; turn: number; speaker: string; text: string; action: string | null; target: string | null;
+  deliveryExpectation: "silent_preparation" | "reply_required"; replied: boolean;
   replies: string[]; checks: Record<string, boolean>; passed: boolean;
   snapshot: unknown; intentStatus: string | null; naturalStatus: string | null;
 }
@@ -35,6 +36,10 @@ interface EvaluationReport {
 }
 
 export const CONVERSATION_SCENARIOS: ConversationScenario[] = [
+  { id: "advice-options-without-execution", turns: [
+    { speaker: "product", text: "我想增加一个后台管理，应该如何", expect: { action: "offer_advice", items: 0, unchangedRequirements: true, replyTopics: ["后台"], maxReplyLength: 700 } },
+    { speaker: "product", text: "你帮我思考下给我几个版本，我选择下", expect: { action: "offer_advice", items: 0, unchangedRequirements: true, replyTopics: ["后台"], maxReplyLength: 700 } },
+  ] },
   { id: "clear-request-and-status", turns: [
     { speaker: "product", text: "登录失败后保留用户名、清空密码。账号不存在或密码错误，都提示“账号或密码不正确”；网络断开则提示“网络异常，请稍后重试”。", expect: { action: "create_work", items: 1 } },
     { speaker: "tester", text: "登录这个现在改好了吗？", expect: { action: "read_status", items: 1, unchangedRequirements: true, targetTurn: 0, maxReplyLength: 90 } },
@@ -183,11 +188,18 @@ export async function runConversationEvaluation(options: { model: NaturalIntakeM
         const replies = rendered.slice(firstReply);
         const snapshot = intent.target_work_item_id ? db.prepare("SELECT * FROM collaboration_work_item_snapshots WHERE work_item_id=? ORDER BY revision DESC LIMIT 1")
           .get(intent.target_work_item_id) : null;
+        const modifies = ["create_work", "contribute"].includes(proposal?.action ?? "");
+        const item = modifies ? db.prepare("SELECT definition_status FROM collaboration_work_items WHERE id=?").get(intent.target_work_item_id) : null;
+        // Deliberate silence is permitted only after a successfully interpreted
+        // modification reaches routine preparation. Questions, failures and all
+        // read-only conversations still require an actual delivered answer.
+        const quietPreparation = modifies && natural?.status === "applied" &&
+          ["planning", "ready_for_execution"].includes(String(item?.definition_status));
         const checks: Record<string, boolean> = {
           action: [turn.expect.action].flat().includes(proposal?.action ?? ""),
           items: (db.prepare("SELECT count(*) n FROM collaboration_work_items").get() as { n: number }).n === turn.expect.items,
           replayIdempotent: duplicate.duplicate && requirements(db) === changed,
-          replied: replies.length > 0,
+          deliveryPolicy: quietPreparation ? replies.length === 0 : replies.length > 0,
           noFalseCompletion: replies.every(reply => !["completed", "owner_accepted"].includes(reply.status ?? "")),
           noExecution: (db.prepare("SELECT count(*) n FROM collaboration_runs").get() as { n: number }).n === 0,
           questionLimit: replies.every(reply => !reply.questions || reply.questions.length <= 3),
@@ -196,11 +208,7 @@ export async function runConversationEvaluation(options: { model: NaturalIntakeM
           noRedundantGoalQuestion: replies.every(reply => !reply.questions?.some(q => q.id?.startsWith("natural-") &&
             !["natural-input-pending", "natural-context-incomplete"].includes(q.id)) ||
             !reply.questions.some(q => ["goal", "acceptance"].includes(q.id ?? ""))),
-          // This harness drains only after interpretation. When a real stage
-          // is already available, an additional generic receipt is redundant.
-          // Slow in-flight responses are covered by deterministic tests.
-          noRedundantReceipt: !replies.some(reply => reply.type === "primary_status_card") ||
-            !replies.some(reply => ["clarification_card", "plan_status_card"].includes(reply.type ?? "")),
+          noRedundantReceipt: !replies.some(reply => reply.type === "primary_status_card"),
           directBusinessQuestions: replies.filter(businessQuestionReply).every(reply => !reply.text.startsWith("### ")),
           // An evaluation threshold for these short synthetic scenarios, not
           // a production truncation or rejection rule. Read the full replies
@@ -208,8 +216,7 @@ export async function runConversationEvaluation(options: { model: NaturalIntakeM
           conciseBusinessQuestions: replies.filter(businessQuestionReply).every(reply =>
             reply.questions!.every(question => typeof question.question === "string" && [...question.question].length <= 90)),
         };
-        if (["create_work", "contribute"].includes(proposal?.action ?? "")) {
-          const item = db.prepare("SELECT definition_status FROM collaboration_work_items WHERE id=?").get(intent.target_work_item_id);
+        if (modifies && !quietPreparation) {
           checks.stageReplyDelivered = stageReplyDelivered(String(item?.definition_status), Number(snapshot?.revision), replies);
         }
         if (turn.expect.unchangedRequirements) checks.unchangedRequirements = before === changed;
@@ -239,6 +246,7 @@ export async function runConversationEvaluation(options: { model: NaturalIntakeM
         }
         const result: TurnReport = { scenario: scenario.id, turn: turnIndex, speaker: turn.speaker, text: turn.text,
           action: proposal?.action ?? null, target: intent.target_work_item_id, replies: replies.map(reply => reply.text),
+          deliveryExpectation: quietPreparation ? "silent_preparation" : "reply_required", replied: replies.length > 0,
           checks, passed: Object.values(checks).every(Boolean), snapshot,
           intentStatus: intent.status, naturalStatus: natural?.status ?? null };
         scenarioTurns.push(result); report.turns.push(result); save();

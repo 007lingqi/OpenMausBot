@@ -7,6 +7,34 @@ const directories: string[] = [];
 afterEach(() => { for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
 
 describe("conversation evaluation uses the real ingress without real delivery or execution", () => {
+  it("evaluates both reported advice turns as one useful reply each without creating requirements", async () => {
+    const scenarios = selectConversationScenarios(["--live", "--scenario", "advice-options-without-execution"]);
+    const model: NaturalIntakeModelPort = { async complete(envelope) {
+      const input = JSON.parse(envelope.user);
+      expect(input.candidates).toBeDefined();
+      return { version: 1, sourceEventId: input.sourceEventId, intent: "advice", targetWorkItemId: null,
+        replySourceEventId: null, quote: input.text, confidence: "high", advice: {
+          basisSourceEventIds: [input.sourceEventId], summary: "建议先比较后台管理的三个范围。",
+          options: [
+            { title: "基础版", description: "管理账号和内容。", tradeoff: "范围小，上手快。" },
+            { title: "协作版", description: "增加角色权限和操作记录。", tradeoff: "适合多人协作。" },
+            { title: "运营版", description: "增加统计看板和审批流程。", tradeoff: "需更多需求确认。" },
+          ], question: null,
+        } };
+    } };
+    const result = await runConversationEvaluation({ model, scenarios }); directories.push(result.directory);
+    expect(result.report.status).toBe("checks_passed");
+    expect(result.report.modelCalls).toBe(2);
+    expect(result.report.turns).toHaveLength(2);
+    for (const turn of result.report.turns) {
+      expect(turn).toMatchObject({ action: "offer_advice", target: null, replied: true, deliveryExpectation: "reply_required" });
+      expect(turn.replies).toHaveLength(1);
+      expect(turn.replies[0]).toContain("基础版");
+      expect(turn.replies[0]).not.toMatch(/我先看一下|补充已收到|准备开始修改/u);
+      expect(turn.checks).toMatchObject({ unchangedRequirements: true, replayIdempotent: true, noExecution: true });
+    }
+  });
+
   it("explains an actually delivered status instead of echoing it, without a new modification", async () => {
     const model: NaturalIntakeModelPort = { async complete(envelope) {
       const input = JSON.parse(envelope.user);
@@ -74,14 +102,15 @@ describe("conversation evaluation uses the real ingress without real delivery or
       { speaker: "tester", text: "登录的进展怎么样？", expect: { action: "read_status", items: 1, unchangedRequirements: true } },
     ] }] });
     directories.push(result.directory);
-    expect(result.report.turns.map(turn => turn.checks)).toEqual(expect.arrayContaining([expect.objectContaining({ stageReplyDelivered: true })]));
+    expect(result.report.turns.every(turn => turn.checks.deliveryPolicy)).toBe(true);
     expect(result.report.status).toBe("checks_passed");
     expect(result.report.naturalnessReview).toBe("pending");
     expect(result.report.sourceUnchanged).toBe(true);
     expect(result.report.sourceFingerprint).toMatch(/^[a-f0-9]{64}$/u);
-    expect(result.report.turns[0].checks.stageReplyDelivered).toBe(true);
+    expect(result.report.turns[0]).toMatchObject({ deliveryExpectation: "silent_preparation", replied: false });
+    expect(result.report.turns[0].checks).not.toHaveProperty("stageReplyDelivered");
     expect(result.report.turns[0].checks.noRedundantReceipt).toBe(true);
-    expect(result.report.turns[0].replies).toHaveLength(1);
+    expect(result.report.turns[0].replies).toHaveLength(0);
     expect(result.report.modelCalls).toBe(3);
     expect(result.report.turns).toHaveLength(2);
     expect(result.report.turns[1].checks).toMatchObject({ action: true, items: true, unchangedRequirements: true, replayIdempotent: true });

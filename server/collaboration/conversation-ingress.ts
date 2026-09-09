@@ -9,10 +9,10 @@ import { enqueueInboundCard } from "./outbox.ts";
 import { renderConversationReplyCard, renderPrimaryStatusCard } from "./message-renderer.ts";
 
 type Classifier = NonNullable<NaturalIntakeInterpreter["classifyConversation"]>;
-const actions = new Set(["create_work", "contribute", "read_status", "explain_reply", "acknowledge", "ask_context", "control_requires_authorization"]);
+const actions = new Set(["create_work", "contribute", "read_status", "explain_reply", "offer_advice", "acknowledge", "ask_context", "control_requires_authorization"]);
 
 /** Neither a model result nor a plugin implementation is a ledger authority. */
-function validateResult(request: ConversationIntentRequest, result: ConversationIntentDecision): void {
+function validateResult(request: ConversationIntentRequest, result: ConversationIntentDecision): ConversationIntentDecision {
   if (!result || !actions.has(result.action) || result.sourceEventId !== request.sourceEventId ||
     typeof result.quote !== "string" || !result.quote.trim() || !request.text.includes(result.quote)) throw new Error("conversation_result_invalid");
   if (["create_work", "acknowledge"].includes(result.action) && result.target) throw new Error("conversation_target_invalid");
@@ -27,7 +27,7 @@ function validateResult(request: ConversationIntentRequest, result: Conversation
   if (request.referencedWorkItemId && ["create_work", "contribute", "read_status"].includes(result.action) &&
     result.target?.id !== request.referencedWorkItemId) throw new Error("conversation_reference_conflict");
   if (request.contextTruncated && ["create_work", "contribute", "read_status", "explain_reply"].includes(result.action)) throw new Error("conversation_context_incomplete");
-  validateConversationDecision(request, result);
+  return validateConversationDecision(request, result);
 }
 
 export class ConversationIngressCoordinator {
@@ -64,9 +64,9 @@ export class ConversationIngressCoordinator {
     try {
       if (conversationSourceHash(job.normalized_json) !== job.source_hash) throw new Error("conversation_source_changed");
       const request = readConversationContext(this.db, job);
-      const result = await Promise.race([cancelled, this.classify(request, controller.signal)]);
+      const proposed = await Promise.race([cancelled, this.classify(request, controller.signal)]);
       if (this.stopped) return;
-      validateResult(request, result);
+      const result = validateResult(request, proposed);
       this.db.exec("BEGIN IMMEDIATE");
       try {
         assertLedgerArmed(this.db);
@@ -74,6 +74,17 @@ export class ConversationIngressCoordinator {
           "WHERE j.event_id=? AND j.status='running' AND j.claim_token=? AND j.lease_until>? AND e.conversation_id=? AND e.principal_id=? " +
           "AND e.work_item_id IS NULL AND e.association_state='ambiguous'").get(job.id, token, now + Math.max(0, Date.now() - started), job.conversation_id, job.principal_id) as { normalized_json: string } | undefined;
         if (!current || conversationSourceHash(current.normalized_json) !== job.source_hash) throw new Error("conversation_claim_stale");
+        if (result.action === "offer_advice") {
+          // The suggestion may have used earlier messages or delivered replies.
+          // Recheck those exact sources under the same transaction as publication.
+          const fresh = readConversationContext(this.db, job);
+          validateResult(fresh, result);
+          for (const source of result.advice.basisSourceEventIds) {
+            if (source === request.sourceEventId) continue;
+            if (JSON.stringify(request.history.find(entry => entry.sourceEventId === source)) !==
+              JSON.stringify(fresh.history.find(entry => entry.sourceEventId === source))) throw new Error("conversation_advice_source_stale");
+          }
+        }
         if (result.target) {
           const candidate = this.db.prepare("SELECT version,status FROM collaboration_work_items WHERE id=? AND conversation_id=?")
             .get(result.target.id, job.conversation_id) as { version: number; status: string } | undefined;
@@ -129,7 +140,8 @@ export class ConversationIngressCoordinator {
     }
   }
   private supersedeProgress(job: ConversationJob, now: number): void {
-    this.db.prepare("UPDATE collaboration_outbox SET delivery_state='superseded',superseded_at=? WHERE source_event_id=? AND delivery_state='pending'").run(now, job.source_event_id);
+    this.db.prepare("UPDATE collaboration_outbox SET delivery_state='superseded',superseded_at=? WHERE source_event_id=? " +
+      "AND delivery_state='pending' AND attempt=0 AND sent_at IS NULL AND superseded_at IS NULL").run(now, job.source_event_id);
   }
   private failureNotices(now: number): void {
     this.db.exec("SAVEPOINT conversation_failure_notice");
