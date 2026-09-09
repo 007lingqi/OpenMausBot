@@ -2,6 +2,7 @@
 
 ## 当前现场：本机上线与原事项交付闭环完成（2026-09-09）
 
+- 当前收束：原生Goal已标blocked（updatedAt1788952133），不是complete。真实人员输入依赖已连续三轮：e2260d（11:02:33Z）首次明确、645fa4（11:07:35Z）复核、cd7d35（11:08:32Z）再次复核，均15条入站/1位参与者、最新入站时间不变；意图3条全部applied、执行及复核未结清各0、Outbox50sent/17superseded，原事项仍accepted/version4/33421b6。上一轮及本轮均无实质进展，不是等待活跃任务。服务和用户outputs/未改；不再重复验收查询、发布、模型或测试。恢复需要真实成员在原试点群的新对话，继续C2–C6、平台入口及相应真实业务可靠性验收，最后由Owner本人确认；不是再次请求旧需求或部署许可。以下为首次检查点和已交付证据。
 - 后续验收检查点：e2260d在11:02:33Z只读实查15条钉钉入站、1位参与者，当前发布后新增入站0；全部执行/复核未结清session均0，Outbox为50sent/17superseded，原事项仍accepted/version4/33421b6。074994确认同一服务启动时间、healthy、无待发或待核查回复。当前没有可等待的验收任务在运行；需要至少第二位真实群成员参与，以及C2–C6和平台入口的真实输入，不代发、不新建重复需求。已将目标与验收索引的当前入口从旧“再次执行授权”纠正到真实剩余项。上一目标轮是交付及收尾提交的进展；本轮新增证据明确人员依赖，首次记录该当前阻塞，原生Goal保持active，尚未满足三轮blocked条件。
 - 0130cf3已提交并构建a6ded47f镜像，31e1bd六bundle字节/双UID/隔离health通过；只更新service/coordinator/provider三pin。实际新容器acdb3571、10:45:22Z启动，schema40、healthy、systemd active/enabled、零重启。原页面仍33421b6、127.0.0.1:3100。
 - 首次activate6d0f79停旧后因WAL无sidecar副本只读挂载无法打开而中止，未启动新服务。44dd15独立copy仅允许其WAL/SHM元数据创建后gate通过，原DB字节与完整停机备份不变。c23ee9使用新一次性resume成功，不重跑备份/迁移/旧activate、不回滚、不清历史。精确新证据见docs/pilot/evidence/conversation-mapping-deadline-release-20260909.json。
