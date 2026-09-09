@@ -66,11 +66,17 @@
     "naturalnessReview": "Read complete replies: relevant backend options and continued three-version comparison, concise tradeoffs, no fixed processing receipt or implementation claim"
   },
   "resumedGoalCheckpoint": {
-    "goalStatusObserved": "active",
+    "goalStatusObserved": "blocked",
+    "goalStatusUpdatedAt": 1788966760,
     "previousTurnClassification": "progress",
     "currentTurnClassification": "no_progress",
     "blockingCondition": "fresh_real_group_participation_required",
-    "consecutiveResumedBlockedTurns": 1,
+    "consecutiveResumedBlockedTurns": 3,
+    "consecutiveChecks": [
+      { "receipt": "18930a", "observedAt": "2026-09-09T15:00:48.264Z", "newInboundAfterRelease": 0, "inFlight": 0 },
+      { "receipt": "33d413", "observedAt": "2026-09-09T15:04:23.987Z", "newInboundAfterRelease": 0, "inFlight": 0 },
+      { "receipt": "64b94a", "observedAt": "2026-09-09T15:09:54.022Z", "newInboundAfterRelease": 0, "inFlight": 0 }
+    ],
     "observedAt": "2026-09-09T15:00:48.264Z",
     "runtimeReceipt": "8b1095",
     "ledgerReceipt": "18930a",

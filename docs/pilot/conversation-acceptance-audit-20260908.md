@@ -2,7 +2,7 @@
 
 ## 当前结论（2026-09-09，本机上线后）
 
-目标已恢复 active（本轮 get_goal，updatedAt1788965808），不是完成；历史 blocked 不沿用为当前状态或阻塞轮数。上一轮回复修复和部署属于 progress。本轮恢复后首次检查仍依赖真实人员新输入，属于 no progress 而非 verified wait；尚未达到重新标 blocked 的三轮条件。不伪造成员输入，不重新执行已交付事项。
+目标本轮已标 blocked（update_goal，updatedAt1788966760），不是完成。恢复后 18930a（15:00:48Z）、33d413（15:04:23Z）、64b94a（15:09:54Z）连续三轮均为 22 入站/1 人、最新 13:04:55Z、发布后无新消息、12 类在途全 0，Outbox 67 sent/24 superseded。上一轮回复修复和部署是 progress；这三轮为同一人员依赖的 no progress，不是 verified wait。不伪造成员输入，不重新执行已交付事项或停本机服务。
 
 原生Goal实查为active，整体尚未完成；旧“第四次失败、待再次执行授权”的阻塞已被后续正规修订和交付解除，不是当前待办。本机页面与钉钉服务已上线，原事项accepted/version4，固定候选33421b6、自测13项、Verifier attempt3独立13项、Meta attempt1通过，结果实际送达；见[本机发布与完成证据](evidence/conversation-mapping-deadline-release-20260909.json)。此前多次失败和人工排障保留，这次成功不等于所有新任务都能一次自动完成。
 
