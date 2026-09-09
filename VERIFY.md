@@ -1,5 +1,12 @@
 # Meta 协作验证记录
 
+## 2026-09-09 验收映射安全诊断
+
+- 新增回归先红后绿；非作者对冻结的 acceptance-mapping、candidate-verification、runtime-verification-retry 三测试文件集成复跑，137/137 通过，六个实现/测试文件校验和前后不变。
+- `pnpm typecheck`、`git diff --check` 通过。定向 lint 报告的存量问题均位于未修改行，新诊断未增加相关问题；不宣称全文件 lint 通过。
+- 固定原因及阶段白名单、旧记录原因未知、任意异常原文不入新增记录、真实消息序列化与原权限/重试门禁均经复核。未发现 Critical/High 问题。
+- 本批未发布、未触发真实复核或钉钉外发；上述测试不能代替真正自动验收闭环。
+
 ## 2026-09-09 真实执行恢复依赖收束
 
 310059核对ba1742f及仅用户outputs/；1b658a现场同实例/镜像/StartedAt/restarts0；f7d42d原事项仍四次终态无resultSha、无在途session、事件15/Outbox48sent18superseded/Owner1；8bf009只读审计确认3→4授权已issued/reserved/started且过期。没有新的群输入或业务执行；本轮不重复已通过验证。连续三轮的同一原事项再次执行决定缺口已满足阻塞阈值，原生状态blocked（updatedAt1788922655），不是complete。详见PROGRESS顶部；本节仅记录收束，不产生新执行授权。

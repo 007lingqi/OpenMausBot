@@ -247,14 +247,28 @@ function verificationFailureMessage(verification: CandidateVerificationOutcome):
   if (reasons.has("acceptance_mapping_pending")) {
     return "验收要求与测试的对应关系仍在核对中，尚未确认修改完成。无需重复发送原问题。";
   }
-  if (reasons.has("acceptance_mapping_incomplete")) {
-    return "目前还无法确认测试已覆盖全部验收要求，本次修改不会标记完成。需要补齐测试或确认不明确的验收要求。";
+  let mappingMessage: string | undefined;
+  if (reasons.has("acceptance_mapping_coverage_missing") || reasons.has("acceptance_mapping_review_missing")) {
+    mappingMessage = "尚未取得覆盖全部验收要求的验证依据，需要核对测试和复核结果。";
+  } else if (["acceptance_mapping_timeout", "acceptance_mapping_upstream_call"].some(reason => reasons.has(reason))) {
+    mappingMessage = "复核暂未返回可用结果，需要检查复核服务状态。";
+  } else if (["proposal_schema", "binding_invalid", "quote_invalid", "sensitive_output", "review_schema", "review_invalid"]
+    .some(reason => reasons.has(`acceptance_mapping_${reason}`))) {
+    mappingMessage = "复核服务返回的内容不符合校验要求，需要检查返回结果。";
+  } else if (reasons.has("acceptance_mapping_proposal_stale")) {
+    mappingMessage = "复核结果与当前修改不一致，需要重新核对。";
+  } else if (reasons.has("acceptance_mapping_review_uncertain")) {
+    mappingMessage = "复核结果仍有不确定项，需要进一步核对。";
+  } else if (["acceptance_mapping_unknown", "acceptance_mapping_incomplete", "acceptance_mapping_unavailable"].some(reason => reasons.has(reason))) {
+    // Historical generic failures did not identify whether coverage was missing.
+    mappingMessage = "本次验收核对未完成，暂时无法确定原因。";
   }
-  if (reasons.has("acceptance_mapping_unavailable")) {
-    return "核对验收要求与测试的服务暂时不可用，本次修改尚未确认完成。请负责人检查复核服务后安排恢复。";
+  if (reasons.has("acceptance_mapping_attempt_limit_exhausted")) {
+    return `验收核对已达到本轮尝试上限，本次修改尚未确认完成。${mappingMessage ?? "暂时无法确定原因，需要检查复核记录。"}`;
   }
+  if (mappingMessage) return `${mappingMessage}本次修改尚未确认完成。`;
   if (reasons.has("verification_attempt_limit_exhausted")) {
-    return "独立复核已连续三次未通过，系统已停止重复尝试。请补充或修正需求后再继续。";
+    return "独立复核已连续三次未通过，系统已停止重复尝试。请负责人检查复核记录后处理。";
   }
   if (reasons.has("blocking_ambiguity_present")) {
     return "需求中仍有未确认的问题，本次修改不会标记完成。请先补充确认。";

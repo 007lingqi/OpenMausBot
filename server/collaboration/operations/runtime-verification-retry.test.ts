@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { FakeDingTalkAdapter } from "../../integrations/dingtalk/fake-adapter.ts";
+import { renderDingTalkSessionMessage } from "../../integrations/dingtalk/session-message.ts";
 import { parseDingTalkOwnerTextCommand } from "../../integrations/dingtalk/text-actions.ts";
 import type { DingTalkInboundMessage, DingTalkOwnerTextCommand } from "../../integrations/dingtalk/types.ts";
 import {
@@ -27,12 +28,14 @@ import { startCollaborationService } from "../service.ts";
 import { CommandCleanupError } from "../execution-limits.ts";
 import { currentInstanceLease, InstanceLeaseCoordinator } from "../leases.ts";
 import { reserveVerification, hasUnsettledVerification } from "../verification-lifecycle.ts";
+import { CandidateVerificationCoordinator } from "../candidate-verification.ts";
 import { CollaborationHeadlessRuntime, type CollaborationHeadlessRuntimeOptions } from "./runtime.ts";
 
 const scratch: string[] = [];
 let sequence = 0;
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const directory of scratch.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
@@ -284,6 +287,44 @@ async function runningRuntime(item: RetryFixture, runner: FailingVerifierRunner,
 }
 
 describe("runtime Owner verification retry", () => {
+  it.each([
+    { reasons: ["acceptance_mapping_coverage_missing"], expected: "尚未取得覆盖全部验收要求的验证依据", forbidden: "缺少对应的测试覆盖" },
+    { reasons: ["acceptance_mapping_review_missing"], expected: "尚未取得覆盖全部验收要求的验证依据", forbidden: "补齐测试" },
+    { reasons: ["acceptance_mapping_timeout"], expected: "复核暂未返回可用结果", forbidden: "补齐测试" },
+    { reasons: ["acceptance_mapping_upstream_call"], expected: "复核暂未返回可用结果", forbidden: "补齐测试" },
+    { reasons: ["acceptance_mapping_proposal_schema"], expected: "不符合校验要求", forbidden: "补齐测试" },
+    { reasons: ["acceptance_mapping_review_schema"], expected: "不符合校验要求", forbidden: "补齐测试" },
+    { reasons: ["acceptance_mapping_review_uncertain"], expected: "仍有不确定项", forbidden: "补齐测试" },
+    { reasons: ["acceptance_mapping_unknown"], expected: "暂时无法确定原因", forbidden: "补齐测试" },
+    { reasons: ["acceptance_mapping_incomplete"], expected: "暂时无法确定原因", forbidden: "补齐测试" },
+    { reasons: ["acceptance_mapping_unavailable"], expected: "暂时无法确定原因", forbidden: "复核服务状态" },
+    { reasons: ["acceptance_mapping_timeout", "acceptance_mapping_attempt_limit_exhausted"], expected: "达到本轮尝试上限", forbidden: "补齐测试" },
+    { reasons: ["acceptance_mapping_unknown", "acceptance_mapping_attempt_limit_exhausted"], expected: "达到本轮尝试上限", forbidden: "补齐测试" },
+  ])("serializes the actual verification failure category into DingTalk: $reasons", async ({ reasons, expected, forbidden }) => {
+    const original = CandidateVerificationCoordinator.prototype.verify;
+    vi.spyOn(CandidateVerificationCoordinator.prototype, "verify").mockImplementation(async function (this: CandidateVerificationCoordinator, input) {
+      const result = await original.call(this, input);
+      return { ...result, reasons };
+    });
+    const item = seedRetryableCandidate();
+    const { runtime } = await runningRuntime(item, new FailingVerifierRunner());
+    const db = new DatabaseSync(join(item.dataDirectory, "collaboration", "collaboration.sqlite"));
+    try {
+      // SAFETY: runningRuntime waits for this seeded run's verifier result and its single outbox notification to settle.
+      const row = db.prepare("SELECT payload_json FROM collaboration_outbox WHERE source_event_id=?")
+        .get(`verification:${item.runId}:attempt:1`) as { payload_json: string };
+      const payload = JSON.parse(row.payload_json);
+      expect(payload.status).toBe("verification_blocked");
+      const message = renderDingTalkSessionMessage(payload);
+      const visible = JSON.stringify(message);
+      expect(message.msgtype).toBe("markdown");
+      expect(visible).toContain(expected);
+      expect(visible).not.toContain(forbidden);
+      expect(visible).not.toMatch(/已通过|已自动修复|acceptance_mapping_|untrusted-mapping-output/);
+      expect(runCount(item)).toBe(1);
+      expect(reviewCount(item)).toBe(1);
+    } finally { db.close(); await runtime.stop(); }
+  });
   it("recovers an abandoned zero-command verifier and queues independent verification without modifying again", async () => {
     const item = seedRetryableCandidate(); const runner = new FailingVerifierRunner();
     const db = new DatabaseSync(join(item.dataDirectory, "collaboration", "collaboration.sqlite"));

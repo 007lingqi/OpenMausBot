@@ -35,12 +35,14 @@ import { CommandCleanupError } from "./execution-limits.ts";
 import { completeVerifiedLowRiskCandidate } from "./candidate-approval.ts";
 import { publishVerificationRuntimePolicy } from "./verification-runtime-policy.ts";
 import { conversationStatus } from "./conversation-context.ts";
+import { AcceptanceMappingCoordinator, type MappingResult } from "./acceptance-mapping.ts";
 
 const scratch: string[] = [];
 const resources: Array<{ close(): void }> = [];
 let sequence = 0;
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const resource of resources.splice(0).reverse()) resource.close();
   for (const directory of scratch.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
@@ -298,6 +300,63 @@ function mappingHarness(item: Fixture) {
 }
 
 describe("independent candidate verification", () => {
+  it.each([
+    ["proposal_schema", "proposal_validation"], ["proposal_stale", "proposal_validation"],
+    ["binding_invalid", "proposal_validation"], ["coverage_missing", "proposal_validation"],
+    ["quote_invalid", "proposal_validation"], ["sensitive_output", "proposal_validation"],
+    ["review_schema", "review_validation"], ["review_invalid", "review_validation"],
+    ["review_missing", "review_validation"], ["review_uncertain", "review_validation"],
+    ["timeout", "review_call"], ["upstream_call", "proposal_call"],
+  ])("retains bounded mapping failure %s in the verifier review without approving the candidate", async (failureReason, failureStage) => {
+    const item = fixture(undefined, true, true); const h = mappingHarness(item);
+    // SAFETY: The mock has a valid status/hash; extra raw output deliberately exercises the diagnostic allowlist.
+    vi.spyOn(AcceptanceMappingCoordinator.prototype, "map").mockResolvedValue({
+      status: failureReason.startsWith("review_m") || failureReason === "review_uncertain" ? "rejected" : "failed",
+      requestHash: "a".repeat(64), failureReason, failureStage, rawOutput: "untrusted-mapping-output",
+    } as MappingResult);
+    const result = await h.coordinator.verify({ candidateRunId: item.runId, worktreePath: item.worktree,
+      instance: { ownerId: "instance-1", fence: 1 }, now: 4000 });
+    expect(result).toMatchObject({ passed: false, status: "failed", reasons: [`acceptance_mapping_${failureReason}`] });
+    // SAFETY: The completed verification just persisted one verifier review with non-null verdict_json for this seeded run.
+    const row = item.database.prepare("SELECT verdict_json FROM collaboration_candidate_reviews WHERE candidate_run_id=? AND stage='verifier'")
+      .get(item.runId) as { verdict_json: string };
+    expect(JSON.parse(row.verdict_json).mappingFailure).toEqual({ reason: failureReason, stage: failureStage });
+    expect(row.verdict_json).not.toContain("untrusted-mapping-output");
+    expect(h.runner.requests).toHaveLength(0);
+    expect(candidateHasPassedMetaReview(item.database, item.runId, item.candidateSha)).toBe(false);
+  });
+  it.each(["missing", "unrecognized", "limit"])("keeps %s mapping diagnostics unknown instead of inferring missing tests", async mode => {
+    const item = fixture(undefined, true, true); const h = mappingHarness(item);
+    // SAFETY: Status/hash remain valid; unrecognized diagnostics are intentional boundary inputs that must be discarded.
+    vi.spyOn(AcceptanceMappingCoordinator.prototype, "map").mockResolvedValue({
+      status: mode === "limit" ? "limit" : "failed", requestHash: "a".repeat(64),
+      failureReason: mode === "unrecognized" ? "untrusted-mapping-output" : undefined,
+      failureStage: mode === "unrecognized" ? "untrusted-stage" : undefined,
+    } as MappingResult);
+    const result = await h.coordinator.verify({ candidateRunId: item.runId, worktreePath: item.worktree,
+      instance: { ownerId: "instance-1", fence: 1 }, now: 4000 });
+    expect(result.passed).toBe(false);
+    expect(result.reasons).toEqual(mode === "limit"
+      ? ["acceptance_mapping_unknown", "acceptance_mapping_attempt_limit_exhausted"] : ["acceptance_mapping_unknown"]);
+    // SAFETY: The completed verification just persisted one verifier review with non-null verdict_json for this seeded run.
+    const row = item.database.prepare("SELECT verdict_json FROM collaboration_candidate_reviews WHERE candidate_run_id=? AND stage='verifier'")
+      .get(item.runId) as { verdict_json: string };
+    expect(JSON.parse(row.verdict_json).mappingFailure).toBeUndefined();
+    expect(row.verdict_json).not.toMatch(/untrusted-mapping-output|untrusted-stage|acceptance_mapping_incomplete/);
+    expect(h.runner.requests).toHaveLength(0);
+    expect(candidateHasPassedMetaReview(item.database, item.runId, item.candidateSha)).toBe(false);
+  });
+  it("retains the last known mapping failure when the mapping attempt limit is reached", async () => {
+    const item = fixture(undefined, true, true); const h = mappingHarness(item);
+    vi.spyOn(AcceptanceMappingCoordinator.prototype, "map").mockResolvedValue({
+      status: "limit", requestHash: "a".repeat(64), failureReason: "timeout", failureStage: "review_call",
+    });
+    const result = await h.coordinator.verify({ candidateRunId: item.runId, worktreePath: item.worktree,
+      instance: { ownerId: "instance-1", fence: 1 }, now: 4000 });
+    expect(result.reasons).toEqual(["acceptance_mapping_timeout", "acceptance_mapping_attempt_limit_exhausted"]);
+    expect(result.passed).toBe(false);
+    expect(h.runner.requests).toHaveLength(0);
+  });
   it("reports completion only while the accepted fixed candidate still has current paired evidence", async () => {
     const item = fixture(undefined, true, true); const h = mappingHarness(item);
     item.database.prepare("UPDATE collaboration_work_nodes SET risk='low' WHERE work_item_id=?").run(item.workItemId);

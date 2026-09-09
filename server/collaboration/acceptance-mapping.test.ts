@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { openCollaborationLedger } from "./db.ts";
 import { acceptanceConditionHash } from "./acceptance-assertions.ts";
 import { nodeTestAssertionId } from "./node-test-reporter.ts";
@@ -32,6 +33,88 @@ function models(options: { reject?: boolean; malformed?: boolean } = {}) {
 function ledger() { const root = mkdtempSync(join(tmpdir(), "omb-mapping-")); roots.push(root); const store = openCollaborationLedger(root); store.close(); const database = new DatabaseSync(store.filePath); database.exec("PRAGMA foreign_keys=ON"); resources.push(database); return { database, filePath: store.filePath }; }
 
 describe("source-grounded acceptance mapping", () => {
+  it.each([
+    ["schema", "proposal_schema"], ["stale", "proposal_stale"], ["binding", "binding_invalid"],
+    ["coverage", "coverage_missing"], ["quote", "quote_invalid"], ["sensitive", "sensitive_output"],
+  ] as const)("records only a bounded reason for proposal %s failures", async (fault, failureReason) => {
+    const store = ledger(), model = models();
+    const input = fault === "coverage" ? { ...request, conditions: [...request.conditions, { description: "保存失败", observation: "显示失败原因" }] } : request;
+    const proposed = proposal(input);
+    if (fault === "stale") proposed.requestHash = "0".repeat(64);
+    if (fault === "binding") proposed.bindings[0].file = "not-provided.mjs";
+    if (fault === "quote") proposed.bindings[0].quote = "invented-private-model-output";
+    if (fault === "sensitive") proposed.bindings[0].rationale = "密码 synthetic-private-value";
+    model.proposer.complete = async () => fault === "schema" ? { ...proposed, extra: "private-invalid-output" } : proposed;
+    const result = await new AcceptanceMappingCoordinator(store.database, model).map(input, 1000);
+    expect(result).toMatchObject({ status: "failed", failureReason, failureStage: "proposal_validation" });
+    expect(result.contracts).toBeUndefined();
+    const saved = z.object({ receipt_json: z.string() }).parse(store.database.prepare("SELECT receipt_json FROM collaboration_acceptance_mapping_results").get());
+    expect(JSON.parse(saved.receipt_json)).toEqual({ error: "acceptance_mapping_unavailable", failureReason, failureStage: "proposal_validation" });
+    expect(model.calls).toHaveLength(0);
+  });
+
+  it.each(["schema", "binding", "missing", "uncertain"] as const)("separates independent review %s from upstream failures", async fault => {
+    const store = ledger(), model = models();
+    const failureReason = { schema: "review_schema", binding: "review_invalid", missing: "review_missing", uncertain: "review_uncertain" }[fault];
+    model.verifier.complete = async () => {
+      const reviewed = { version: 1, requestHash: mappingRequestHash(request),
+      proposalHash: fault === "binding" ? "0".repeat(64) : mappingProposalHash(proposal()),
+      findings: [{ conditionHash: acceptanceConditionHash(condition), state: fault === "missing" || fault === "uncertain" ? fault : "covered", reason: "核对结果" }],
+      };
+      return fault === "schema" ? { ...reviewed, extra: "private-invalid-review" } : reviewed;
+    };
+    const result = await new AcceptanceMappingCoordinator(store.database, model).map(request, 1000);
+    expect(result).toMatchObject({ status: fault === "missing" || fault === "uncertain" ? "rejected" : "failed", failureReason, failureStage: "review_validation" });
+    expect(result.contracts).toBeUndefined();
+    const saved = z.object({ receipt_json: z.string() }).parse(store.database.prepare("SELECT receipt_json FROM collaboration_acceptance_mapping_results").get());
+    expect(JSON.parse(saved.receipt_json)).toMatchObject({ failureReason, failureStage: "review_validation" });
+    expect(saved.receipt_json).not.toContain("private-invalid-review");
+  });
+
+  it.each(["proposer", "verifier"] as const)("does not classify or persist arbitrary %s exception text as validation evidence", async role => {
+    const store = ledger(), model = models();
+    model[role].complete = async () => { throw new Error("acceptance_mapping_incomplete secret=private-upstream-value"); };
+    const result = await new AcceptanceMappingCoordinator(store.database, model).map(request, 1000);
+    const failureStage = role === "proposer" ? "proposal_call" : "review_call";
+    expect(result).toMatchObject({ status: "failed", failureReason: "upstream_call", failureStage });
+    const saved = z.object({ receipt_json: z.string() }).parse(store.database.prepare("SELECT receipt_json FROM collaboration_acceptance_mapping_results").get());
+    expect(JSON.parse(saved.receipt_json)).toEqual({ error: "acceptance_mapping_unavailable", failureReason: "upstream_call", failureStage });
+    expect(saved.receipt_json).not.toContain("private-upstream-value");
+  });
+
+  it.each(["proposer", "verifier"] as const)("retains the bounded %s timeout stage without extending its deadline", async role => {
+    const store = ledger(), model = models();
+    model[role].complete = () => new Promise(() => {});
+    vi.useFakeTimers();
+    try {
+      const pending = new AcceptanceMappingCoordinator(store.database, model).map(request, 1000);
+      await vi.advanceTimersByTimeAsync(90001);
+      expect(await pending).toMatchObject({ status: "failed", failureReason: "timeout", failureStage: role === "proposer" ? "proposal_call" : "review_call" });
+      expect(store.database.prepare("SELECT count(*) AS n FROM collaboration_acceptance_mapping_attempts").get()).toEqual({ n: 1 });
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("preserves safe latest failure details at the three-attempt limit without another model call", async () => {
+    const store = ledger(), model = models({ malformed: true });
+    for (let attempt = 0; attempt < 3; attempt++) await new AcceptanceMappingCoordinator(store.database, model).map(request, 1000 + attempt * 200000);
+    expect(await new AcceptanceMappingCoordinator(store.database, model).map(request, 700000)).toMatchObject({ status: "limit", failureReason: "proposal_schema", failureStage: "proposal_validation" });
+    expect(model.calls).toHaveLength(3);
+  });
+
+  it.each([
+    { error: "acceptance_mapping_unavailable" },
+    { error: "acceptance_mapping_unavailable", failureReason: "private-persisted-value", failureStage: "proposal_call" },
+    { error: "acceptance_mapping_unavailable", failureReason: "upstream_call", failureStage: "private-persisted-stage" },
+  ])("does not invent or echo diagnostic details from legacy or invalid receipts: %j", async receipt => {
+    const store = ledger(), model = models({ malformed: true });
+    for (let attempt = 0; attempt < 3; attempt++) await new AcceptanceMappingCoordinator(store.database, model).map(request, 1000 + attempt * 200000);
+    store.database.exec("DROP TRIGGER collaboration_mapping_result_no_update");
+    store.database.prepare("UPDATE collaboration_acceptance_mapping_results SET receipt_json=? WHERE attempt=3").run(JSON.stringify(receipt));
+    const result = await new AcceptanceMappingCoordinator(store.database, model).map(request, 700000);
+    expect(result).toEqual({ status: "limit", requestHash: mappingRequestHash(request) });
+    expect(model.calls).toHaveLength(3);
+  });
+
   it.each(["mjs", "tsx", "jsx"])("cannot bind %s implementation context as a reported test", async extension => {
     const input: MappingRequest = { ...request, sources: [...request.sources, { ...request.sources[0],
       file: `src/save.${extension}`, role: "implementation", text: extension === "mjs" ? 'export const save = () => "after";' : 'export const save = () => <button>after</button>;' }] };

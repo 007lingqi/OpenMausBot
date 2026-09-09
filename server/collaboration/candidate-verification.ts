@@ -19,7 +19,8 @@ import {
 } from "./quality-gate.ts";
 import { assertLedgerArmed } from "./restore-guard.ts";
 import { assertionCoverage, readAssertionReport, type CoverageCommand, type CoverageItem } from "./acceptance-assertions.ts";
-import { AcceptanceMappingCoordinator, readApprovedAcceptanceMapping, type AcceptanceMappingModels } from "./acceptance-mapping.ts";
+import { AcceptanceMappingCoordinator, readApprovedAcceptanceMapping, mappingFailureReasonSchema, mappingFailureStageSchema,
+  type AcceptanceMappingModels, type MappingFailureReason, type MappingFailureStage } from "./acceptance-mapping.ts";
 import { collectAcceptanceMappingRequest } from "./acceptance-source.ts";
 import { verificationRuntimePolicyAllows, verificationRuntimePolicyHash } from "./verification-runtime-policy.ts";
 
@@ -522,6 +523,7 @@ export class CandidateVerificationCoordinator {
     const runtimePolicyHash = verificationRuntimePolicyHash(commands, this.options.acceptanceMapping?.policyId);
     if (!verificationRuntimePolicyAllows(this.database, row.repository_path, runtimePolicyHash)) reasons.push("verification_runtime_policy_changed");
     let mapping: { requestHash: string; policyId: string } | undefined;
+    let mappingFailure: { reason?: MappingFailureReason; stage?: MappingFailureStage } | undefined;
     if (before.head !== row.result_sha || before.status) reasons.push("candidate_worktree_not_clean");
     if (!reasons.length && this.options.acceptanceMapping && commandIds.some(id => !commands[id]?.assertionContract)) {
       try {
@@ -532,7 +534,17 @@ export class CandidateVerificationCoordinator {
         const result = await new AcceptanceMappingCoordinator(this.database, this.options.acceptanceMapping).map(request, input.now, input.signal);
         if (result.status === "pending") return { passed: false, status: "needs_configuration", reasons: ["acceptance_mapping_pending"],
           specHash: currentSpecHash, verifierAttempt: previous?.attempt ?? 0, metaAttempt: null };
-        if (result.status !== "approved" || !result.contracts) reasons.push("acceptance_mapping_incomplete");
+        if (result.status !== "approved" || !result.contracts) {
+          const reason = mappingFailureReasonSchema.safeParse(result.failureReason);
+          const stage = mappingFailureStageSchema.safeParse(result.failureStage);
+          if (reason.success || stage.success) {
+            mappingFailure = {};
+            if (reason.success) mappingFailure.reason = reason.data;
+            if (stage.success) mappingFailure.stage = stage.data;
+          }
+          reasons.push(`acceptance_mapping_${reason.success ? reason.data : "unknown"}`);
+          if (result.status === "limit") reasons.push("acceptance_mapping_attempt_limit_exhausted");
+        }
         else {
           commands = Object.fromEntries(commandIds.map(id => [id, { ...commands[id], assertionContract: result.contracts![id] ?? commands[id].assertionContract }]));
           mapping = { requestHash: result.requestHash, policyId: this.options.acceptanceMapping.policyId };
@@ -604,6 +616,7 @@ export class CandidateVerificationCoordinator {
           reasons,
           commands: publicEvidence(evidence, commands),
           ...(mapping ? { mapping } : {}),
+          mappingFailure,
         },
         now: input.now,
       });
