@@ -1,27 +1,29 @@
 # 纯对话目标验收核对
 
-更新：2026-09-09。原生Goal active，整体未完成。原事项一次性3→4恢复已授权并实际执行，前三次历史及version3/Spec4/plan2保留；第四次失败、无resultSha，失败通知已通过持久回执对账确认sent，没有第五次。具体模型失败根因仍未知，不沿用旧60秒截断诊断。完整回归、固定镜像发布和本次终态见[一次性恢复证据](evidence/conversation-execution-recovery-20260909.json)。此前154秒只提案验证仍仅证明建议格式与范围校验，不是C1交付。本文件对应 [当前目标](pmo-conversation-goal.md)，文档/表格/附件/DWS/cardTemplateId 仍不作为前置。
+更新：2026-09-09。原生Goal active，整体未完成。固定源码f3922a8及c7839032…镜像已部署，实际service/coordinator/provider三pin一致，任务执行器版本错位已修复；完整回归、首次预检失败与最终交接见[任务镜像修复证据](evidence/conversation-worker-image-fix-20260909.json)。原事项一次性3→4恢复的前三次历史及version3/Spec4/plan2保留；第四次失败、无resultSha，失败通知已通过持久回执对账确认sent，没有第五次。旧provider镜像的60秒硬期限及缺失失败分类已证实，但第四次请求级记录未保留，不能重建其最终异常。第四次终态见[一次性恢复证据](evidence/conversation-execution-recovery-20260909.json)。只提案模型验证和无模型入口检查均不是C1交付。本文件对应 [当前目标](pmo-conversation-goal.md)，文档/表格/附件/DWS/cardTemplateId 仍不作为前置。
 
 ## 当前证据与缺口
 
 真实C1已验证新需求和自然补充同事项接续，当前Spec保留五项验收、无重复追问、计划范围正确。第四次实际执行441655ms后failed，candidate invalid、无resultSha、无Verifier/Meta，session已结清；quality仅保留“模型未能完成本次修改建议。”。707a38确认失败Outbox从dead_letter/proactive_delivery_unconfirmed在5秒内经持久回执对账变为sent（last_error为空），不据此编造发送/查询次数，也不重复发送。该证据确认失败通知送达，不代表代码交付或Owner本人验收；C1交付、完整C2–C6、真实多人和在途恢复仍缺。第三次执行及旧通知superseded的历史事实保留在[第三次执行与诊断](evidence/conversation-supplement-attempt3-20260908.json)，其47sent/18superseded计数不冒充本轮最新统计。
 
+本次任务镜像修复由ecabfe单次首启及1795a4正式交接完成，均终态0；原服务a837已被新27cefe76…替换，当前三pin均为c7839032…。最初f9ca21仅在停机和once-started前的预检失败：非秘密gate.cjs为501:1000/0400，cap-drop root不可读；34ac44确认旧服务仍running。修正非秘密cjs为root:root/0444后继续，未放宽真实容器权限，失败记录保留。两阶段新备份及15events/66outbox/1owner原行保持、48sent/18superseded、schema37完整性/外键0、十项在途0、停机后旧launch为空均已核对。8c0403对当前provider实际入口做无模型隔离启动、等待proposal gate及停止，未挂Ledger/候选/socket；不是第五次业务执行或在途恢复验收。
+
 | 验收面 | 可复用证据及限制 | 剩余工作 |
 | --- | --- | --- |
 | 自然新需求、短回答、多轮归并 | TBNnjl 真实 Astra 七场景 24 轮；来源/关联有本地测试，但群、参与者和发送合成 | 最终候选真实平台 C1–C4，尤其至少两位真实成员的补充、更正和定向提醒 |
 | 简短自然、查询解释致谢 | D-143–145及D-152通知/追问/解释/长准备回复修复；真实序列化与账本保留回归通过 | C5实际可见文案和发送节奏；未知自由文本解释不能以固定词义表宣称全面支持 |
-| 可验证研发交付 | 3d5599f完整回归e34a9a；28项调度闭环覆盖恢复成功/失败，真实原事项一次性attempt4已执行且前三次/Spec/版本保留；失败通知sent由707a38确认 | attempt4 failed，无resultSha、无Verifier/Meta，C1交付未完成；具体根因未知，不重发或启动第五次，不清零或新建同需求 |
+| 可验证研发交付 | 3d5599f完整回归e34a9a及28项调度闭环；本次f3922a8完整回归cbd362、发布契约24项368e51/662142通过并部署。真实attempt4失败历史与通知sent保留 | 原四次仍未交付，无resultSha、无Verifier/Meta；新版只提案诊断和入口检查不能替代C1，不重发、不启动第五次、不清零或新建同需求 |
 | 风险与唯一 Owner | D-153/D-154门禁保留；ae99a6本机一次性授权绑定原事项3→4，无伪造群控制事件；第四次失败后未启动第五次 | C6仍只有部分真实控制成功证据；非Owner拒绝、高风险固定对象决定仍待，不以一次恢复覆盖整类 |
 | 上下文精简与可接续 | 已有有限上下文、来源/版本和状态投影；本次目标将当前索引与历史分开 | 验收中核对实际执行/验证输入及重启恢复依据，不把更新 Markdown 当成运行时证明 |
-| 固定候选安全启用 | 64c2e203…镜像绑定3d5599f；64e7b0六bundle匹配与UID501/10001可读、隔离健康通过，5b5430首启和d2093d正式交接终态0；每阶段新离线备份及历史事件/Outbox/Owner保留 | 本阶段已完成；原构建失败及最终两阶段守卫保留，不重跑已成功发布；不覆盖原Spec/plan或业务尝试记录 |
-| 当前真实服务 | a837d796…/64c2e203…，StartedAt2026-09-09T01:32:40.179Z、fence65、active/enabled、unless-stopped；该实例已承载本次第四次执行及失败回执对账 | 只代表相应观察时点及本次失败通知，不代表业务交付、实时连接持续正常或整体验收；不沿用旧实例统计 |
+| 固定候选安全启用 | c7839032…绑定f3922a8；a21680六bundle与UID501/10001可读，a670d7固定源码重建字节一致，11292f实际镜像UID10001六哈希通过；ecabfe/1795a4首启及交接终态0，service/coordinator/provider三pin一致，command及其他配置保留 | 修复部署完成；f9ca21预检失败记录与最终成功守卫保留，不重跑发布，不覆盖原Spec/plan或业务尝试记录 |
+| 当前真实服务 | 27cefe76…/c7839032…，StartedAt2026-09-09T02:20:25.294432257Z、fence67、hostGeneration3afdc10e…，systemd active/enabled、unless-stopped；15events/66outbox/1owner历史原行保持，48sent/18superseded、十项在途0 | 只代表本次观察时点；8c0403为无模型provider入口检查，不代表原任务交付、实时连接持续正常或整体验收；不沿用旧实例统计 |
 | 同仓库串行、跨仓库并发 | 本地受控 Agent 测试；部分旧版隔离/停止证据 | 当前 Linux/Docker 下真实独立任务、同仓库互斥、跨仓库并发和监督器绑定 |
 | Linux VM 空闲重启 | d8bef2/4805ef真实boot改变、systemd恢复；ff76d0新boot监督器，f3cb8b真实模型恢复探针通过 | 已通过服务/模型恢复；宿主Docker CLI旧转发另外修复，未来重启时CLI自动恢复未验证 |
 | 幂等与在途恢复 | 61d68c原事项两条规范化消息在Linux私有副本4次重放，75表/schema/rowid不变、模型0；四次均deferred。既有本地恢复及VM空闲恢复证据保留 | 尚非真实Stream报文重送/ACK；其他任务、真实非deferred路径、并发及在途服务重启未覆盖。副本重放不代替真实在途恢复 |
 | 平台入口与安全边界 | 本地自然入口和 Owner/白名单/业务响应回归 | @、未 @、引用回复的实测可达性和标识；明确不支持项，不暗中扩大监听权限 |
 | 最终验收 | 尚无 Owner 本人确认 | 自动部分通过后汇总真实对话/交付证据交本人确认；此前不标整体完成 |
 
-当前启用、交接、配置、数据、副本和第四次执行/通知终态见[一次性恢复](evidence/conversation-execution-recovery-20260909.json)；此前见 [长响应修复发布](evidence/conversation-provider-timeout-rollout-20260908.json)、[重试结果修复](evidence/conversation-retry-result-fix-20260908.json)、[自然重试入口](evidence/conversation-natural-retry-fix-20260908.json)、[回复修复](evidence/conversation-reply-fix-20260908.json) 和 [读取修复](evidence/conversation-read-view-fix-20260908.json)。完整回归与模型证据分别见 [VERIFY](../../VERIFY.md) 和 [模型评测](conversation-eval-20260908.md)。本批发布候选已有完整回归，本次只更新终态文档，不重跑未受影响的测试或模型评测。
+当前启用、交接、实际三镜像pin、数据保留及无模型入口检查见[任务镜像修复](evidence/conversation-worker-image-fix-20260909.json)；第四次执行/通知终态见[一次性恢复](evidence/conversation-execution-recovery-20260909.json)。此前见 [长响应修复发布](evidence/conversation-provider-timeout-rollout-20260908.json)、[重试结果修复](evidence/conversation-retry-result-fix-20260908.json)、[自然重试入口](evidence/conversation-natural-retry-fix-20260908.json)、[回复修复](evidence/conversation-reply-fix-20260908.json) 和 [读取修复](evidence/conversation-read-view-fix-20260908.json)。完整回归与模型证据分别见 [VERIFY](../../VERIFY.md) 和 [模型评测](conversation-eval-20260908.md)。本批发布候选已有完整回归，本次只更新终态文档，不重跑未受影响的测试或模型评测。
 
 原事项隔离重放的原输入匹配、全表比较、失败准备经过与证据边界见[原消息重放](evidence/conversation-original-event-replay-20260908.json)。它不恢复原任务尝试额度，也不构成C1交付或Owner决定。
 
@@ -29,7 +31,7 @@
 
 Linux VM重启及额外的宿主Docker转发修复见 [重启证据](evidence/conversation-vm-reboot-052b42c.json)；自动恢复边界和在途未验收状态不得省略。
 
-1. 当前候选启用和原事项第四次执行均已终态；第四次失败通知已确认sent，不重发、不启动第五次、不重复已带成功守卫的切换脚本。原生Goal active但未完成，继续已授权原因调查和其余验收准备；既往审核超时不等于用户未授权或当前仍不可用。
+1. 当前任务镜像修复部署完成，原事项第四次失败仍为终态；失败通知已确认sent，不重发、不启动第五次、不重复已带成功守卫的切换脚本。原生Goal active但未完成，C1交付、完整C2–C6、真实多人/在途恢复/仓库并发及Owner本人最终验收仍未完成；既往审核超时不等于用户未授权或当前仍不可用。
 2. 使用当前目标 C1–C6 与跨场景可靠性条件逐项验收；共享证据只运行一次。已有证据须绑定对应版本，不能用旧版、合成群或单个分数覆盖真实缺口。
 3. 发现可复现缺陷再补测试、修复和影响面验证；发布新代码候选前完成全套回归。禁止改断言来掩盖业务不符，或用无关离线评测维持无进展续跑。
 4. 实际副作用不明先查现场/回执；同一失败连续三次停止原路径并记录，不能通过换命令、重新建任务或删除守卫重置失败记录。

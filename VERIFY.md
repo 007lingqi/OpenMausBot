@@ -2,6 +2,12 @@
 
 ## 2026-09-09 执行器旧镜像及失败保留修复
 
+- f3922a8固定源码后，a21680构建c7839032镜像，六bundle及UID501/10001可读检查通过。a670d7在同固定源码下独立重新build，六文件逐字节与镜像构建输入相同；冻结tested-bundles.json，11292f以实际新镜像UID10001逐项验证。activation在停机前执行同一清单门禁，不能仅靠服务镜像标签宣称任务执行器受测。
+- ed1a65配置准备仅更新image/coordinator/provider三处，command、群路由、身份凭据及maxAttempts3保持；配置fixture通过。独立82d774/43bcfb验证相关回归。审查发现在线检查到停机之间可能新增旧launch，已在退出后、启动前再次检查exchange为空；113b37/独立6e8f8c用晚到launch合成回归拒绝候选启动。
+- f9ca21首次发布预检因私有gate脚本owner501/mode400，cap-drop后的root无法读取而退出；34ac44确认旧服务a837仍运行、once-started未创建。仅将无秘密辅助cjs收归root并0444，不变更容器能力或业务配置，之后ecabfe首启及1795a4 systemd交接均终态0。不得重跑这两次成功入口。
+- 新正式实例27cefe76864c80ec2fdcd4741633b1e29df7302b270457da6373eb59b4441b5b，StartedAt2026-09-09T02:20:25.294432257Z、fence67；service/coordinator/provider均c783903244aba45df38fa116de36afb6b3b85b11a68e599f19c0f27ba6ceb5c3，systemd active/enabled、unless-stopped。两阶段分别新备份与空闲双检查，15条事件/66条Outbox/1条Owner历史保留，48sent/18superseded、schema37/完整性及FK0、十项在途0。未恢复旧账本或删除用户数据。
+- 8c0403从运行服务读取实际provider pin，在该镜像及正式1核/768MiB/128进程限制下执行真实worker入口：等待proposal gate、SIGTERM停止均通过；无模型socket、Ledger或候选挂载、无模型调用与第五次业务执行。此证据不是原需求交付或新增群回复。
+- 非作者真实SSH终检159361/f91c79/a888a5确认当前容器/三镜像角色/源码标签匹配、零重启/systemd自启；原事项只有4次run/dispatch且session全结清，第四次failed、resultSha为空、candidate invalid、reviews为空，失败通知sent无错误。说明无有效候选，不是候选表没有记录；没有第五次。
 - 569490实际provider pin/任务Image仍a4cab8c；0da080直接读取其relay bundle确认默认60000ms硬截止，无idle进展控制。与service64c2e203不一致；旧worker缺少新失败分类。发布缺陷已定位，第四次请求级根因仍不能回溯。
 - 清理异常保留主/次分类：3组合先红后绿；输出读取ENOENT先红后绿。实际假CLI→provider→supervisor→worker→钉钉序列化覆盖成功/失败清理异常、不写候选、不泄露原stderr/路径；50项及typecheck通过。主线程cbd362确认完整session39151终态0，含打包及headless烟测。
 - 55726d真实Linux/setpriv/UID10001合成清理通过；fixture曾因自身exec挂载缺失失败并保留，不计产品失败。167d93固定原输入只读模型诊断5请求全部完成、178秒长响应/4文件校验通过、未应用；ce9d2a确认退出/PID0。

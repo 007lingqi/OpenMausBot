@@ -1,11 +1,15 @@
 # Meta 协作实施进度
 
-## 当前修复：已找到主服务与任务执行器版本错位（2026-09-09）
+## 当前修复：主服务与任务执行器版本错位已修复并部署（2026-09-09）
 
 - 569490/0da080确认：服务64c2e203已更新，但真实第四次任务86baba5e仍使用9月7日a4cab8c旧provider镜像，其中relay仍为60秒硬期限，worker无新失败分类。发布只更新image/coordinator pin，遗漏独立的provider pin；不是Docker缓存。第四次具体请求日志已丢失，不能据此重建其最终异常。
 - 167d93新代码只读诊断通过：同request/envelope与31文件固定视图，5次真实Astra/medium请求全部成功，最终178秒响应完整结束，4文件建议通过实际validator；261108ms，ce9d2a确认容器已退出/PID0。未挂Ledger/候选、未应用、未群发送、没有第五次业务执行；2核诊断不当作原1核性能证明。
-- 清理异常覆盖主错误的缺陷已按TDD修复，50项定向/typecheck及cbd362完整回归通过。新增发布镜像角色契约和实际live pin检查，分别绑定service/coordinator/provider，保留独立command镜像及其他配置。发布fixture d1d54a通过；新修复尚未切换，准备新私有发布目录，不重跑旧成功脚本。
-- 2591a6/396c0e复查原四次均结清，无候选修改、原a4基线/干净状态保留，失败通知sent。当前exchange/contained-provider为空，切换时仍须再次核对无在途和旧launch。精确证据见[任务镜像修复](docs/pilot/evidence/conversation-worker-image-fix-20260909.json)。
+- 清理异常覆盖主错误的缺陷已按TDD修复，50项定向/typecheck及cbd362完整回归通过，固定源码f3922a8已提交。新增发布镜像角色契约和实际live pin检查，分别绑定service/coordinator/provider；helper24项368e51及独立662142通过。a21680构建c7839032…镜像，六bundle及UID501/10001可读；a670d7从固定提交重新构建六bundle字节一致，11292f按实际镜像UID10001核对六哈希通过。
+- 新私有发布目录worker-image-20260909中，首次once f9ca21因非秘密gate.cjs归属501:1000、0400导致cap-drop root不可读，在停机及once-started之前失败；34ac44确认旧a837仍running。仅将非秘密cjs改为root:root/0444后继续，真实容器权限未放宽，失败记录保留。最终once ecabfe和systemd交接1795a4均终态0，不重跑成功脚本。
+- 当前容器27cefe76…、StartedAt2026-09-09T02:20:25.294432257Z、fence67，service/coordinator/provider实际三pin均为c7839032…，systemd active/enabled、restart unless-stopped；独立command镜像与所有其他配置保留。两阶段各有新备份，15events/66outbox/1owner历史原行保持，48sent/18superseded，schema37完整性/外键正常、十项在途0；停机后再次确认旧launch目录为空。8c0403对当前选定provider实际入口做无模型隔离启动、等待proposal gate和停止验证通过，未挂Ledger/候选/socket，没有第五次。
+- 最终非作者只读复核159361确认当前容器running/RestartCount0/unless-stopped、systemd active/enabled；f91c79确认provider/coordinator均c783且image revision为f3922；a888a5确认原事项仅4runs/dispatches、全部settled/failed、nullSHA、reviews空/candidate invalid，失败notice sent/error空，无第五次。2591a6/396c0e的原a4基线与干净状态证据保留。当前一次性第四次授权已用完，不自动执行第五次；本次修复部署完成不等于原事项交付，C1交付、完整C2–C6、真实多人/在途恢复/仓库并发及Owner本人最终验收仍未完成，Goal active而非complete。精确证据见[任务镜像修复](docs/pilot/evidence/conversation-worker-image-fix-20260909.json)。
+
+以下为先前批次的当时状态；当前镜像与部署状态以上节为准，第四次失败历史不改写。
 
 ## 当前结果：原事项第四次失败，失败通知已确认送达（2026-09-09）
 
