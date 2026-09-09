@@ -2,6 +2,8 @@
 
 ## 2026-09-09 验收专用时限回归
 
+- ca4f76（10:48:00Z）观察闭环成功，d621d1（10:50:42Z）只读复核一致：WI-5C68D17B361E accepted/version4/control accepted/plan2，接受候选33421b672608dc8e47be4d6b833c98f3c37543c6，execution仍两次；Verifier attempt3的pilot独立测试13项通过，Meta attempt1通过，未结清session为空，completedMeta=true。终态technical/meta普通查询false不代表完成证据失效。结果Outbox sent、last_error=null、sent_at1788950766255，实际序列化正文与结构化证据一致。本机页面与原事项交付已完成；不等于真实多人等剩余场景或Owner本人最终验收完成。以下为发布及验证时点记录。
+- 0130cf3真实构建31e1bd通过，a6ded47f六bundle在UID501/10001逐项相同，隔离health schema40通过。2fbddd只三镜像pin变更；旧command/模型/策略/env保持。初激活6d0f79在停机副本只读WAL打开处失败，未启动新服务；44dd15仅audit copy可写时readOnly数据库gate通过，新增WAL0字节/SHM32768，主DB与原backup完全不变。独立resume脚本含状态/守卫/挂载契约，3 TAP通过，c23ee9实际启动成功：acdb3571、10:45:22Z、healthy/active/enabled/零重启，schema不迁移。原候选复核在途，未计为业务完成。
 - 最终发布链46620/d16b8d终态exit0，完整pnpm test、pnpm typecheck、git diff --check均通过；env-path原失败用例此次1540ms通过，未改其实现、夹具或等待上限。broker7、Node各套、打包与headless启动检查全部执行，不以专项补跑代替本次完整链。
 - 六文件冻结快照27a5de6e84abcbb2f287dcf3a2dd69801552f979c38509f0dce5536ce601e2e8。作者165项定向与typecheck通过；非作者冻结后同4文件165项一次通过。新增行lint0，六文件原有30项诊断保留。默认预算、受信预算验证、两阶段55/250秒、600秒正常取消、630秒claim与晚结果、缓存/次数/取消均覆盖。
 - 首轮完整回归80485/d2c0eb：4546通过/18跳过/1失败，失败是未修改的server/env-path.test.ts初始异步shell探测在6秒内未返回rcOnlyBin；不能计整库通过。后续broker/Node/打包/typecheck由单独链继续，失败项正在独立定位，未发布本批。

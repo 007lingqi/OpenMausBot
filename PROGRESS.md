@@ -1,6 +1,13 @@
 # Meta 协作实施进度
 
-## 当前现场：新版页面已本机上线，自动复核时限修复中（2026-09-09）
+## 当前现场：本机上线与原事项交付闭环完成（2026-09-09）
+
+- 0130cf3已提交并构建a6ded47f镜像，31e1bd六bundle字节/双UID/隔离health通过；只更新service/coordinator/provider三pin。实际新容器acdb3571、10:45:22Z启动，schema40、healthy、systemd active/enabled、零重启。原页面仍33421b6、127.0.0.1:3100。
+- 首次activate6d0f79停旧后因WAL无sidecar副本只读挂载无法打开而中止，未启动新服务。44dd15独立copy仅允许其WAL/SHM元数据创建后gate通过，原DB字节与完整停机备份不变。c23ee9使用新一次性resume成功，不重跑备份/迁移/旧activate、不回滚、不清历史。精确新证据见docs/pilot/evidence/conversation-mapping-deadline-release-20260909.json。
+- ca4f76在10:48:00Z首次观察原事项WI-5C68D17B361E已accepted；d621d1在10:50:42Z只读确认version4、control accepted、plan2、候选33421b6不变。execution共两次，没有重复开发；原13项自测及Verifier attempt3的13项独立测试通过，Meta attempt1通过、无未结清session，completedMeta=true。终态普通technical/meta查询为false不撤销该完成证据。
+- 完成结果已通过实际Outbox送达钉钉，sent_at=1788950766255、last_error为空；回复明确说明全部/P0/P1/P2筛选、与状态和搜索组合生效、无结果提示及回归通过。本机页面已完成浏览器检查。本次交付完成，不重复发布、模型调用或开发任务；整个Goal仍缺真实多人等平台场景及Owner本人最终验收，保持未完成，不代签。
+
+## 历史时点：上线前时限修复与候选复核经过（2026-09-09）
 
 - 时限修复六文件冻结，作者与非作者各165项通过；首轮整库唯一env-path初探失败后，未修改其源码/测试，专项及等价诊断通过。第二次完整发布链46620/d16b8d已终态0，含主集、broker、Node、打包/headless、typecheck/diff；下一步固定本地提交并构建/启用受测镜像。首次失败保留，不宣称已查明其原因。
 - 原事项 attempt2 已成功生成固定候选33421b672608dc8e47be4d6b833c98f3c37543c6，13项自测通过；原Spec4/plan2与0837完整基线、c31构建父保持。没有再次开发、清理历史或重发需求。

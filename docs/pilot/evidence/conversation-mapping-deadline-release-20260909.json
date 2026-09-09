@@ -1,0 +1,76 @@
+{
+  "status": "local_service_and_page_live_original_work_item_completed_and_reply_sent",
+  "sourceRevision": "0130cf32251695af41ff00a1d621e050d801288e",
+  "sourceFilesSnapshotSha256": "27a5de6e84abcbb2f287dcf3a2dd69801552f979c38509f0dce5536ce601e2e8",
+  "serviceImage": "sha256:a6ded47f6d17905b9da88cba004c3e10c7a30f2c655c565ab9c3d877134d353f",
+  "commandImage": "sha256:e61663413bc8df5820dbc76f4d4b8f079e58ed6d20638fc54a938f0c9084648b",
+  "containerId": "acdb357172bf6a50bde8949619b0f879a44cc9ed7b9c5b96e74593a23f57a790",
+  "startedAt": "2026-09-09T10:45:22.854851024Z",
+  "schema": 40,
+  "model": { "provider": "host_OpenCodex", "model": "gpt-6-astra", "reasoning": "medium", "credentialsChanged": false },
+  "deadlinesMs": {
+    "mappingAdapterCall": 300000, "mappingScheduledCancellation": 600000,
+    "mappingClaimAndAbsoluteReceiptCutoff": 630000, "naturalChatAdapterUnchanged": 60000,
+    "defaultCoordinatorUnchanged": 90000, "gatewayIdleUnchanged": 60000, "gatewayTotalUnchanged": 900000
+  },
+  "regression": {
+    "authorTargetedPassed": 165, "independentTargetedPassed": 165,
+    "finalFullReleaseSession": 46620, "finalReceipt": "d16b8d", "finalExitCode": 0,
+    "fullPnpmTestTypecheckAndDiffCheckPassed": true,
+    "changedLineLintDiagnostics": 0, "existingSixFileLintDiagnostics": 30,
+    "initialSession": { "id": 80485, "receipt": "d2c0eb", "exitCode": 1, "passed": 4546, "skipped": 18, "failed": 1, "failure": "env-path initial shell PATH probe did not return within observation window" },
+    "initialFailureFollowup": {
+      "sourceTestSetupChanged": false, "isolatedSession": 38771, "isolatedPassed": 13, "isolatedSkipped": 7,
+      "equivalentPrivateFixtureSession": 65590, "firstCallbackMs": 1751, "rescanCallbackMs": 1211,
+      "bothExitCodes": [0, 0], "synchronousCachePreserved": true,
+      "originalFailureRootCauseKnown": false, "finalFullRunOriginalCasePassedMs": 1540
+    },
+    "separateRemainderSession": 38134, "separateRemainderExitCode": 0
+  },
+  "build": { "receipt": "31e1bd", "exitCode": 0, "sixBundlesMatched": true, "readableUids": [501, 10001], "isolatedHealthPassed": true, "networkForBuild": "none" },
+  "release": {
+    "directory": "/var/lib/openmausbot-collaboration-pilot/releases/mapping-deadline-20260909",
+    "configurationReceipt": "2fbddd", "configurationOnlyChanges": ["service_image", "coordinator_image", "provider_image"],
+    "offlineContractPassed": 34,
+    "activationScriptSha256": "df1536fb958fc80d27db22af75b6147e2fa58a69c2b8b96f604ee98ff1ae9d0e",
+    "prepareScriptSha256": "7cb6745b5b407b0dafe10877c721698707e6387ca0fddd7720c4019d83fe1c5e",
+    "initialActivationReceipt": "6d0f79", "initialActivationExitCode": 1,
+    "initialActivationStoppedOldService": true, "initialActivationStartedNewService": false,
+    "initialActivationCause": "WAL-mode stopped SQLite without sidecars cannot open under a wholly read-only bind mount",
+    "causalProbeReceipt": "44dd15", "causalProbePassed": true,
+    "causalProbe": { "onlyDisposableCopyWritable": true, "databaseOpenedReadOnly": true, "createdWalBytes": 0, "createdShmBytes": 32768, "mainDatabaseBytesUnchanged": true, "liveDataAndOriginalBackupByteEqual": true },
+    "resumeScriptSha256": "01c8b6a51633fd9ce10ee724315ec3234425ea031a0c04138d4c8746b459f59f",
+    "resumeContractPassed": 3, "resumeReceipt": "c23ee9", "resumeExitCode": 0,
+    "originalActivationNotRepeated": true, "uniqueResumeGuard": true,
+    "migrationExecuted": false, "historyPreserved": true,
+    "systemdActiveAndEnabled": true, "health": "healthy", "restarts": 0
+  },
+  "business": {
+    "firstCompletedObservation": "2026-09-09T10:48:00.185Z", "firstCompletedObservationReceipt": "ca4f76",
+    "lastObservation": "2026-09-09T10:50:42.718Z", "observationReceipt": "d621d1",
+    "workItemId": "WI-5C68D17B361E", "status": "accepted", "version": 4, "controlState": "accepted", "specRevision": 4, "planRevision": 2,
+    "runId": "dcf95421-10c2-4d49-b32d-60fd4ad764fd", "executionAttempt": 2, "executionState": "succeeded",
+    "candidateSha": "33421b672608dc8e47be4d6b833c98f3c37543c6", "selfAssertionsPassed": 13,
+    "executionAttemptsTotal": 2,
+    "acceptedCandidateSha": "33421b672608dc8e47be4d6b833c98f3c37543c6",
+    "verificationSession": "c7a5e7b2-b1e9-4783-bde9-f3e1674d486c", "verificationState": "passed", "verificationAttempt": 3,
+    "independentVerification": { "commandId": "pilot", "state": "target_passed", "assertionsPassed": 13 },
+    "metaReview": { "attempt": 1, "status": "passed", "reasons": [] },
+    "unsettledSessions": [],
+    "previousFailedReviewsPreserved": true, "technical": false, "meta": false, "completedMeta": true,
+    "completionQueryNote": "After terminal version advancement, ordinary technical/meta queries are false; completedMeta verifies the completed candidate evidence.",
+    "resultOutbox": {
+      "sourceEventId": "candidate-result:dcf95421-10c2-4d49-b32d-60fd4ad764fd:v3:e05907e715a11504dd19ff6e66acfefd5b8adbe9c6cffc2ff30df17149713e9e",
+      "deliveryState": "sent", "lastError": null, "sentAt": 1788950766255,
+      "message": {
+        "msgtype": "markdown",
+        "markdown": {
+          "title": "修改和回归已核对",
+          "text": "本次已核对的改动要点：“发布验收室”的检查项列表支持全部、P0、P1、P2四个优先级筛选选项；优先级筛选与现有状态筛选、搜索共同生效；没有匹配检查项时保留现有空结果提示。自动回归和独立复核均已通过。"
+        }
+      }
+    }
+  },
+  "localPage": { "url": "http://127.0.0.1:3100", "candidateSha": "33421b672608dc8e47be4d6b833c98f3c37543c6", "alreadyLiveAndBrowserChecked": true },
+  "scope": "Local Colima/Linux non-production service and local page only. No push, default-branch merge, new credential or Owner identity change, other-container operation, user-output deletion, forged inbound event or manual business completion. Real multi-person cases and personal final Owner acceptance remain outstanding."
+}
