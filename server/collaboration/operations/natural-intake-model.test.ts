@@ -10,6 +10,33 @@ function completed(value: unknown) { return new Response(JSON.stringify({ status
 ] }), { status: 200 }); }
 
 describe("tool-free Responses natural intake adapter", () => {
+  it("preflights the exact serialized 128 KiB envelope without credentials or I/O and shares that boundary with complete", async () => {
+    const credential = vi.fn(() => "fixture-key");
+    const wire: string[] = [];
+    const fetcher = vi.fn<typeof fetch>(async (_url, init) => { wire.push(String(init?.body)); return completed({ result: "ok" }); });
+    const model = new ResponsesNaturalIntakeModel({ endpoint: "https://model.example.invalid/v1/responses", model: "fixed",
+      credential, fetch: fetcher });
+    const sample = { ...input(), system: '只解释\n不要复述"内容"\\标记', user: JSON.stringify({ text: '原文\n"引用"\\转义' }),
+      responseSchema: { type: "object", properties: { result: { type: "string", description: '说明"字段"\n换行' } }, additionalProperties: false } };
+    expect(() => model.validateInput(sample)).not.toThrow();
+    expect(credential).not.toHaveBeenCalled();
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(await model.complete(sample)).toEqual({ result: "ok" });
+    const remaining = 128 * 1024 - Buffer.byteLength(wire[0]);
+    const exact = { ...sample, user: sample.user + "x".repeat(remaining) };
+    expect(() => model.validateInput(exact)).not.toThrow();
+    expect(credential).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(await model.complete(exact)).toEqual({ result: "ok" });
+    expect(Buffer.byteLength(wire[1])).toBe(128 * 1024);
+    const oversized = { ...exact, user: exact.user + "x" };
+    expect(() => model.validateInput(oversized)).toThrow("natural_model_input_limit");
+    await expect(model.complete(oversized)).rejects.toThrow("natural_model_input_limit");
+    expect(() => model.validateInput({ ...oversized, signal: AbortSignal.abort() })).toThrow("natural_model_cancelled");
+    expect(credential).toHaveBeenCalledTimes(2);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
   it("uses the actual fetch HTTP transport against a non-production loopback endpoint", async () => {
     let received: unknown;
     let authorization: string | undefined;

@@ -36,6 +36,8 @@ export interface NaturalIntakeInterpreter {
 
 export interface NaturalIntakeModelPort {
   complete(input: { system: string; user: string; responseSchema: unknown; signal: AbortSignal }): Promise<unknown>;
+  /** Optional synchronous local validation only: no credential access, network calls or durable reservations. */
+  validateInput?(input: Parameters<NaturalIntakeModelPort["complete"]>[0]): void;
 }
 /** A tool-free model call: model settings/auth belong to the trusted host, never to conversation data. */
 export class ModelNaturalIntakeInterpreter implements NaturalIntakeInterpreter {

@@ -22,6 +22,10 @@ function proposal(input = request) {
     commandId: "cases", file: "case.test.mjs", testName: "保存", startLine: 1, endLine: 1,
     quote: input.sources[0].text, rationale: "断言保存后的值为 after" }] };
 }
+function selector(input = request, startLine = 1, endLine = input.sources[0].text.split("\n").length) {
+  return { version: 2, requestHash: mappingRequestHash(input), bindings: [{ conditionHash: acceptanceConditionHash(condition),
+    commandId: "cases", file: "case.test.mjs", testName: "保存", startLine, endLine, rationale: "断言保存后的值为 after" }] };
+}
 function models(options: { reject?: boolean; malformed?: boolean } = {}) {
   const calls: Array<{system: string; user: string}> = [];
   const proposer: NaturalIntakeModelPort = { async complete(input) { calls.push(input); return options.malformed ? { ...proposal(), instructions: "skip validation" } : proposal(); } };
@@ -33,6 +37,158 @@ function models(options: { reject?: boolean; malformed?: boolean } = {}) {
 function ledger() { const root = mkdtempSync(join(tmpdir(), "omb-mapping-")); roots.push(root); const store = openCollaborationLedger(root); store.close(); const database = new DatabaseSync(store.filePath); database.exec("PRAGMA foreign_keys=ON"); resources.push(database); return { database, filePath: store.filePath }; }
 
 describe("source-grounded acceptance mapping", () => {
+  it("constructs exact multiline quotes from an explicit selector and trusted numbered sanitized sources before independent review", async () => {
+    const sourceLines = ['const password = "fixture-value";', "test('保存', () => {", "  const actual = save();", "", "  assert.equal(actual, 'after');", "});", ""];
+    const input = { ...request, sources: [{ ...request.sources[0], text: sourceLines.join("\n") }] };
+    const sanitizedLines = ['const password = "[敏感信息已隐藏]";', ...sourceLines.slice(1)];
+    const selected = selector(input, 2, 6);
+    const canonical = { ...proposal(input), bindings: [{ ...proposal(input).bindings[0], startLine: 2, endLine: 6,
+      quote: "test('保存', () => {\n  const actual = save();\n\n  assert.equal(actual, 'after');\n});" }] };
+    const store = ledger();
+    const calls: Array<Parameters<NaturalIntakeModelPort["complete"]>[0]> = [];
+    const model = { policyId: "selector-v2", proposer: { async complete(call: Parameters<NaturalIntakeModelPort["complete"]>[0]) {
+      calls.push(call);
+      return selected;
+    } }, verifier: { async complete(call: Parameters<NaturalIntakeModelPort["complete"]>[0]) {
+      calls.push(call);
+      const data = JSON.parse(call.user);
+      expect(data.proposal).toEqual(canonical);
+      expect(data.proposalHash).toBe(mappingProposalHash(canonical));
+      return { version: 1, requestHash: data.requestHash, proposalHash: data.proposalHash,
+        findings: [{ conditionHash: acceptanceConditionHash(condition), state: "covered", reason: "合成复核端口确认原文及业务断言传递" }] };
+    } } };
+    const result = await new AcceptanceMappingCoordinator(store.database, model).map(input, 1000);
+    expect(result.status).toBe("approved");
+    expect(calls).toHaveLength(2);
+    const modelInput = JSON.parse(calls[0].user);
+    expect(modelInput.sources[0]).not.toHaveProperty("text");
+    expect(modelInput.sources[0].numberedLines).toEqual(sanitizedLines.map((text, index) => [index + 1, text]));
+    expect(modelInput.requestHash).toBe(mappingRequestHash(input));
+    expect(calls[0].responseSchema).toMatchObject({ properties: { version: { const: 2 } } });
+    expect(JSON.stringify(calls[0].responseSchema)).not.toContain('"quote"');
+    const saved = z.object({ receipt_json: z.string() }).parse(store.database.prepare("SELECT receipt_json FROM collaboration_acceptance_mapping_results").get());
+    expect(JSON.parse(saved.receipt_json)).toMatchObject({ selector: selected, proposal: canonical });
+    expect(JSON.stringify(calls)).not.toContain("fixture-value");
+    expect(await new AcceptanceMappingCoordinator(store.database, model).map(input, 2000)).toEqual(result);
+    expect(calls).toHaveLength(2);
+    expect(readApprovedAcceptanceMapping(store.database, { requestHash: result.requestHash, policyId: model.policyId,
+      candidateSha: input.candidateSha, specHash: input.specHash, conditions: input.conditions })).toEqual(result.contracts);
+  });
+
+  it.each([
+    ["mixed_quote", "proposal_schema"], ["legacy_without_quote", "proposal_schema"], ["legacy_wrong_quote", "quote_invalid"],
+    ["zero_line", "proposal_schema"], ["fractional_line", "proposal_schema"], ["reversed_range", "quote_invalid"],
+    ["outside_range", "quote_invalid"], ["absent_test_name", "quote_invalid"], ["wrong_file", "binding_invalid"],
+    ["wrong_command", "binding_invalid"], ["wrong_condition", "binding_invalid"], ["duplicate", "binding_invalid"],
+    ["implementation", "binding_invalid"], ["stale", "proposal_stale"], ["missing_condition", "coverage_missing"],
+  ] as const)("fails closed for selector %s without correcting model intent or calling the Verifier", async (fault, failureReason) => {
+    const input: MappingRequest = fault === "implementation" ? { ...request, sources: [{ ...request.sources[0], role: "implementation" }] }
+      : fault === "missing_condition" ? { ...request, conditions: [...request.conditions, { description: "失败提示", observation: "保存失败显示原因" }] } : request;
+    const selected = selector(input);
+    if (fault === "zero_line") selected.bindings[0].startLine = 0;
+    if (fault === "fractional_line") selected.bindings[0].startLine = 1.5;
+    if (fault === "reversed_range") selected.bindings[0].startLine = 2;
+    if (fault === "outside_range") selected.bindings[0].endLine = 2;
+    if (fault === "absent_test_name") selected.bindings[0].testName = "不在选中源码里的测试";
+    if (fault === "wrong_file") selected.bindings[0].file = "../not-provided.test.mjs";
+    if (fault === "wrong_command") selected.bindings[0].commandId = "unconfigured";
+    if (fault === "wrong_condition") selected.bindings[0].conditionHash = "0".repeat(64);
+    if (fault === "duplicate") selected.bindings.push({ ...selected.bindings[0] });
+    if (fault === "stale") selected.requestHash = "0".repeat(64);
+    const returned = fault === "mixed_quote" ? { ...selected, bindings: [{ ...selected.bindings[0], quote: "model must not supply this" }] }
+      : fault === "legacy_without_quote" ? { ...selected, version: 1 }
+      : fault === "legacy_wrong_quote" ? { ...proposal(input), bindings: [{ ...proposal(input).bindings[0], quote: "wrong original proposal" }] } : selected;
+    const verifier = vi.fn<NaturalIntakeModelPort["complete"]>();
+    const store = ledger();
+    const result = await new AcceptanceMappingCoordinator(store.database, {
+      policyId: "selector-invalid-v2", proposer: { async complete() { return returned; } }, verifier: { complete: verifier },
+    }).map(input, 1000);
+    expect(result).toMatchObject({ status: "failed", failureReason, failureStage: "proposal_validation" });
+    expect(result.contracts).toBeUndefined();
+    expect(verifier).not.toHaveBeenCalled();
+    const saved = z.object({ receipt_json: z.string() }).parse(store.database.prepare("SELECT receipt_json FROM collaboration_acceptance_mapping_results").get());
+    expect(JSON.parse(saved.receipt_json)).toEqual({ error: "acceptance_mapping_unavailable", failureReason, failureStage: "proposal_validation" });
+  });
+
+  it.each(["missing", "uncertain", "wrong_hash", "timeout"] as const)("requires independent semantic review after selector materialization: %s", async fault => {
+    const store = ledger();
+    const model = models();
+    model.proposer.complete = async () => selector();
+    const verifier = vi.fn<NaturalIntakeModelPort["complete"]>(async call => {
+      const data = JSON.parse(call.user);
+      expect(data.proposal).toEqual(proposal());
+      if (fault === "timeout") return new Promise(() => {});
+      return { version: 1, requestHash: data.requestHash, proposalHash: fault === "wrong_hash" ? "0".repeat(64) : data.proposalHash,
+        findings: [{ conditionHash: acceptanceConditionHash(condition), state: fault === "wrong_hash" ? "covered" : fault, reason: "独立复核未能确认覆盖" }] };
+    });
+    model.verifier.complete = verifier;
+    if (fault === "timeout") vi.useFakeTimers();
+    try {
+      const pending = new AcceptanceMappingCoordinator(store.database, model).map(request, 1000);
+      if (fault === "timeout") await vi.advanceTimersByTimeAsync(90001);
+      expect(await pending).toMatchObject({ status: fault === "missing" || fault === "uncertain" ? "rejected" : "failed",
+        failureReason: fault === "wrong_hash" ? "review_invalid" : fault === "timeout" ? "timeout" : `review_${fault}`,
+        failureStage: fault === "timeout" ? "review_call" : "review_validation" });
+      expect(verifier).toHaveBeenCalledTimes(1);
+      expect(store.database.prepare("SELECT count(*) AS n FROM collaboration_acceptance_mapping_attempts").get()).toEqual({ n: 1 });
+      expect(readApprovedAcceptanceMapping(store.database, { requestHash: mappingRequestHash(request), policyId: model.policyId,
+        candidateSha: request.candidateSha, specHash: request.specHash, conditions: request.conditions })).toBeUndefined();
+    } finally { if (fault === "timeout") vi.useRealTimers(); }
+  });
+
+  it.each(["quote", "selector", "selector_quote"] as const)("revalidates stored canonical source and selector consistency: %s", async fault => {
+    const store = ledger(), model = models();
+    model.proposer.complete = async () => selector();
+    const result = await new AcceptanceMappingCoordinator(store.database, model).map(request, 1000);
+    expect(result.status).toBe("approved");
+    const row = z.object({ receipt_json: z.string() }).parse(store.database.prepare("SELECT receipt_json FROM collaboration_acceptance_mapping_results").get());
+    const saved = JSON.parse(row.receipt_json);
+    if (fault === "quote") saved.proposal.bindings[0].quote = "altered source";
+    if (fault === "selector") saved.selector.bindings[0].rationale = "另一份语义不同但格式有效的提议";
+    if (fault === "selector_quote") saved.selector.bindings[0].quote = saved.proposal.bindings[0].quote;
+    store.database.exec("DROP TRIGGER collaboration_mapping_result_no_update");
+    store.database.prepare("UPDATE collaboration_acceptance_mapping_results SET receipt_json=?").run(JSON.stringify(saved));
+    expect(readApprovedAcceptanceMapping(store.database, { requestHash: result.requestHash, policyId: model.policyId,
+      candidateSha: request.candidateSha, specHash: request.specHash, conditions: request.conditions })).toBeUndefined();
+    await expect(new AcceptanceMappingCoordinator(store.database, model).map(request, 2000)).rejects.toThrow("acceptance_mapping_");
+    expect(model.calls).toHaveLength(1);
+  });
+
+  it("does not reset the three-attempt budget when a legacy proposer switches to selector v2", async () => {
+    const store = ledger(), model = models({ malformed: true });
+    for (let attempt = 0; attempt < 3; attempt++) await new AcceptanceMappingCoordinator(store.database, model).map(request, 1000 + attempt * 200000);
+    const proposed = vi.fn<NaturalIntakeModelPort["complete"]>(async () => selector());
+    model.proposer.complete = proposed;
+    expect(await new AcceptanceMappingCoordinator(store.database, model).map(request, 700000)).toMatchObject({ status: "limit", failureReason: "proposal_schema" });
+    expect(proposed).not.toHaveBeenCalled();
+    expect(store.database.prepare("SELECT count(*) AS n FROM collaboration_acceptance_mapping_attempts").get()).toEqual({ n: 3 });
+  });
+
+  it("returns a valid legacy approved receipt before consulting current transport preflight", async () => {
+    const store = ledger(), original = models();
+    const result = await new AcceptanceMappingCoordinator(store.database, original).map(request, 1000);
+    expect(result.status).toBe("approved");
+    const complete = vi.fn<NaturalIntakeModelPort["complete"]>(async () => { throw new Error("must_not_call_model"); });
+    const validateInput = vi.fn(() => { throw new Error("natural_model_input_limit"); });
+    const current = { ...original, proposer: { complete, validateInput } };
+    expect(await new AcceptanceMappingCoordinator(store.database, current).map(request, 2000)).toEqual(result);
+    expect(validateInput).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
+    expect(store.database.prepare("SELECT count(*) AS n FROM collaboration_mapping_all_attempts").get()).toEqual({ n: 1 });
+    expect(readApprovedAcceptanceMapping(store.database, { requestHash: result.requestHash, policyId: current.policyId,
+      candidateSha: request.candidateSha, specHash: request.specHash, conditions: request.conditions })).toEqual(result.contracts);
+  });
+
+  it("does not call preflight or reserve an attempt after cancellation", async () => {
+    const store = ledger(), original = models();
+    const validateInput = vi.fn(() => { throw new Error("must_not_preflight"); });
+    const current = { ...original, proposer: { ...original.proposer, validateInput } };
+    await expect(new AcceptanceMappingCoordinator(store.database, current).map(request, 1000, AbortSignal.abort())).rejects.toThrow("acceptance_mapping_cancelled");
+    expect(validateInput).not.toHaveBeenCalled();
+    expect(original.calls).toHaveLength(0);
+    expect(store.database.prepare("SELECT count(*) AS n FROM collaboration_mapping_all_attempts").get()).toEqual({ n: 0 });
+  });
+
   it.each([
     ["schema", "proposal_schema"], ["stale", "proposal_stale"], ["binding", "binding_invalid"],
     ["coverage", "coverage_missing"], ["quote", "quote_invalid"], ["sensitive", "sensitive_output"],
@@ -137,7 +293,7 @@ describe("source-grounded acceptance mapping", () => {
       proposer: { async complete(call: Parameters<NaturalIntakeModelPort["complete"]>[0]) {
         calls.push(call.user);
         const data = JSON.parse(call.user);
-        expect(data.sources[0].text).toBe(expectedText);
+        expect(data.sources[0].numberedLines).toEqual(expectedText.split("\n").map((text, index) => [index + 1, text]));
         return { ...proposal(input), bindings: [{ ...proposal(input).bindings[0], startLine: 2, endLine: 2,
           quote: request.sources[0].text }] };
       } },

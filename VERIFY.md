@@ -1,5 +1,22 @@
 # Meta 协作验证记录
 
+## 2026-09-09 引用选择与真实模型语义复核
+
+- TDD已复现v2主机多行提取、8372字节4000空行新增视图超限问题；修复后核心124项、候选复核/预验夹具83项绿，类型/增量lint/语法/diff通过。精确128KiB边界、超限连续3次零凭据/网络/attempt、缓存与取消均检查。最终整库54151/dc249c退出0：完整pnpm test、typecheck、diff；旧18185主动中止130不能视为通过。
+- 6c07e8：首轮真实只读模型59175ms在proposal_call发生upstream_call，只有安全通用分类；没有原库变更，不猜具体原因。27064c：紧凑视图两次真实HTTP200/SSE，耗时74623ms，实际请求29356/34323字节，无端口异常；原历史快照前后严格一致。
+- 27064c的v2 selector由host提取canonical v1后通过原严格校验，Verifier返回2 covered/1 missing，收据hash460c12bfe47cc407760a60ce4d2b8d3f54b60a4643a3e8b4bf40b8b4fe0e7eb5。缺口是空态实际页面渲染测试；不是业务通过，没有原库写入、补测、群发或完成。wire中的abort标记可能在已完成调用后触发；两调用均完整返回，不能据该标记判失败。
+- 精确诊断bundle SHA3d949ae6ddc28732ba8b5a02364bd2ffdc517eb7ca24c791da49a6ab73d992ab；产品实现SHA0e675f26f502d3eca9e967a235e05fe762cdd6828527bcd0673fb3038a2c5168，原requestHash0f333040…、policy及预算key不变。
+- 非作者最终6文件207项独立重跑全绿（38.48s），输入膨胀Medium关闭，未发现新增明确阻断；没有以此替代真实渲染测试或重新调用模型。发布目录mapping-selector-20260909仅准备，不因脚本存在即视为已构建或切换。
+- 最终adapter相对真实probe仅多一条lint说明注释，去除此精确注释还原ebd5987b…；最终SHA1a320a42…。主mapping及接口SHA与probe相同。临时发布脚本10项合同测试/脚本语法通过，未构建或运行；若后续候选或状态改变必须重新准备固定gate，不能直接放宽当前gate。
+
+## 2026-09-09 证据闭环实际发布与引用失败现场
+
+- c41a64镜像2ca827fe…构建成功，固定源码2342251；六bundle均与宿主逐项一致且UID501/10001可读，headless SHA2283288e…。第一次legacy builder不支持COPY --chmod的失败保留，只有一次兼容重试。
+- 29a444/6363d5：新私有一致性副本37→39正式health迁移，74旧表原列/原行多重集合保持（迁移账本仅追加）；完整性与外键正常。699d47配置仅三镜像pin、固定测试发现和五条件证据政策变更。
+- 96193b真实Docker双阶段：两个fresh worktree、两独立容器、两proof和empty settlement，ignored缓存未进入Verifier。合成账本/候选/映射，不是原任务模型或真实群验收；3容器1卷精确清理。报告SHA2db55dbcfe3b0277515104dc9dafa19f8f6d34a706964497ade4ad5501760a41。
+- 7ac808正式切换退出0，新容器55d50963…healthy/零重启，schema39、原成功run/Spec/Owner/三pin保持；不重跑成功activation。c85883与fa5dc3现场：原run不变，Verifier2 quote_invalid/proposal_validation，命令及补测0，mapping当前request仅attempt1，failure Outbox sent，technical/meta/completedMeta全false、无未结清验证。
+- 后续v2引用选择修复尚在验证，以上成功发布不等于原任务或整体目标验收完成。
+
 ## 2026-09-09 完整验收证据闭环（发布前收口中）
 
 - 最终完整发布链84586/b318b7退出0：`pnpm test && pnpm typecheck && git diff --check`，包括主集全量、broker、Node、打包/代理路径、模型/文档relay合成冒烟与headless启动。首轮备份超时在此次全量中2项241ms通过，未放宽超时。输出部分截断，未为补取计数重跑。

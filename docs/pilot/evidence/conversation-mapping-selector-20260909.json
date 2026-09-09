@@ -1,0 +1,34 @@
+{
+  "date":"2026-09-09",
+  "baseProductRevision":"23422515938395eee5e642eec8fe0108fa444ab3",
+  "sourceSha256":{
+    "server/collaboration/acceptance-mapping.ts":"0e675f26f502d3eca9e967a235e05fe762cdd6828527bcd0673fb3038a2c5168",
+    "server/collaboration/operations/natural-intake-model.ts":"1a320a42ed4b62575ad6e15abae33c65dd94cb445af0c3a0ee183d9b88c39c77",
+    "server/collaboration/natural-intake.ts":"b6cdc80ab5ddb107fd89535204b593ae169d1213e7056c92fd43b4bc42a7a061"
+  },
+  "change":"Explicit v2 source selectors, host-materialized canonical v1 quotes, independent semantic review, compact numbered view and side-effect-free exact wire preflight.",
+  "preserved":["strict legacy quote validation","current Spec and candidate","canonical request identity","policy and durable retry key","three-attempt bound","90-second mapping deadline","128 KiB wire limit","Owner and execution controls"],
+  "validation":{
+    "authorFocusedTests":207,"independentFocusedTests":207,
+    "independentSeconds":38.48,"newLintDiagnostics":0,
+    "fullRegression":{"session":54151,"receipt":"dc249c","command":"pnpm test && pnpm typecheck && git diff --check","exitCode":0},
+    "earlierRegression":{"session":18185,"receipt":"bc7e16","exitCode":130,"reason":"Intentionally stopped after a new input-expansion defect was independently found; not a passed release gate."},
+    "sizeRegression":"8372-byte request with 4000 empty lines now works; truly oversized input has zero credentials, fetches and reservations across three calls. Exact 128 KiB accepted and +1 byte rejected by identical preflight/send serialization.",
+    "cacheAndCancellation":"Existing approved receipt is read without calling preflight; pending/limit remain before new reservation; cancelled calls do not start validation/network."
+  },
+  "realReadOnlyDiagnostics":{
+    "requestHash":"0f333040c27f811f07fd055068271dff7388b2154d5f22504af9991dbe662c6f",
+    "requestKey":"86a6532ad230b6d774e053466c5af725e79f511eff7755e9f4b852d078ed1414",
+    "policyId":"mapping-v1:c59ebdf0fcb64bed37107338e42bac9ae79f41962a026088079b4865e8775ae7",
+    "candidateSha":"c31eb8f811acc600ab8ba63b544bcddbc138fd83",
+    "first":{"receipt":"6c07e8","elapsedMs":59175,"status":"failed","reason":"upstream_call","stage":"proposal_call","causalLimit":"No precise adapter classification was captured; timeout or network failure cannot be asserted."},
+    "compact":{"receipt":"27064c","elapsedMs":74623,"httpStatuses":[200,200],"requestBytes":[29356,34323],"streamCompleted":true,"adapterErrors":[],"selectorVersion":2,"canonicalVersion":1,"status":"rejected","reason":"review_missing","stage":"review_validation","receiptSha256":"460c12bfe47cc407760a60ce4d2b8d3f54b60a4643a3e8b4bf40b8b4fe0e7eb5","findings":[{"condition":"priority options and filtering","state":"covered"},{"condition":"priority/status/search intersection","state":"covered"},{"condition":"no-match page feedback","state":"missing","reason":"Source regex and empty-array assertions do not assert actual rendered page feedback under no-match filters."}]},
+    "probeBundleSha256":"3d949ae6ddc28732ba8b5a02364bd2ffdc517eb7ca24c791da49a6ab73d992ab",
+    "finalSourceBoundary":"Adapter differs from probe by one lint comment only; removing that exact line restores ebd5987b4de757e5f731724451edf3045f112fd38ff0170d9b225b5370d71eaa. Main mapping and interface hashes match.",
+    "originalLedgerUnchanged":true,"businessAttemptsAdded":0,"executionStarted":false,"groupMessageSent":false,
+    "temporaryAttempt":2,"temporaryLedger":"in-memory clone of the one current mapping attempt and its failed receipt"
+  },
+  "deployment":{"built":false,"activated":false,"existingServiceUnchanged":true,"localPageStatus":200,"localPageUrl":"http://127.0.0.1:3100","releaseScripts":"prepared and tested only; do not activate by retrying the known missing-test candidate"},
+  "remaining":"Create a proper bounded test-only candidate revision with original Spec and evidence retained, full original-base-to-new-candidate scope proof, continuous execution budget, fresh self-test/Verifier and real delivery. No existing retry/reject/reset entry point meets these constraints.",
+  "goalComplete":false
+}

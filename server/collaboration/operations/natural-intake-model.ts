@@ -70,7 +70,7 @@ export class ResponsesNaturalIntakeModel implements NaturalIntakeModelPort {
     this.credential = options.credential;
     this.fetcher = options.fetch ?? globalThis.fetch;
   }
-  async complete(input: ModelInput): Promise<unknown> {
+  private serializedInput(input: ModelInput): string {
     if (input.signal.aborted) throw new Error("natural_model_cancelled");
     const body = JSON.stringify({ model: this.model, instructions: input.system,
       input: [{ role: "user", content: [{ type: "input_text", text: input.user }] }],
@@ -79,6 +79,14 @@ export class ResponsesNaturalIntakeModel implements NaturalIntakeModelPort {
       text: { format: { type: "json_schema", name: "natural_intake", strict: true, schema: input.responseSchema } },
     });
     if (Buffer.byteLength(body) > 128 * 1024) throw new Error("natural_model_input_limit");
+    return body;
+  }
+  validateInput(input: ModelInput): void {
+    this.serializedInput(input);
+  }
+  // oxlint-disable-next-line anti-slop/no-unknown-returns -- The adapter validates the transport envelope only; each caller must parse the untrusted model JSON against its domain schema.
+  async complete(input: ModelInput): Promise<unknown> {
+    const body = this.serializedInput(input);
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (!this.streaming) {
       let key: string;

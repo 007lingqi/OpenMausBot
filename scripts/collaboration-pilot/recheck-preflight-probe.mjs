@@ -112,12 +112,12 @@ async function main() {
     const acceptanceMapping = { policyId: 'trusted-synthetic-recheck-preflight-v1', proposer: { async complete(input) {
       mappingCalls++;
       const value = JSON.parse(input.user); assert.equal(value.candidateSha, candidateSha);
-      return { version: 1, requestHash: value.requestHash, bindings: [
+      return { version: 2, requestHash: value.requestHash, bindings: [
         ['src/value.test.mjs', 'candidate_value'], ['src/isolation.test.mjs', 'fresh_stage_and_permissions'],
       ].map(([file, testName]) => {
         const source = value.sources.find(entry => entry.file === file); assert.ok(source);
         return { conditionHash: acceptanceConditionHash(value.conditions[0]), commandId, file, testName, startLine: 1,
-          endLine: source.text.split('\n').length, quote: source.text, rationale: '可信合成夹具精确绑定已提供测试' };
+          endLine: source.numberedLines.length, rationale: '可信合成夹具精确绑定已提供测试' };
       }) };
     } }, verifier: { async complete(input) {
       mappingCalls++;

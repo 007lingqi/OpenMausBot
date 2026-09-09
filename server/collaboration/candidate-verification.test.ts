@@ -456,9 +456,9 @@ describe("typed evidence for the five unchanged release-room conditions", () => 
       const request = JSON.parse(input.user);
       seen.push(request.conditions.map(acceptanceConditionHash));
       expect(request.sources.every((source: { commandId: string }) => source.commandId === "pnpm test target")).toBe(true);
-      return { version: 1, requestHash: request.requestHash, bindings: request.conditions.map((condition: { description: string; observation: string }) => ({
+      return { version: 2, requestHash: request.requestHash, bindings: request.conditions.map((condition: { description: string; observation: string }) => ({
         conditionHash: acceptanceConditionHash(condition), commandId: request.sources[0].commandId, file: request.sources[0].file, testName: "候选值更新",
-        startLine: 1, endLine: request.sources[0].text.split("\n").length, quote: request.sources[0].text, rationale: "fixture assertion mapping",
+        startLine: 1, endLine: request.sources[0].numberedLines.length, rationale: "fixture assertion mapping",
       })) };
     };
     harness.verifier.complete = async input => {
@@ -607,9 +607,9 @@ describe("live material checks for legacy candidates", () => {
 function mappingHarness(item: Fixture) {
     const proposer: NaturalIntakeModelPort = { async complete(input) {
       const value = JSON.parse(input.user);
-      return { version: 1, requestHash: value.requestHash, bindings: [{ conditionHash: acceptanceConditionHash(value.conditions[0]),
+      return { version: 2, requestHash: value.requestHash, bindings: [{ conditionHash: acceptanceConditionHash(value.conditions[0]),
         commandId: value.sources[0].commandId, file: value.sources[0].file, testName: "候选值更新", startLine: 1,
-        endLine: value.sources[0].text.split("\n").length, quote: value.sources[0].text, rationale: "断言读取值为 after" }] };
+        endLine: value.sources[0].numberedLines.length, rationale: "断言读取值为 after" }] };
     } };
     const verifier: NaturalIntakeModelPort = { async complete(input) {
       const value = JSON.parse(input.user);

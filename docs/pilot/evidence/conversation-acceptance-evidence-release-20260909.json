@@ -1,0 +1,32 @@
+{
+  "date": "2026-09-09",
+  "scope": "Existing authorized local Colima/Linux non-production service",
+  "sourceRevision": "23422515938395eee5e642eec8fe0108fa444ab3",
+  "image": "sha256:2ca827fe6b341c238de2e2d09d0cecc54967c93987cfe21465b72c3d2ce16d73",
+  "containerId": "55d50963d8054c00ba9c27be26960783c2d0c7c7de42df14a1d045dee3f2acbd",
+  "startedAt": "2026-09-09T06:30:13.071402524Z",
+  "systemd": "active/enabled",
+  "health": "healthy",
+  "restartCount": 0,
+  "schema": 39,
+  "fullRegression": {"session":84586,"receipt":"b318b7","command":"pnpm test && pnpm typecheck && git diff --check","exitCode":0},
+  "build": {"receipt":"c41a64","headlessSha256":"2283288e40559dfc09c12e8fd56f19f9c5ece27aa5c5775466d29b5dee298b21","sixBundlesMatch":true,"readableUids":[501,10001],"firstFailure":"Legacy builder does not support COPY --chmod; one compatibility retry succeeded."},
+  "migration": {"receipts":["29a444","6363d5"],"from":37,"to":39,"privateConsistentCopy":true,"oldTables":74,"oldRowsPreserved":true,"migrationLedgerAppendOnly":true,"integrity":"ok","foreignKeyViolations":0},
+  "dockerPreflight": {"receipt":"96193b","reportSha256":"2db55dbcfe3b0277515104dc9dafa19f8f6d34a706964497ade4ad5501760a41","freshWorktrees":2,"independentContainers":2,"settledProofs":2,"cacheExcluded":true,"cleanupConfirmed":true,"boundary":"Synthetic Ledger/candidate/mapping; no model, original business execution or group delivery."},
+  "activation": {"receipt":"7ac808","exitCode":0,"doubleIdleGate":true,"offlineBackup":true,"oneTimeSuccessGuard":true,"serviceCoordinatorProviderPinsMatch":true,"commandImageUnchanged":true,"credentialsOrIdentityChanged":false},
+  "originalBusiness": {
+    "workItemId":"WI-5C68D17B361E","version":3,"snapshot":4,"plan":2,
+    "runId":"c5501166-0cf8-4374-a992-308cc51b4b2f","runAttempt":1,"runStatus":"succeeded",
+    "candidateSha":"c31eb8f811acc600ab8ba63b544bcddbc138fd83",
+    "verifierAttempt":2,"verifierStatus":"failed","failureReason":"acceptance_mapping_quote_invalid","failureStage":"proposal_validation",
+    "contractHash":"a8c767d341d58bda31698f69a07b428338a10effabeb0af904ede77d72fb2d75",
+    "mappingRequestKey":"86a6532ad230b6d774e053466c5af725e79f511eff7755e9f4b852d078ed1414","mappingAttempt":1,
+    "supplementalChecks":0,"verifierCommands":0,"unsettledVerificationSessions":0,
+    "technicalPassed":false,"metaPassed":false,"completedMetaPassed":false,
+    "failureNotice":"sent","failureSentAt":1788935465470,
+    "observations":["c85883","fa5dc3"],
+    "causalLimit":"Failed raw proposal was not persisted. Exact incorrect source line, quote or test-name error cannot be reconstructed."
+  },
+  "next": "Explicit selector protocol with host-materialized exact quotes, original strict validation and independent semantic review; no attempt reset or policy-identity bypass.",
+  "goalComplete": false
+}
