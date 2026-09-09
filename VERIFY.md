@@ -1536,3 +1536,10 @@ git diff --check
 - 历史 Work Item 状态包恢复：通过，启动后生成 5 个 CURRENT 指针。
 - 回滚镜像：已保留并验证可用。
 - 本批独立安全审查：附件投影并发 High 已通过数据库原子认领和 Spec 投影幂等门禁关闭；复核未发现新的 Critical / High。
+# 2026-09-09 本机上线与原任务真实执行
+
+- 一次性维护工具：`node --test scripts/collaboration-pilot/reset-failed-execution.test.cjs` 21 项通过；定向 oxlint、`pnpm typecheck`、diff 检查通过。真实私有副本 apply 与幂等重放通过；实操固定脚本及最终工具版本分别记录，不混淆。
+- 正常 runtime 从保留的 WI3/Spec4/plan2 生成真实候选 c31eb8f811acc600ab8ba63b544bcddbc138fd83，自测通过；独立 Verifier mapping 失败，Meta/整个自动闭环未通过。
+- 固定候选独立验证：32 项逻辑、3 文件 10 项 Node 测试、构建、2 项 SSR 与 eslint 通过；真实 CUA 桌面与手机交互通过。它们不冒充原始自测或产品内 Verifier 证据。
+- launchd `com.openmausbot.release-room` 常驻运行，127.0.0.1:3100 HTTP 200；Docker headless 同一已验证镜像 systemd active/enabled。未真实重启 macOS，不宣称已完成主机重启验收。
+- 完整版本、边界与维护回执见 `docs/pilot/evidence/conversation-local-release-20260909.json`。新诊断源码尚未发布；没有为源码诊断变更重启真实业务。
