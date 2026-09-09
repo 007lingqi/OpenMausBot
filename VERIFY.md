@@ -1,5 +1,9 @@
 # Meta 协作验证记录
 
+## 2026-09-09 真实执行恢复依赖收束
+
+310059核对ba1742f及仅用户outputs/；1b658a现场同实例/镜像/StartedAt/restarts0；f7d42d原事项仍四次终态无resultSha、无在途session、事件15/Outbox48sent18superseded/Owner1；8bf009只读审计确认3→4授权已issued/reserved/started且过期。没有新的群输入或业务执行；本轮不重复已通过验证。连续三轮的同一原事项再次执行决定缺口已满足阻塞阈值，原生状态blocked（updatedAt1788922655），不是complete。详见PROGRESS顶部；本节仅记录收束，不产生新执行授权。
+
 ## 2026-09-09 Linux 运行时并发及崩溃恢复补验
 
 - 398622/session29172终态0：真实 runtime 在途持久化后自建controller被SIGKILL；runner确认并停止仍活跃的精确子任务，新runtime用真实Docker退出证据结算、恢复通知本地投递，独立lifecycle继续，第三次runtime去重。两阶段退出0、故障阶段137是预期；不是自动重跑原业务、真实群送达或在途VM重启。

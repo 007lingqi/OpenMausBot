@@ -1,5 +1,7 @@
 # 纯对话目标验收核对
 
+当前收束（2026-09-09）：原生Goal已标blocked（updatedAt1788922655），不是complete。原事项再次执行的决定从镜像修复部署、独立可靠性补验到本轮复核连续三轮未取得；8bf009确认旧3→4已消费并过期。本轮现场服务/历史保持，未重跑业务或合成验证。以下active为修复/补验时点记录；最新状态与恢复入口见PROGRESS顶部。
+
 更新：2026-09-09。原生Goal active，整体未完成。固定源码f3922a8及c7839032…镜像已部署，实际service/coordinator/provider三pin一致，任务执行器版本错位已修复；完整回归、首次预检失败与最终交接见[任务镜像修复证据](evidence/conversation-worker-image-fix-20260909.json)。原事项一次性3→4恢复的前三次历史及version3/Spec4/plan2保留；第四次失败、无resultSha，失败通知已通过持久回执对账确认sent，没有第五次。旧provider镜像的60秒硬期限及缺失失败分类已证实，但第四次请求级记录未保留，不能重建其最终异常。第四次终态见[一次性恢复证据](evidence/conversation-execution-recovery-20260909.json)。只提案模型验证和无模型入口检查均不是C1交付。本文件对应 [当前目标](pmo-conversation-goal.md)，文档/表格/附件/DWS/cardTemplateId 仍不作为前置。
 
 ## 当前证据与缺口
