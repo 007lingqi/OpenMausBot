@@ -30,6 +30,7 @@ import { WorktreeManager, type ManagedWorktree } from "./worktree-manager.ts";
 import { readPlanMaterialReadiness } from "./plan-material-readiness.ts";
 import { assertLedgerArmed } from "./restore-guard.ts";
 import { ExecutionLifecycle } from "./execution-lifecycle.ts";
+import { assertExecutionRecoveryCanStart } from "./execution-recovery-authorization.ts";
 import { CommandCleanupError } from "./execution-limits.ts";
 
 interface NodeRow {
@@ -122,7 +123,9 @@ export class CandidateExecutor {
   async executeCurrentPlan(workItemId: string, attempt = 1, now = Date.now()): Promise<CandidateExecutionOutcome> {
     if (this.closed) throw new Error("Candidate executor is closed");
     assertLedgerArmed(this.database);
-    if (attempt > this.options.limits.maxAttempts) throw new Error("Execution attempt limit exceeded");
+    if (attempt > this.options.limits.maxAttempts && !(attempt === 4 && this.options.limits.maxAttempts === 3)) {
+      throw new Error("Execution attempt limit exceeded");
+    }
     const leaseNow = Date.now();
     const instance = this.instanceLeases.acquire(
       leaseNow,
@@ -138,9 +141,14 @@ export class CandidateExecutor {
     const repository = realpathSync(node.repository);
     const configured = Object.entries(this.options.repositories).find(([path]) => realpathSync(path) === repository)?.[1];
     if (!configured) throw new Error("Work Item repository is not configured for execution");
+    if (attempt > this.options.limits.maxAttempts) {
+      assertExecutionRecoveryCanStart(this.database, { workItemId, attempt, maxAttempts: this.options.limits.maxAttempts,
+        lease: instance, baseSha: configured.baseSha, now: Date.now() });
+    }
     const runId = randomUUID();
     const lifecycle = new ExecutionLifecycle(this.database, runId, instance);
-    lifecycle.reserve({ workItemId, planRevision: node.current_plan_revision, repository, baseSha: configured.baseSha, attempt });
+    lifecycle.reserve({ workItemId, planRevision: node.current_plan_revision, repository, baseSha: configured.baseSha,
+      attempt, maxAttempts: this.options.limits.maxAttempts });
     let ordinal = 0;
     let cleanupUnknown = false;
     const agent: AgentRunPort = {

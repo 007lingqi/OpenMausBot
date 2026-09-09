@@ -1,5 +1,14 @@
 # Meta 协作验证记录
 
+## 2026-09-09 原事项一次性本机恢复
+
+- 新增安全文件 CLI：参数回归 ef748f 红后 3f5b60 绿（5项）；非法请求误启动 runtime 的明确红灯 aabdeb，100037 绿（9项）。CLI 成功及同文件重放在真实临时账本集成测试验证，不启动第二 runtime、不伪造群 Owner 事件。
+- 团队记录授权后重启不能启动原事项的真实集成红灯；最终 28 项调度测试通过，含三次真实失败/结清、未授权禁止4、授权重启仅一次4、4失败后无5、成功候选真实Git和两次Node断言、独立Verifier/Meta、实际回复序列化。containment和平台网络为替身，不冒充真实Docker/群验收。
+- 授权模块56项通过，定向lint及diff检查通过。独立审查 fd63ba 找到 validate 命令未绑定，修复后 60449f 在dispatch/start双阶段均拒绝变更；另补全局请求ID冲突检查。完整节点静态配置、Spec/计划/Owner/基线/失败run均绑定；audit应用追加但无数据库防改触发器，一次性同时依赖事务和既有dispatch/session唯一锚。
+- d0d085早期联合4文件78项/typecheck通过；最终源冻结后完整发布回归 session2005 已终态0（e34a9a），`pnpm test && pnpm typecheck && git diff --check`全部通过，包含主测试门槛、broker/Node、打包启动及headless烟测。此次未改maxAttempts=3、不改旧任务版本或数据、不自动push。
+- fe8ed3现场原服务仍running/healthy、其他容器均退出；079b64确认当前无主动群路由、maxAttempts3，59439d确认原事项仅一个既有群alias。尚未新发布或执行第四次。新发布脚本独立fixture/语法518115通过，主线程8788ae核对仅四个新旧身份常量变更，不重跑旧成功守卫。
+- 同群主动路由依据：[官方Stream接收示例](https://open.dingtalk.com/document/dingstart/robot-receive-message.md)直接将conversationId赋值给openConversationId，root342c79与独立文档核对一致；[发送接口](https://open.dingtalk.com/document/development/the-robot-sends-a-group-message.md)要求该会话ID。不根据消息正文或cid前缀猜目标。只准备原唯一白名单群的显式本机配置；发送权限和业务成功仍需实际回执证明。
+
 ## 2026-09-08 恢复授权阻塞审计
 
 - 53d11a确认上轮4520e06已提交、仅用户outputs/未跟踪；上一轮为新增证据progress。本轮未获得一次额外恢复授权，原生update_goal返回blocked（updatedAt1788872301）。同一授权依赖连续跨发布交接、重放补验、当前续跑三轮，已完成独立补验，无新业务或模型执行。

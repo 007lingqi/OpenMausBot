@@ -32,6 +32,7 @@ import {
 } from "../containment.ts";
 import type { CandidateExecutorOptions, CandidateExecutionOutcome } from "../executor.ts";
 import { authorizedPreparationRetrySql, preparationDispatchAllowed, recordPreparationResult } from "../execution-preparation.ts";
+import { executionRecoveryCanDispatch, pendingExecutionRecoveryWorkItems, reserveExecutionRecovery } from "../execution-recovery-authorization.ts";
 import { CommandCleanupError } from "../execution-limits.ts";
 import { hasUnsettledRepositoryActivity } from "../repository-occupancy.ts";
 import { recoverLifecycleSession, type LifecycleRecoveryOutcome } from "../lifecycle-recovery.ts";
@@ -1457,7 +1458,10 @@ export class CollaborationHeadlessRuntime {
       return;
     }
     const attempt = ready.previous_attempt + 1;
-    if (attempt > this.options.execution!.limits.maxAttempts) { this.queuedWorkItems.delete(workItemId); return; }
+    const maxAttempts = this.options.execution!.limits.maxAttempts;
+    if (attempt > maxAttempts && !executionRecoveryCanDispatch(this.database, workItemId, attempt, maxAttempts, this.clock.now())) {
+      this.queuedWorkItems.delete(workItemId); return;
+    }
     const repository = this.repositoryQueueKey(ready.repository);
     if (this.activeRepositoryExecutions.has(repository)) {
       this.queuedWorkItems.add(workItemId);
@@ -1469,6 +1473,9 @@ export class CollaborationHeadlessRuntime {
     this.database.exec("BEGIN IMMEDIATE");
     try {
       assertCurrentInstanceLease(this.database, this.lease, this.clock.now());
+      if (attempt > maxAttempts) {
+        reserveExecutionRecovery(this.database, { workItemId, attempt, maxAttempts, lease: this.lease, now: this.clock.now() });
+      }
       // Reserve before worktree preparation: failures/crashes here must not reset the attempt budget.
       this.database.prepare("INSERT INTO collaboration_execution_dispatches (work_item_id,plan_revision,attempt,instance_owner,instance_fence,created_at) VALUES (?,?,?,?,?,?)")
         .run(workItemId, ready.plan_revision, attempt, this.lease.ownerId, this.lease.fence, this.clock.now());
@@ -1545,6 +1552,11 @@ export class CollaborationHeadlessRuntime {
       (excluded.length ? `AND w.id NOT IN (${excluded.map(() => "?").join(",")}) ` : "") +
       "ORDER BY p.created_at,w.created_at,w.id LIMIT 64").all(this.options.execution!.limits.maxAttempts, ...excluded) as unknown as Array<{ id: string }>;
     for (const row of rows) this.scheduleReadyExecution(row.id);
+    // Exhausted plans stay out of the ordinary queue. Only a fixed, unconsumed
+    // local recovery grant may re-enter, with all checks repeated at reservation.
+    for (const workItemId of pendingExecutionRecoveryWorkItems(this.database, this.clock.now())) {
+      if (!this.scheduledWorkItems.has(workItemId)) this.scheduleReadyExecution(workItemId);
+    }
   }
 
   private async enqueueExecutionStatus(outcome: CandidateExecutionOutcome): Promise<void> {

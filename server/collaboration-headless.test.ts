@@ -59,6 +59,37 @@ function signalIo(): { io: HeadlessIo; signal(name: NodeJS.Signals): void } {
 }
 
 describe("secure collaboration headless CLI", () => {
+  it("parses a dedicated local execution recovery request without enabling Owner identity recovery", () => {
+    expect(parseHeadlessArguments(["--authorize-execution-recovery", "/tmp/recovery.json"], {}))
+      .toMatchObject({ executionRecoveryFile: "/tmp/recovery.json", recoverOwner: false, healthOnly: false });
+  });
+  it.each([
+    ["--authorize-execution-recovery", "relative.json"],
+    ["--authorize-execution-recovery", "/tmp/recovery.json", "--health"],
+    ["--authorize-execution-recovery", "/tmp/recovery.json", "--recover-owner", "--expected-generation", "1", "--identity-stdin"],
+    ["--authorize-execution-recovery", "/tmp/recovery.json", "--authorize-execution-recovery", "/tmp/other.json"],
+  ])("rejects ambiguous execution recovery CLI arguments %j", (...args) => {
+    expect(() => parseHeadlessArguments(args, {})).toThrow("execution_recovery_arguments_invalid");
+  });
+  it.each(["invalid-json", "{}", JSON.stringify({ unexpected: "sensitive-fixture-value" })])(
+    "rejects invalid execution recovery data without starting the runtime or disclosing the request", async (raw) => {
+      const directory = temporaryDirectory(), request = join(directory, "recovery.json"), output = io();
+      writeFileSync(request, raw, { mode: 0o600 });
+      let created = false;
+      await expect(runCollaborationHeadless(["--data-dir", directory, "--authorize-execution-recovery", request], {}, {
+        io: output.io, createRuntime() { created = true; throw new Error("unexpected_runtime_creation"); },
+      })).rejects.toThrow("execution_recovery_request_invalid");
+      expect(created).toBe(false);
+      expect(output.stdout.join("") + output.stderr.join("")).not.toContain(raw);
+    },
+  );
+  it("rejects a public execution recovery file before opening a runtime", async () => {
+    const directory = temporaryDirectory(), request = join(directory, "recovery.json");
+    writeFileSync(request, "{}", { mode: 0o600 }); chmodSync(request, 0o644);
+    await expect(runCollaborationHeadless(["--data-dir", directory, "--authorize-execution-recovery", request], {}, {
+      io: io().io, createRuntime() { throw new Error("unexpected_runtime_creation"); },
+    })).rejects.toThrow("credential_file_permissions_must_be_0600");
+  });
   it("wires explicitly authorized online documents without reading them during a health probe", async () => {
     const directory = temporaryDirectory(), config = join(directory, "online.json");
     writeFileSync(config, JSON.stringify({ version: 1, grants: [{ id: "fixture", profile: "corp:user", conversationId: "group",

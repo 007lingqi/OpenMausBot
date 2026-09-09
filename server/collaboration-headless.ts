@@ -10,6 +10,7 @@ import { approvalPayloadHash, isApprovalPresentationCard } from "./collaboration
 import { CollaborationDegradationController } from "./collaboration/degradation.ts";
 import type { OutboxDeliveryPort } from "./collaboration/outbox.ts";
 import { LocalOwnerRegistry } from "./collaboration/owner.ts";
+import { authorizeExecutionRecoveryLocally, parseExecutionRecoveryRequest } from "./collaboration/execution-recovery-authorization.ts";
 import {
   configuredCredentialPath,
   readEncryptionKey,
@@ -81,6 +82,7 @@ interface HeadlessArguments {
   healthOnly: boolean;
   help: boolean;
   recoverOwner: boolean;
+  executionRecoveryFile?: string;
   expectedGeneration?: number;
   identitySource?: { kind: "stdin" } | { kind: "file"; path: string };
 }
@@ -118,6 +120,7 @@ function usage(): string {
   return [
     "Usage: pnpm collaboration:headless [--data-dir PATH] [--health]",
     "       pnpm collaboration:headless --recover-owner --expected-generation N (--identity-stdin | --identity-file PATH)",
+    "       pnpm collaboration:headless --authorize-execution-recovery /absolute/request.json",
     "",
     "  --data-dir PATH           Store collaboration state below PATH",
     "  --health                  Print health JSON and exit",
@@ -125,6 +128,7 @@ function usage(): string {
     "  --expected-generation N   Required compare-and-swap generation for Owner recovery",
     "  --identity-stdin          Read new corp/staff identity as JSON from stdin",
     "  --identity-file PATH      Read new identity from an absolute regular 0600 file",
+    "  --authorize-execution-recovery PATH  Authorize one fixed execution recovery from a private local file and exit",
   ].join("\n");
 }
 
@@ -133,11 +137,17 @@ export function parseHeadlessArguments(argv: readonly string[], environment: Nod
   let healthOnly = false;
   let help = false;
   let recoverOwner = false;
+  let executionRecoveryFile: string | undefined;
   let expectedGeneration: number | undefined;
   let identitySource: HeadlessArguments["identitySource"];
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
-    if (argument === "--health") {
+    if (argument === "--authorize-execution-recovery") {
+      const value = argv[index + 1];
+      if (executionRecoveryFile || !value || !isAbsolute(value)) throw new Error("execution_recovery_arguments_invalid");
+      executionRecoveryFile = value;
+      index += 1;
+    } else if (argument === "--health") {
       healthOnly = true;
     } else if (argument === "--recover-owner") {
       recoverOwner = true;
@@ -169,6 +179,9 @@ export function parseHeadlessArguments(argv: readonly string[], environment: Nod
       throw new Error(`Unknown argument: ${argument}`);
     }
   }
+  if (executionRecoveryFile && (healthOnly || help || recoverOwner || expectedGeneration || identitySource)) {
+    throw new Error("execution_recovery_arguments_invalid");
+  }
   if (recoverOwner) {
     if (healthOnly) throw new Error("--recover-owner cannot be combined with --health");
     if (!expectedGeneration || !identitySource) {
@@ -177,7 +190,7 @@ export function parseHeadlessArguments(argv: readonly string[], environment: Nod
   } else if (expectedGeneration || identitySource) {
     throw new Error("owner_recovery_options_require_--recover-owner");
   }
-  return { dataDirectory: resolve(dataDirectory), healthOnly, help, recoverOwner, expectedGeneration, identitySource };
+  return { dataDirectory: resolve(dataDirectory), healthOnly, help, recoverOwner, expectedGeneration, identitySource, executionRecoveryFile };
 }
 
 function safeRuntimeLogger(io: HeadlessIo): RuntimeLogger {
@@ -724,6 +737,25 @@ async function recoverOwner(options: HeadlessArguments, io: HeadlessIo): Promise
   }
 }
 
+function authorizeExecutionRecovery(options: HeadlessArguments, io: HeadlessIo): void {
+  const raw = readSecureCredentialFile(options.executionRecoveryFile!);
+  let request: ReturnType<typeof parseExecutionRecoveryRequest>;
+  try {
+    request = parseExecutionRecoveryRequest(JSON.parse(raw.toString("utf8")) as unknown);
+  } catch {
+    throw new Error("execution_recovery_request_invalid");
+  } finally { raw.fill(0); }
+  // This local operator command neither impersonates a DingTalk Owner event nor starts a scheduler.
+  const ledger = openCollaborationLedger(join(options.dataDirectory, "collaboration"));
+  const database = new DatabaseSync(ledger.filePath);
+  try {
+    database.exec("PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000");
+    const result = authorizeExecutionRecoveryLocally(database, request);
+    io.stdout.write(`${JSON.stringify({ status: "execution_recovery_authorized", workItemId: result.workItemId,
+      attempt: result.attempt, duplicate: result.duplicate, expiresAt: result.expiresAt })}\n`);
+  } finally { database.close(); ledger.close(); }
+}
+
 function waitForSignal(io: HeadlessIo): { promise: Promise<NodeJS.Signals>; dispose(): void } {
   let resolveSignal: ((signal: NodeJS.Signals) => void) | undefined;
   const promise = new Promise<NodeJS.Signals>((resolve) => (resolveSignal = resolve));
@@ -765,6 +797,10 @@ export async function runCollaborationHeadless(
   }
   if (options.recoverOwner) {
     await recoverOwner(options, io);
+    return null;
+  }
+  if (options.executionRecoveryFile) {
+    authorizeExecutionRecovery(options, io);
     return null;
   }
   const shutdownTimeoutMs = dependencies.shutdownTimeoutMs ?? 10_000;

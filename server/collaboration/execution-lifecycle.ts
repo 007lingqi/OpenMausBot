@@ -3,6 +3,7 @@ import { verifyContainmentProof, type ContainmentBinding, type ContainmentPort, 
 import { assertCurrentInstanceLease, type InstanceLease } from "./leases.ts";
 import { assertLedgerArmed } from "./restore-guard.ts";
 import { canonicalRepository, hasUnsettledRepositoryActivity } from "./repository-occupancy.ts";
+import { consumeExecutionRecoveryStart } from "./execution-recovery-authorization.ts";
 
 type Lease = Pick<InstanceLease, "ownerId" | "fence">;
 
@@ -27,12 +28,16 @@ export class ExecutionLifecycle {
     } catch (error) { this.db.exec("ROLLBACK"); throw error; }
   }
 
-  reserve(input: { workItemId: string; planRevision: number; repository: string; baseSha: string; attempt: number }): void {
+  reserve(input: { workItemId: string; planRevision: number; repository: string; baseSha: string; attempt: number; maxAttempts?: number }): void {
     this.transaction(() => {
       const repository = canonicalRepository(input.repository);
       if (hasUnsettledRepositoryActivity(this.db, repository)) throw new Error("execution_repository_unsettled");
       if (!this.db.prepare("SELECT 1 FROM collaboration_work_items WHERE id=? AND current_plan_revision=? AND control_state='active' AND definition_status='ready_for_execution' AND status NOT IN ('accepted','cancelled')")
         .get(input.workItemId, input.planRevision)) throw new Error("execution_target_unavailable");
+      if (input.maxAttempts !== undefined && input.attempt > input.maxAttempts) {
+        consumeExecutionRecoveryStart(this.db, { workItemId: input.workItemId, attempt: input.attempt,
+          maxAttempts: input.maxAttempts, lease: this.lease, baseSha: input.baseSha, sessionId: this.id, now: Date.now() });
+      }
       this.db.prepare("INSERT INTO collaboration_execution_sessions(id,work_item_id,plan_revision,repository_path,base_sha,attempt,instance_owner,instance_fence,created_at) VALUES(?,?,?,?,?,?,?,?,?)")
         .run(this.id, input.workItemId, input.planRevision, repository, input.baseSha, input.attempt, this.lease.ownerId, this.lease.fence, Date.now());
     });

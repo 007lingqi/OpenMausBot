@@ -1,8 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { Readable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WorktreeManager } from "../worktree-manager.ts";
 import { CommandCleanupError } from "../execution-limits.ts";
@@ -28,12 +29,16 @@ import type {
 import { startCollaborationService } from "../service.ts";
 import { currentInstanceLease } from "../leases.ts";
 import { recordPreparationResult } from "../execution-preparation.ts";
+import { authorizeExecutionRecoveryLocally } from "../execution-recovery-authorization.ts";
 import { CollaborationHeadlessRuntime, type CollaborationHeadlessRuntimeOptions } from "./runtime.ts";
-import { createDingTalkDelivery } from "../../collaboration-headless.ts";
+import { createDingTalkDelivery, runCollaborationHeadless } from "../../collaboration-headless.ts";
 import { DingTalkSessionReplyRegistry } from "../../integrations/dingtalk/reply-router.ts";
 import type { OutboxDeliveryPort } from "../outbox.ts";
 import { naturalRetryResultOrigin } from "../delivery-routing.ts";
 import { FetchDingTalkInteractiveCardSender } from "../../integrations/dingtalk/interactive-card-sender.ts";
+import { FetchDingTalkSessionSender } from "../../integrations/dingtalk/sender.ts";
+import { acceptanceConditionHash } from "../acceptance-assertions.ts";
+import { candidateHasPassedMetaReview } from "../candidate-verification.ts";
 
 const scratch: string[] = [];
 
@@ -111,6 +116,21 @@ class PassingRunner implements SandboxedCommandRunner {
         containmentProof,
       },
     };
+  }
+}
+
+class ExecutingAssertionRunner extends PassingRunner {
+  readonly requests: SandboxedCommandRequest[] = [];
+
+  override async run(request: SandboxedCommandRequest): Promise<SandboxedCommandResult> {
+    this.requests.push(request);
+    const result = await super.run(request);
+    // The fixture containment is simulated; the assertion itself executes against
+    // the actual candidate worktree, once per developer/verifier run binding.
+    const stdout = execFileSync(request.argv[0], request.argv.slice(1), {
+      cwd: request.cwd, env: request.environment, timeout: request.timeoutMs, maxBuffer: request.maxOutputBytes,
+    });
+    return { ...result, stdout };
   }
 }
 
@@ -375,6 +395,193 @@ describe("runtime repository single-writer scheduling", () => {
       } else expect(h.agent.startedWorkItems).toHaveLength(1);
     } finally { await stopHarness(h); db.close(); }
   });
+
+  it.each(["fail", "complete"] as const)("recovers the original exhausted Work Item once after local authorization and never schedules a fifth attempt across restarts (%s)", async decision => {
+    const fixtureRepository = createRepository(temporaryDirectory(), "local-execution-recovery");
+    const repo = { ...fixtureRepository, path: realpathSync(fixtureRepository.path) };
+    const h = createHarness([repo]);
+    h.options.autoExecuteReady = false;
+    h.options.execution!.limits.maxAttempts = 3;
+    h.options.outboxDelivery = { deliver: async () => ({ outcome: "sent" as const }) };
+    const service = startCollaborationService({ dataDirectory: h.options.dataDirectory });
+    const owner = service.bootstrapOwnerLocally({ senderCorpId: "corp", senderStaffId: "staff", now: Date.now() });
+    service.close();
+    const db = new DatabaseSync(h.databaseFile);
+    const workItemId = h.items[0].workItemId;
+    const assertionRunner = new ExecutingAssertionRunner();
+    if (decision === "complete") {
+      h.options.commandRunner = assertionRunner;
+      const targetCommand: TargetCommandSpec = {
+        argv: [process.execPath, "-e", [
+          "const assert = require('node:assert/strict'); const fs = require('node:fs');",
+          `assert.equal(fs.readFileSync('src/value.txt','utf8'), ${JSON.stringify(`${workItemId}\n`)});`,
+          "process.stdout.write(JSON.stringify({ version: 1, runId: process.env.OMB_ASSERTION_RUN_ID, nonce: process.env.OMB_ASSERTION_NONCE, assertions: [{ id: 'value-updated', state: 'passed' }] }));",
+        ].join("\n")],
+        timeoutMs: 5_000, maxOutputBytes: 32_000,
+        assertionContract: { format: "omb-assertions-v1", bindings: [{
+          conditionHash: acceptanceConditionHash({ description: "修改已经完成", observation: "pnpm test target" }),
+          assertionIds: ["value-updated"],
+        }] },
+      };
+      h.options.execution!.repositories[repo.path].targetCommands = { "pnpm test target": targetCommand };
+    }
+    const originalState = () => ({
+      workItem: db.prepare("SELECT id,version,current_plan_revision,definition_status,control_state FROM collaboration_work_items WHERE id=?").get(workItemId),
+      plans: db.prepare("SELECT * FROM collaboration_plan_revisions WHERE work_item_id=? ORDER BY revision").all(workItemId),
+      snapshots: db.prepare("SELECT * FROM collaboration_work_item_snapshots WHERE work_item_id=? ORDER BY revision").all(workItemId),
+      runs: db.prepare("SELECT * FROM collaboration_runs WHERE work_item_id=? AND attempt<=3 ORDER BY attempt").all(workItemId),
+      dispatches: db.prepare("SELECT * FROM collaboration_execution_dispatches WHERE work_item_id=? AND attempt<=3 ORDER BY attempt").all(workItemId),
+      sessions: db.prepare("SELECT * FROM collaboration_execution_sessions WHERE work_item_id=? AND attempt<=3 ORDER BY attempt").all(workItemId),
+      settlements: db.prepare("SELECT f.* FROM collaboration_execution_settlements f JOIN collaboration_execution_sessions s ON s.id=f.session_id WHERE s.work_item_id=? AND s.attempt<=3 ORDER BY s.attempt").all(workItemId),
+      candidates: db.prepare("SELECT c.* FROM collaboration_candidates c JOIN collaboration_runs r ON r.id=c.run_id WHERE r.work_item_id=? AND r.attempt<=3 ORDER BY r.attempt").all(workItemId),
+      owners: db.prepare("SELECT * FROM collaboration_owner_bindings ORDER BY generation").all(),
+      inboundEvents: db.prepare("SELECT * FROM collaboration_external_events ORDER BY id").all(),
+    });
+    const attempts = (table: "runs" | "execution_sessions" | "execution_dispatches") =>
+      db.prepare(`SELECT attempt FROM collaboration_${table} WHERE work_item_id=? ORDER BY attempt`).all(workItemId);
+    const restart = async () => {
+      await h.runtime.stop();
+      h.agent = new DeferredAgent();
+      h.runtime = new CollaborationHeadlessRuntime({ ...h.options, agent: h.agent });
+      await h.runtime.start();
+    };
+    try {
+      await h.runtime.start();
+      // Real execution and settlement history, without synthesizing Owner group messages.
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        const execution = h.runtime.executeCurrentPlan(workItemId, attempt);
+        void execution.catch(() => undefined);
+        await waitFor(() => h.agent.startedWorkItems.length === attempt, `attempt ${attempt} did not start`);
+        h.agent.resolve(workItemId, "fail");
+        await execution;
+      }
+      expect(db.prepare("SELECT attempt,status,result_sha FROM collaboration_runs WHERE work_item_id=? ORDER BY attempt").all(workItemId))
+        .toEqual([1, 2, 3].map(attempt => ({ attempt, status: "failed", result_sha: null })));
+      expect(db.prepare("SELECT count(*) AS n FROM collaboration_execution_sessions s JOIN collaboration_execution_settlements f ON f.session_id=s.id WHERE s.work_item_id=?").get(workItemId))
+        .toEqual({ n: 3 });
+      const preserved = originalState();
+      h.options.autoExecuteReady = true;
+      await restart();
+      for (let pass = 0; pass < 3; pass++) await h.runtime.drainOnce();
+      await expectNotStarted(h.agent, workItemId);
+      await expect(h.runtime.executeCurrentPlan(workItemId, 4)).rejects.toThrow();
+      expect(attempts("runs")).toEqual([{ attempt: 1 }, { attempt: 2 }, { attempt: 3 }]);
+      expect(attempts("execution_sessions")).toEqual([{ attempt: 1 }, { attempt: 2 }, { attempt: 3 }]);
+      expect(attempts("execution_dispatches")).toEqual([]);
+      expect(originalState()).toEqual(preserved);
+
+      // Crash boundary: persist the grant locally while no scheduler is running.
+      await h.runtime.stop();
+      const target = db.prepare("SELECT w.version,w.current_plan_revision,p.snapshot_revision,r.id AS failed_run_id FROM collaboration_work_items w JOIN collaboration_plan_revisions p ON p.work_item_id=w.id AND p.revision=w.current_plan_revision JOIN collaboration_runs r ON r.work_item_id=w.id AND r.attempt=3 WHERE w.id=?")
+        .get(workItemId) as { version: number; current_plan_revision: number; snapshot_revision: number; failed_run_id: string };
+      const authorization = {
+        requestId: "local-original-work-item-recovery", workItemId,
+        expectedOwnerGeneration: owner.generation, expectedWorkItemVersion: target.version,
+        expectedPlanRevision: target.current_plan_revision, expectedSnapshotRevision: target.snapshot_revision,
+        expectedFailedRunId: target.failed_run_id, expectedBaseSha: repo.baseSha,
+        authorizationReferenceHash: "a".repeat(64),
+      };
+      const authorizationFile = join(h.options.dataDirectory, "execution-recovery.json");
+      writeFileSync(authorizationFile, JSON.stringify(authorization), { mode: 0o600 });
+      const stdout: string[] = [], stderr: string[] = [];
+      const createRuntime = vi.fn(() => { throw new Error("must_not_start_runtime"); });
+      const authorizeWithCli = () => runCollaborationHeadless(["--data-dir", h.options.dataDirectory, "--authorize-execution-recovery", authorizationFile], {}, {
+        createRuntime,
+        io: { stdin: Readable.from([]), stdout: { write: value => stdout.push(value) },
+          stderr: { write: value => stderr.push(value) }, once() {}, off() {} },
+      });
+      expect(await authorizeWithCli()).toBeNull();
+      expect(createRuntime).not.toHaveBeenCalled();
+      expect(stderr).toEqual([]);
+      expect(stdout).toHaveLength(1);
+      expect(JSON.parse(stdout[0])).toEqual({ status: "execution_recovery_authorized", workItemId,
+        attempt: 4, duplicate: false, expiresAt: expect.any(Number) });
+      expect(stdout.join("")).not.toContain(authorization.authorizationReferenceHash);
+      expect(stdout.join("")).not.toContain(target.failed_run_id);
+      expect(stdout.join("")).not.toContain(owner.id);
+      expect(await authorizeWithCli()).toBeNull();
+      expect(stdout).toHaveLength(2);
+      expect(JSON.parse(stdout[1])).toEqual({ ...JSON.parse(stdout[0]), duplicate: true });
+      expect(createRuntime).not.toHaveBeenCalled();
+      expect(stderr).toEqual([]);
+      expect(originalState()).toEqual(preserved);
+      await restart();
+      await waitFor(() => h.agent.startedWorkItems.length === 1, "authorized fourth attempt was not recovered after restart");
+      for (let pass = 0; pass < 3; pass++) await h.runtime.drainOnce();
+      expect(h.agent.startedWorkItems).toEqual([workItemId]);
+      expect(attempts("execution_dispatches")).toEqual([{ attempt: 4 }]);
+      expect(attempts("execution_sessions")).toEqual([1, 2, 3, 4].map(attempt => ({ attempt })));
+      expect(originalState()).toEqual(preserved);
+
+      h.agent.resolve(workItemId, decision);
+      await waitFor(() => Boolean(db.prepare("SELECT 1 FROM collaboration_runs r JOIN collaboration_execution_settlements f ON f.session_id=r.id WHERE r.work_item_id=? AND r.attempt=4 AND r.status=? AND r.finished_at IS NOT NULL")
+        .get(workItemId, decision === "complete" ? "succeeded" : "failed")), "fourth execution did not settle");
+      const recoveredRun = db.prepare("SELECT id,result_sha,worktree_path,agent_id FROM collaboration_runs WHERE work_item_id=? AND attempt=4")
+        .get(workItemId) as { id: string; result_sha: string | null; worktree_path: string; agent_id: string };
+      await waitFor(() => Boolean(db.prepare("SELECT 1 FROM collaboration_outbox WHERE source_event_id=? OR source_event_id LIKE ?")
+        .get(`candidate:${recoveredRun.id}`, `verification:${recoveredRun.id}:%`)), "recovery result was not published after verification");
+      expect(db.prepare("SELECT stage,status,json_extract(verdict_json,'$.reasons') AS reasons FROM collaboration_candidate_reviews WHERE candidate_run_id=? AND status<>'passed'")
+        .all(recoveredRun.id)).toEqual([]);
+      const result = db.prepare("SELECT aggregate_id,aggregate_version,payload_json FROM collaboration_outbox WHERE source_event_id=?")
+        .get(`candidate:${recoveredRun.id}`) as { aggregate_id: string; aggregate_version: number; payload_json: string };
+      expect(result).toMatchObject({ aggregate_id: workItemId, aggregate_version: target.current_plan_revision });
+      const payload = JSON.parse(result.payload_json);
+      expect(payload).toMatchObject({ type: "plan_status_card", workItemId, planRevision: target.current_plan_revision,
+        status: decision === "complete" ? "candidate_ready" : "execution_failed" });
+      if (decision === "complete") {
+        expect(recoveredRun.result_sha).toMatch(/^[a-f0-9]{40}$/u);
+        expect(recoveredRun.result_sha).not.toBe(repo.baseSha);
+        expect(git(recoveredRun.worktree_path, ["show", `${recoveredRun.result_sha}:src/value.txt`])).toBe(workItemId);
+        expect(git(repo.path, ["rev-parse", "HEAD"])).toBe(repo.baseSha);
+        expect(git(repo.path, ["status", "--porcelain"])).toBe("");
+        expect(assertionRunner.requests).toHaveLength(2);
+        expect(assertionRunner.requests[0].cwd).toBe(recoveredRun.worktree_path);
+        expect(assertionRunner.requests[1].cwd).toBe(recoveredRun.worktree_path);
+        expect(assertionRunner.requests[0].containmentBinding.runId).toBe(recoveredRun.id);
+        expect(assertionRunner.requests[1].containmentBinding.runId).not.toBe(recoveredRun.id);
+        expect(db.prepare("SELECT stage,status,agent_id,candidate_sha,snapshot_revision FROM collaboration_candidate_reviews WHERE candidate_run_id=? ORDER BY stage").all(recoveredRun.id))
+          .toEqual([
+            { stage: "meta", status: "passed", agent_id: "meta-acceptance-gate-v1", candidate_sha: recoveredRun.result_sha, snapshot_revision: target.snapshot_revision },
+            { stage: "verifier", status: "passed", agent_id: "deterministic-verifier-v1", candidate_sha: recoveredRun.result_sha, snapshot_revision: target.snapshot_revision },
+          ]);
+        expect(db.prepare("SELECT count(*) AS n FROM collaboration_verification_sessions s JOIN collaboration_verification_settlements f ON f.session_id=s.id WHERE s.candidate_run_id=?").get(recoveredRun.id)).toEqual({ n: 1 });
+        expect(candidateHasPassedMetaReview(db, recoveredRun.id, recoveredRun.result_sha!)).toBe(true);
+        expect(payload).toMatchObject({ workItemVersion: target.version, candidateSha: recoveredRun.result_sha,
+          changedPaths: ["src/value.txt"], testStates: ["pnpm test target: target_passed"],
+          headline: "修改完成，需要负责人确认", approvalReasons: expect.arrayContaining([expect.stringContaining("中高风险")]) });
+        expect(payload.actions).toBeUndefined();
+        const fetcher = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ errcode: 0 })));
+        expect(await new FetchDingTalkSessionSender(fetcher).send("https://api.dingtalk.com/recovery-fixture", payload)).toEqual({ ok: true, status: 200 });
+        const serialized = JSON.parse(String(fetcher.mock.calls[0][1]?.body));
+        expect(serialized).toMatchObject({ msgtype: "markdown", markdown: { title: "待负责人审批" } });
+        expect(serialized.markdown.text).toContain("完成仓库 1 的修改");
+        expect(serialized.markdown.text).not.toContain(recoveredRun.result_sha);
+        expect(serialized.markdown.text).not.toContain(authorization.authorizationReferenceHash);
+      } else {
+        expect(recoveredRun.result_sha).toBeNull();
+        expect(db.prepare("SELECT count(*) AS n FROM collaboration_candidate_reviews WHERE candidate_run_id=?").get(recoveredRun.id)).toEqual({ n: 0 });
+      }
+      for (let pass = 0; pass < 3; pass++) await h.runtime.drainOnce();
+      expect(h.agent.startedWorkItems).toEqual([workItemId]);
+      const completedAttempts = attempts("runs");
+      expect(completedAttempts).toEqual([1, 2, 3, 4].map(attempt => ({ attempt })));
+      expect(originalState()).toEqual(preserved);
+
+      await restart();
+      for (let pass = 0; pass < 3; pass++) await h.runtime.drainOnce();
+      await expectNotStarted(h.agent, workItemId);
+      await expect(h.runtime.executeCurrentPlan(workItemId, 5)).rejects.toThrow();
+      expect(() => authorizeExecutionRecoveryLocally(db, { ...authorization, requestId: "cannot-authorize-fifth-attempt" })).toThrow();
+      expect(attempts("runs")).toEqual(completedAttempts);
+      expect(attempts("execution_sessions")).toEqual(completedAttempts);
+      expect(attempts("execution_dispatches")).toEqual([{ attempt: 4 }]);
+      expect(db.prepare("SELECT id FROM collaboration_work_items").all()).toEqual([{ id: workItemId }]);
+      expect(db.prepare("SELECT count(*) AS n FROM collaboration_outbox WHERE source_event_id=?").get(`candidate:${recoveredRun.id}`)).toEqual({ n: 1 });
+      expect(assertionRunner.requests).toHaveLength(decision === "complete" ? 2 : 0);
+      expect(originalState()).toEqual(preserved);
+    } finally { await stopHarness(h); db.close(); }
+  });
+
   it("rechecks old unread material at restart even without a planner, without reserving or starting execution", async () => {
     const h = createHarness([createRepository(temporaryDirectory(), "legacy-material")]);
     const db = new DatabaseSync(h.databaseFile);
