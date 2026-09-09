@@ -9,6 +9,8 @@ import { isCurrentAttachmentFeedback } from "./attachment-feedback.ts";
 import { isCurrentNaturalIntakeFailureNotice } from "./natural-intake-recovery.ts";
 import { isCurrentDeliveryReviewNotice } from "./delivery-review.ts";
 import { isCurrentMaterialDelivery } from "./plan-material-readiness.ts";
+import { isCurrentCandidateResultDelivery } from "./candidate-result-completion.ts";
+import { confirmCandidateResultDelivery } from "./candidate-result-evidence.ts";
 
 type Query = NonNullable<OutboxDeliveryPort["reconcile"]>;
 interface Row {
@@ -20,7 +22,8 @@ const fingerprint = (row: Row): string => createHash("sha256").update(JSON.strin
 function current(db: DatabaseSync, row: Row): boolean {
   return row.delivery_state === "dead_letter" && row.sent_at === null && row.superseded_at === null &&
     isCurrentRecoveryNotification(db, row) && isCurrentAttachmentFeedback(db, row) &&
-    isCurrentNaturalIntakeFailureNotice(db, row) && isCurrentDeliveryReviewNotice(db, row) && isCurrentMaterialDelivery(db, row);
+    isCurrentNaturalIntakeFailureNotice(db, row) && isCurrentDeliveryReviewNotice(db, row) && isCurrentMaterialDelivery(db, row) &&
+    isCurrentCandidateResultDelivery(db, row);
 }
 
 /** Uses only the transport's query method. Send attempts and uncertain replies remain untouched. */
@@ -68,6 +71,9 @@ export async function reconcileOutboxOne(db: DatabaseSync, query: Query, options
     if (outcome === "confirmed") {
       db.prepare("UPDATE collaboration_outbox SET delivery_state='sent',sent_at=?,last_error=NULL,claim_owner=NULL,claim_fence=NULL,claim_expires_at=NULL," +
         "delivery_sequence=(SELECT COALESCE(MAX(delivery_sequence),0)+1 FROM collaboration_outbox) WHERE id=?").run(finished, row.id);
+      if (result?.outcome === "sent" && result.candidateResultDelivery) {
+        confirmCandidateResultDelivery(db, row.id, result.candidateResultDelivery, finished);
+      }
       if (row.kind === "association_choice_card" && row.aggregate_type === "association") {
         db.prepare("INSERT INTO collaboration_sent_association_choices(outbox_id,external_event_id,payload_json,sent_at) VALUES(?,?,?,?)")
           .run(row.id, row.aggregate_id, row.payload_json, finished);

@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -28,7 +29,11 @@ import { startCollaborationService } from "../service.ts";
 import { CommandCleanupError } from "../execution-limits.ts";
 import { currentInstanceLease, InstanceLeaseCoordinator } from "../leases.ts";
 import { reserveVerification, hasUnsettledVerification } from "../verification-lifecycle.ts";
-import { CandidateVerificationCoordinator } from "../candidate-verification.ts";
+import { CandidateVerificationCoordinator, candidateHasPassedMetaReview, candidateHasPassedTechnicalReview, completedCandidateHasPassedMetaReview } from "../candidate-verification.ts";
+import { acceptanceConditionHash } from "../acceptance-assertions.ts";
+import { acceptanceEvidencePolicySchema } from "../acceptance-evidence.ts";
+import { candidateResultDeliveryProof } from "../candidate-result-evidence.ts";
+import type { OutboxDeliveryPort } from "../outbox.ts";
 import { CollaborationHeadlessRuntime, type CollaborationHeadlessRuntimeOptions } from "./runtime.ts";
 
 const scratch: string[] = [];
@@ -112,7 +117,8 @@ interface RetryFixture {
   owner: DingTalkInboundMessage["sender"];
 }
 
-function seedRetryableCandidate(shared?: { dataDirectory: string; repository?: string; baseSha?: string }, withCandidate = true): RetryFixture {
+function seedRetryableCandidate(shared?: { dataDirectory: string; repository?: string; baseSha?: string }, withCandidate = true,
+  acceptanceConditions = [{ description: "候选值已更新", observation: "pnpm test target 验证候选结果" }], selfReport = false): RetryFixture {
   const id = ++sequence;
   const root = mkdtempSync(join(tmpdir(), "openmausbot-runtime-verification-retry-"));
   scratch.push(root);
@@ -162,7 +168,7 @@ function seedRetryableCandidate(shared?: { dataDirectory: string; repository?: s
     goal: "将候选值更新为 after",
     goalConfirmed: true,
     repository,
-    acceptanceConditions: [{ description: "候选值已更新", observation: "pnpm test target 验证候选结果" }],
+    acceptanceConditions,
     blockingAmbiguities: [],
   }, 2_000);
   service.close();
@@ -194,11 +200,12 @@ function seedRetryableCandidate(shared?: { dataDirectory: string; repository?: s
   );
   database.prepare(
     "INSERT INTO collaboration_test_evidence " +
-      "(id,run_id,command_id,argv_json,cwd,exit_code,duration_ms,stdout,stderr,state,created_at) " +
-      "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+    "(id,run_id,command_id,argv_json,cwd,exit_code,duration_ms,stdout,stderr,state,created_at,containment_binding_json) " +
+      "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
   ).run(
     `evidence-${id}`, runId, "pnpm test target", JSON.stringify(["node", "test"]), worktree,
-    0, 5, "passed", "", "target_passed", 3_100,
+    0, 5, selfReport ? JSON.stringify({ version: 1, runId, nonce: "result-self-check", assertions: [{ id: "value-updated", state: "passed" }] }) : "passed", "", "target_passed", 3_100,
+    selfReport ? JSON.stringify({ runId, nonce: "result-self-check", commandId: "pnpm test target" }) : null,
   );
   }
   database.close();
@@ -252,7 +259,7 @@ function runCount(item: RetryFixture): number {
   return row.count;
 }
 
-function configuredRuntime(item: RetryFixture, runner: FailingVerifierRunner, shutdownTimeoutMs = 10_000, now: number | (() => number) = 4_000,
+function configuredRuntime(item: RetryFixture, runner: SandboxedCommandRunner, shutdownTimeoutMs = 10_000, now: number | (() => number) = 4_000,
   extra: Partial<CollaborationHeadlessRuntimeOptions> = {}) {
   const agent: AgentRunPort = {
     run: vi.fn(async () => { throw new Error("modify_must_not_run_for_verification_retry"); }),
@@ -285,6 +292,233 @@ async function runningRuntime(item: RetryFixture, runner: FailingVerifierRunner,
   await vi.waitFor(()=>{expect(reviewCount(item)).toBe(1);expect(runtime["scheduledWorkItems"].size).toBe(0);});
   return { runtime, agent };
 }
+
+function resultDeliveryFixture(shared?: RetryFixture, featureDescription = "候选值已更新") {
+  const conditions = [
+    { description: featureDescription, observation: "pnpm test target 验证候选结果" },
+    { description: "自动回归并反馈结果", observation: "用两三句话反馈修改内容和实际验证结果" },
+  ];
+  const item = seedRetryableCandidate(shared, true, conditions, true);
+  const db = new DatabaseSync(join(item.dataDirectory, "collaboration", "collaboration.sqlite"));
+  db.exec("PRAGMA foreign_keys = ON");
+  db.prepare("UPDATE collaboration_work_nodes SET risk='low' WHERE work_item_id=?").run(item.workItemId);
+  item.command.assertionContract = { format: "omb-assertions-v1", bindings: [
+    { conditionHash: acceptanceConditionHash(conditions[0]), assertionIds: ["value-updated"] },
+  ] };
+  // SAFETY: This fixture owns one published plan with exactly one validate and one modify node.
+  const row = db.prepare("SELECT p.snapshot_revision,p.proposal_hash,s.goal,s.facts_json,s.assumptions_json,s.acceptance_json,s.blocking_ambiguities_json," +
+    "v.read_scope_json,v.deny_scope_json,m.write_scope_json,m.deny_scope_json AS modify_deny_scope_json " +
+    "FROM collaboration_plan_revisions p JOIN collaboration_work_item_snapshots s ON s.work_item_id=p.work_item_id AND s.revision=p.snapshot_revision " +
+    "JOIN collaboration_work_nodes v ON v.work_item_id=p.work_item_id AND v.plan_revision=p.revision AND v.node_type='validate' " +
+    "JOIN collaboration_work_nodes m ON m.work_item_id=p.work_item_id AND m.plan_revision=p.revision AND m.node_type='modify' WHERE p.work_item_id=? AND p.revision=1")
+    .get(item.workItemId) as { snapshot_revision: number; proposal_hash: string; goal: string; facts_json: string; assumptions_json: string;
+      acceptance_json: string; blocking_ambiguities_json: string; read_scope_json: string; deny_scope_json: string; write_scope_json: string; modify_deny_scope_json: string };
+  const spec = { workItemId: item.workItemId, planRevision: 1, snapshotRevision: row.snapshot_revision, proposalHash: row.proposal_hash,
+    verifierReadScope: JSON.parse(row.read_scope_json), verifierDenyScope: JSON.parse(row.deny_scope_json), goal: row.goal,
+    facts: JSON.parse(row.facts_json), assumptions: JSON.parse(row.assumptions_json), acceptance: JSON.parse(row.acceptance_json),
+    blockingAmbiguities: JSON.parse(row.blocking_ambiguities_json), modifyWriteScope: JSON.parse(row.write_scope_json), modifyDenyScope: JSON.parse(row.modify_deny_scope_json) };
+  const acceptancePolicy = acceptanceEvidencePolicySchema.parse({ version: 1, policyId: "runtime-result-delivery", specIdentityHash: createHash("sha256").update(JSON.stringify(spec)).digest("hex"),
+    conditions: [
+      { conditionHash: acceptanceConditionHash(conditions[0]), requirements: [{ type: "assertions" }] },
+      { conditionHash: acceptanceConditionHash(conditions[1]), requirements: [{ type: "regression", commandIds: ["pnpm test target"] }, { type: "reply", minSentences: 2, maxSentences: 3 }] },
+    ] });
+  const runner: SandboxedCommandRunner = {
+    async run(request) {
+      const containmentProof = proof(request.containmentBinding);
+      await request.registerContainment(containmentProof);
+      return { exitCode: 0, stdout: Buffer.from(JSON.stringify({ version: 1, runId: request.containmentBinding.runId,
+        nonce: request.containmentBinding.nonce, assertions: [{ id: "value-updated", state: "passed" }] })), stderr: Buffer.alloc(0),
+        durationMs: 1, timedOut: false, outputLimitExceeded: false,
+        attestation: { sandboxEnforced: true, writableRoot: request.sandbox.writableRoot, deniedPaths: [...request.sandbox.deniedPaths],
+          network: "deny", processIsolated: true, processTreeReaped: true, containmentProof } };
+    },
+  };
+  // SAFETY: seedRetryableCandidate persists a real DingTalk source event associated with this fixture's Work Item before returning.
+  const source = db.prepare("SELECT source_event_id FROM collaboration_external_events WHERE work_item_id=? AND source='dingtalk' ORDER BY received_at LIMIT 1")
+    .get(item.workItemId) as { source_event_id: string };
+  function deliveryProof(message: Parameters<OutboxDeliveryPort["deliver"]>[0]) {
+    const result = candidateResultDeliveryProof(message.payload, source.source_event_id, {
+      outboxId: message.id, idempotencyKey: JSON.stringify([message.id, message.dedupeKey]), channel: "session",
+      destination: source.source_event_id, confirmationKind: "business_response",
+    });
+    if (!result) throw new Error("expected actual serialized result proof");
+    return result;
+  }
+  function resultOutbox() {
+    // SAFETY: The fixture has one current candidate result binding; the joined Outbox columns are non-null text, and missing preparation returns undefined.
+    return db.prepare("SELECT o.id,o.payload_json,o.delivery_state FROM collaboration_outbox o " +
+      "JOIN collaboration_candidate_result_bindings b ON b.outbox_id=o.id WHERE b.candidate_run_id=?")
+      .get(item.runId) as { id: string; payload_json: string; delivery_state: string } | undefined;
+  }
+  function state() {
+    return db.prepare("SELECT status,control_state,version,accepted_candidate_sha FROM collaboration_work_items WHERE id=?").get(item.workItemId);
+  }
+  function progress() {
+    const root = join(item.dataDirectory, "collaboration", "meta-bundles", item.workItemId);
+    return readFileSync(join(root, "bundles", readFileSync(join(root, "CURRENT"), "utf8").trim(), "PROGRESS.md"), "utf8");
+  }
+  function runtimeFor(delivery: OutboxDeliveryPort, now: () => number = () => 4_000, extra: Partial<CollaborationHeadlessRuntimeOptions> = {}) {
+    return configuredRuntime(item, runner, 10_000, now, { outboxDelivery: delivery, acceptanceEvidencePolicies: [acceptancePolicy], ...extra }).runtime;
+  }
+  async function startPrepared(runtime: CollaborationHeadlessRuntime) {
+    expect((await runtime.start()).state).toBe("running");
+    await vi.waitFor(() => { expect(resultOutbox()).toBeDefined(); expect(runtime["scheduledWorkItems"].size).toBe(0); });
+    expect(candidateHasPassedTechnicalReview(db, item.runId, item.candidateSha)).toBe(true);
+    expect(candidateHasPassedMetaReview(db, item.runId, item.candidateSha)).toBe(false);
+  }
+  async function drainResult(runtime: CollaborationHeadlessRuntime) {
+    const id = resultOutbox()!.id;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const outcome = await runtime.drainOnce();
+      if (outcome.dispatched?.id === id) return outcome;
+    }
+    throw new Error("prepared result was not dispatched");
+  }
+  return { item, db, acceptancePolicy, deliveryProof, resultOutbox, state, progress, runtimeFor, startPrepared, drainResult };
+}
+
+describe("runtime candidate result delivery completion", () => {
+  it("finishes the bound candidate and synchronizes Meta in the actual successful drain without duplicate completion", async () => {
+    const fixture = resultDeliveryFixture();
+    const delivered: string[] = [];
+    const runtime = fixture.runtimeFor({ async deliver(message) {
+      delivered.push(message.id);
+      // oxlint-disable-next-line anti-slop/no-conditional-empty-object-spread -- The transport fixture supplies proof only for an actual result message; unrelated acknowledgements deliberately omit it.
+      return { outcome: "sent", ...(message.payload.type === "plan_status_card" && message.payload.status === "verified_result"
+        ? { candidateResultDelivery: fixture.deliveryProof(message) } : {}) };
+    } });
+    try {
+      await fixture.startPrepared(runtime);
+      const before = fixture.state();
+      const outbox = fixture.resultOutbox()!;
+      expect(fixture.progress()).toContain("控制状态：active");
+      expect(await fixture.drainResult(runtime)).toMatchObject({ dispatched: { id: outbox.id, state: "sent" } });
+      expect(fixture.db.prepare("SELECT count(*) AS count FROM collaboration_candidate_result_deliveries WHERE outbox_id=?").get(outbox.id)).toEqual({ count: 1 });
+      expect(fixture.state()).toMatchObject({ status: "accepted", control_state: "accepted", version: Number(before!.version) + 1, accepted_candidate_sha: fixture.item.candidateSha });
+      expect(completedCandidateHasPassedMetaReview(fixture.db, fixture.item.runId, fixture.item.candidateSha)).toBe(true);
+      expect(fixture.progress()).toContain("控制状态：accepted");
+      const settled = fixture.state();
+      const count = fixture.db.prepare("SELECT count(*) AS count FROM collaboration_outbox").get();
+      for (let attempt = 0; attempt < 3; attempt++) await runtime.drainOnce();
+      expect(fixture.state()).toEqual(settled);
+      expect(fixture.db.prepare("SELECT count(*) AS count FROM collaboration_outbox").get()).toEqual(count);
+      expect(delivered.filter(id => id === outbox.id)).toHaveLength(1);
+    } finally { await runtime.stop(); fixture.db.close(); }
+  });
+
+  it.each(["wrong_proof", "bare_sent", "failed"] as const)("does not accept a result after %s", async mode => {
+    const fixture = resultDeliveryFixture();
+    const runtime = fixture.runtimeFor({ async deliver(message) {
+      if (message.payload.type !== "plan_status_card" || message.payload.status !== "verified_result") return { outcome: "sent" };
+      if (mode === "failed") return { outcome: "permanent_failure", error: "business response rejected" };
+      // oxlint-disable-next-line anti-slop/no-conditional-empty-object-spread -- These cases intentionally distinguish a malformed proof from a completely absent proof in the transport response.
+      return { outcome: "sent", ...(mode === "wrong_proof" ? {
+        candidateResultDelivery: { ...fixture.deliveryProof(message), serializedHash: "0".repeat(64) },
+      } : {}) };
+    } });
+    try {
+      await fixture.startPrepared(runtime);
+      const before = fixture.state();
+      expect(await fixture.drainResult(runtime)).toMatchObject({ dispatched: { state: mode === "failed" ? "dead_letter" : "sent" } });
+      expect(fixture.db.prepare("SELECT count(*) AS count FROM collaboration_candidate_result_deliveries").get()).toEqual({ count: 0 });
+      expect(candidateHasPassedMetaReview(fixture.db, fixture.item.runId, fixture.item.candidateSha)).toBe(false);
+      expect(fixture.state()).toEqual(before);
+      for (let attempt = 0; attempt < 2; attempt++) await runtime.drainOnce();
+      expect(fixture.state()).toEqual(before);
+      expect(fixture.progress()).toContain("控制状态：active");
+    } finally { await runtime.stop(); fixture.db.close(); }
+  });
+
+  it("completes after accepted-send reconciliation without resending the result", async () => {
+    const fixture = resultDeliveryFixture();
+    let sends = 0;
+    const runtime = fixture.runtimeFor({ retryPolicy: "only-confirmed-unsent", async deliver(message) {
+      if (message.payload.type !== "plan_status_card" || message.payload.status !== "verified_result") return { outcome: "sent" };
+      sends++;
+      return { outcome: "unknown", error: "business response lost" };
+    }, async reconcile(message) {
+      return { outcome: "sent", candidateResultDelivery: { ...fixture.deliveryProof(message), confirmationKind: "accepted_receipt" } };
+    } });
+    try {
+      await fixture.startPrepared(runtime);
+      expect(await fixture.drainResult(runtime)).toMatchObject({ dispatched: { state: "dead_letter" } });
+      expect(fixture.state()).toMatchObject({ control_state: "active", accepted_candidate_sha: null });
+      expect(await fixture.drainResult(runtime)).toMatchObject({ dispatched: { state: "sent", operation: "reconcile" } });
+      expect(fixture.state()).toMatchObject({ control_state: "accepted", accepted_candidate_sha: fixture.item.candidateSha });
+      expect(fixture.progress()).toContain("控制状态：accepted");
+      for (let attempt = 0; attempt < 2; attempt++) await runtime.drainOnce();
+      expect(sends).toBe(1);
+      expect(fixture.db.prepare("SELECT count(*) AS count FROM collaboration_candidate_result_deliveries").get()).toEqual({ count: 1 });
+    } finally { await runtime.stop(); fixture.db.close(); }
+  });
+
+  it("recovers committed delivery on restart when the old runtime loses its lease before completion", async () => {
+    const fixture = resultDeliveryFixture();
+    let now = 4_000;
+    let sends = 0;
+    const delivery: OutboxDeliveryPort = { async deliver(message) {
+      if (message.payload.type !== "plan_status_card" || message.payload.status !== "verified_result") return { outcome: "sent" };
+      sends++;
+      const candidateResultDelivery = fixture.deliveryProof(message);
+      // The transport commits using elapsed transport time; the next runtime lease check sees an expired lease.
+      now += 120_000;
+      return { outcome: "sent", candidateResultDelivery };
+    } };
+    const first = fixture.runtimeFor(delivery, () => now);
+    let restarted: CollaborationHeadlessRuntime | undefined;
+    try {
+      await fixture.startPrepared(first);
+      expect(await fixture.drainResult(first)).toMatchObject({ dispatched: { state: "sent" }, maintained: false });
+      expect(first.health().reason).toBe("lease_failed");
+      expect(fixture.db.prepare("SELECT count(*) AS count FROM collaboration_candidate_result_deliveries").get()).toEqual({ count: 1 });
+      expect(fixture.state()).toMatchObject({ control_state: "active", accepted_candidate_sha: null });
+      await first.stop();
+      restarted = fixture.runtimeFor(delivery, () => now);
+      expect((await restarted.start()).state).toBe("running");
+      expect(fixture.state()).toMatchObject({ control_state: "accepted", accepted_candidate_sha: fixture.item.candidateSha });
+      expect(fixture.progress()).toContain("控制状态：accepted");
+      await restarted.drainOnce();
+      expect(sends).toBe(1);
+      expect(reviewCount(fixture.item)).toBe(1);
+    } finally { await restarted?.stop(); await first.stop(); fixture.db.close(); }
+  });
+
+  it("isolates a candidate's invalid result copy during verification and restart while another candidate completes", async () => {
+    const invalid = resultDeliveryFixture(undefined, "。");
+    const valid = resultDeliveryFixture(invalid.item);
+    invalid.db.prepare("UPDATE collaboration_work_items SET updated_at=1999 WHERE id=?").run(invalid.item.workItemId);
+    invalid.item.command.assertionContract!.bindings.push(...valid.item.command.assertionContract!.bindings);
+    const delivery: OutboxDeliveryPort = { async deliver(message) {
+      // oxlint-disable-next-line anti-slop/no-conditional-empty-object-spread -- Only the valid result message earns transport proof; failure notices and unrelated acknowledgements must omit it.
+      return { outcome: "sent", ...(message.payload.type === "plan_status_card" && message.payload.status === "verified_result"
+        ? { candidateResultDelivery: valid.deliveryProof(message) } : {}) };
+    } };
+    const extra = { acceptanceEvidencePolicies: [invalid.acceptancePolicy, valid.acceptancePolicy] };
+    const runtime = invalid.runtimeFor(delivery, () => 4_000, extra);
+    let restarted: CollaborationHeadlessRuntime | undefined;
+    try {
+      expect((await runtime.start()).state).toBe("running");
+      await vi.waitFor(() => { expect(reviewCount(invalid.item)).toBe(1); expect(reviewCount(valid.item)).toBe(1); expect(runtime["scheduledWorkItems"].size).toBe(0); });
+      expect(candidateHasPassedTechnicalReview(invalid.db, invalid.item.runId, invalid.item.candidateSha)).toBe(true);
+      expect(invalid.resultOutbox()).toBeUndefined();
+      expect(valid.resultOutbox()).toBeDefined();
+      expect(invalid.state()).toMatchObject({ control_state: "active", accepted_candidate_sha: null });
+      await runtime.stop();
+      restarted = invalid.runtimeFor(delivery, () => 4_000, extra);
+      expect((await restarted.start()).state).toBe("running");
+      expect(await valid.drainResult(restarted)).toMatchObject({ dispatched: { state: "sent" } });
+      expect(valid.state()).toMatchObject({ control_state: "accepted", accepted_candidate_sha: valid.item.candidateSha });
+      expect(valid.progress()).toContain("控制状态：accepted");
+      expect(invalid.state()).toMatchObject({ control_state: "active", accepted_candidate_sha: null });
+      const notices = invalid.db.prepare("SELECT payload_json FROM collaboration_outbox WHERE source_event_id=?")
+        .all(`candidate-result-blocked:${invalid.item.runId}:v1`);
+      expect(notices).toHaveLength(1);
+      expect(JSON.stringify(renderDingTalkSessionMessage(JSON.parse(String(notices[0].payload_json))))).toContain("反馈暂时无法生成");
+      for (let attempt = 0; attempt < 3; attempt++) await restarted.drainOnce();
+      expect(invalid.db.prepare("SELECT count(*) AS count FROM collaboration_outbox WHERE source_event_id=?").get(`candidate-result-blocked:${invalid.item.runId}:v1`)).toEqual({ count: 1 });
+    } finally { await restarted?.stop(); await runtime.stop(); valid.db.close(); invalid.db.close(); }
+  });
+});
 
 describe("runtime Owner verification retry", () => {
   it.each([

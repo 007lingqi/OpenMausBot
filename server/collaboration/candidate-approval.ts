@@ -2,7 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
 import { appendControlAudit } from "./audit.ts";
-import { candidateHasPassedMetaReview } from "./candidate-verification.ts";
+import { candidateHasPassedMetaReview, readCandidateTechnicalAcceptance } from "./candidate-verification.ts";
+import { readVerifiedCandidateResultReply } from "./candidate-result-evidence.ts";
 import { renderPlanStatusCard } from "./message-renderer.ts";
 import { enqueueInboundCard } from "./outbox.ts";
 import { assertLedgerArmed } from "./restore-guard.ts";
@@ -231,6 +232,9 @@ export function completeVerifiedLowRiskCandidate(
       return { ...assessment, completed: false, workItemVersion: assessment.target?.workItemVersion ?? null };
     }
     const target = assessment.target;
+    const technical=readCandidateTechnicalAcceptance(database,target.runId,target.resultSha);
+    const resultAlreadyDelivered=technical && readVerifiedCandidateResultReply(database,{candidateRunId:target.runId,candidateSha:target.resultSha,
+      specHash:technical.specHash,specIdentityHash:technical.specIdentityHash,policyHash:technical.policyHash});
     const before = {
       status: "collecting",
       controlState: "active",
@@ -273,7 +277,7 @@ export function completeVerifiedLowRiskCandidate(
       afterHash: stateHash(after),
       now: input.now,
     });
-    enqueueInboundCard(database, {
+    if(!resultAlreadyDelivered) enqueueInboundCard(database, {
       sourceEventId: input.sourceEventId,
       aggregateType: "work_item",
       aggregateId: target.workItemId,

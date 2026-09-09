@@ -11,6 +11,8 @@ import { isCurrentMaterialDelivery } from "./plan-material-readiness.ts";
 import { reconcileOutboxOne } from "./outbox-reconciler.ts";
 import { refreshConversationStatusReply } from "./conversation-context.ts";
 import { confirmApprovalPresentation } from "./approval-presentation.ts";
+import { isCurrentCandidateResultDelivery } from "./candidate-result-completion.ts";
+import { confirmCandidateResultDelivery } from "./candidate-result-evidence.ts";
 
 interface DispatchRow {
   id: string;
@@ -164,7 +166,7 @@ export class OutboxDispatcher {
           "AND newer.aggregate_version > current.aggregate_version AND newer.superseded_at IS NULL)",
       )
       .get(row.id, instance.ownerId, instance.fence, now);
-    if (current && isCurrentRecoveryNotification(this.database, row) && isCurrentAttachmentFeedback(this.database, row) && isCurrentNaturalIntakeFailureNotice(this.database, row) && isCurrentDeliveryReviewNotice(this.database, row) && isCurrentMaterialDelivery(this.database, row) && refreshConversationStatusReply(this.database, row)) return true;
+    if (current && isCurrentRecoveryNotification(this.database, row) && isCurrentAttachmentFeedback(this.database, row) && isCurrentNaturalIntakeFailureNotice(this.database, row) && isCurrentDeliveryReviewNotice(this.database, row) && isCurrentMaterialDelivery(this.database, row) && isCurrentCandidateResultDelivery(this.database, row) && refreshConversationStatusReply(this.database, row)) return true;
     const updated = this.database
       .prepare(
         "UPDATE collaboration_outbox SET delivery_state = 'superseded', superseded_at = ?, " +
@@ -233,6 +235,9 @@ export class OutboxDispatcher {
           .run(deliveredAt, row.id);
         if (result.outcome === "sent" && result.approvalDelivery) {
           confirmApprovalPresentation(this.database, row.id, result.approvalDelivery, deliveredAt);
+        }
+        if (result.outcome === "sent" && result.candidateResultDelivery) {
+          confirmCandidateResultDelivery(this.database, row.id, result.candidateResultDelivery, deliveredAt);
         }
       }
       if (state === "sent" && row.kind === "association_choice_card" && row.aggregate_type === "association") {

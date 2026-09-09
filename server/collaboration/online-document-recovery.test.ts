@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, expect, it, vi } from 'vitest';
+import { COLLABORATION_SCHEMA_VERSION } from './migrations.ts';
 import { startCollaborationService } from './service.ts';
 import { policy, validProposal } from './planner.test-fixtures.ts';
 import { InstanceLeaseCoordinator } from './leases.ts';
@@ -118,7 +119,7 @@ it('preserves all schema34 failed-read fields and requires fresh Owner recovery 
   try {
     const { recovery_generation: generation, ...original } = h.db.prepare('SELECT * FROM collaboration_online_read_jobs').get()!;
     expect(generation).toBe(0);
-    h.db.exec(`DROP TABLE collaboration_approval_presentations; DROP TABLE collaboration_conversation_intents; DROP TABLE collaboration_online_read_recoveries; DROP TRIGGER online_read_jobs_binding;
+    h.db.exec(`DROP TABLE IF EXISTS collaboration_candidate_result_deliveries; DROP TABLE IF EXISTS collaboration_candidate_result_bindings; DROP TABLE IF EXISTS collaboration_candidate_recheck_attempts; DROP TABLE collaboration_approval_presentations; DROP TABLE collaboration_conversation_intents; DROP TABLE collaboration_online_read_recoveries; DROP TRIGGER online_read_jobs_binding;
       ALTER TABLE collaboration_online_read_jobs DROP COLUMN recovery_generation;
       CREATE TRIGGER online_read_jobs_binding BEFORE UPDATE ON collaboration_online_read_jobs
         WHEN NEW.id<>OLD.id OR NEW.work_item_id<>OLD.work_item_id OR NEW.source_event_id<>OLD.source_event_id
@@ -128,7 +129,7 @@ it('preserves all schema34 failed-read fields and requires fresh Owner recovery 
       DELETE FROM collaboration_schema_migrations WHERE version>=35; PRAGMA user_version=34`);
     const upgraded = startCollaborationService(h.options);
     try {
-      expect(h.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 37 });
+      expect(h.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: COLLABORATION_SCHEMA_VERSION });
       expect(h.db.prepare('SELECT * FROM collaboration_online_read_jobs').get()).toEqual({ ...original, recovery_generation: 0 });
       h.authorize(); await upgraded.processOnlineDocuments(h.now); expect(h.reads()).toBe(0);
       expect(h.recover().allowed).toBe(true); await upgraded.processOnlineDocuments(h.now); expect(h.reads()).toBe(1);

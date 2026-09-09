@@ -1,6 +1,6 @@
 import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CommandCleanupError } from "../execution-limits.ts";
 import type { SandboxedCommandRequest } from "../quality-gate.ts";
@@ -43,6 +43,42 @@ function fixture() {
 }
 
 describe("Docker command cancellation and cleanup", () => {
+  it("creates distinct bounded container and exchange names for UUID self-check, verifier and retry bindings", async () => {
+    const h=fixture(),runId="11111111-1111-4111-8111-111111111111";
+    const names=new Set<string>();
+    h.onCreate=()=>{
+      const create=h.calls.at(-1)!;
+      const name=create[create.indexOf("--name")+1];
+      if(names.has(name)) throw new Error("fixture Docker refuses existing container name");
+      names.add(name);
+    };
+    const bindings=[
+      {...h.request.containmentBinding,runId:`${runId}:verifier:1:self-recheck`,commandId:"target",nonce:"a".repeat(32)},
+      {...h.request.containmentBinding,runId:`${runId}:verifier:1`,commandId:"target",nonce:"b".repeat(32)},
+      {...h.request.containmentBinding,runId:`${runId}:verifier:1`,commandId:"target",nonce:"c".repeat(32)},
+    ];
+    for(const containmentBinding of bindings) await expect(h.runner.run({...h.request,commandId:"target",containmentBinding})).resolves.toMatchObject({exitCode:0});
+    const creates=h.calls.filter(call=>call[0]==="create");
+    expect(creates).toHaveLength(3);expect(names.size).toBe(3);
+    for(const create of creates) {
+      const name=create[create.indexOf("--name")+1];
+      expect(name).toMatch(/^omb-[a-z0-9_.-]+-[A-Za-z0-9_-]{43}$/u);expect(name.length).toBeLessThanOrEqual(63);
+      const exchange=create.find(argument=>argument.includes("dst=/run/openmausbot,"))!;
+      expect(basename(exchange.split("src=")[1].split(",")[0])).toBe(name);
+    }
+    expect(h.calls.some(call=>call[0]==="rm")).toBe(false);
+  });
+  it("includes full long command identities and every containment binding field in the Docker create name", async () => {
+    const h=fixture(),prefix="same-prefix-".repeat(30),runId="22222222-2222-4222-8222-222222222222:verifier:1";
+    const base={...h.request.containmentBinding,runId,commandId:`${prefix}first`};
+    const bindings=[base,{...base,commandId:`${prefix}second`},{...base,nonce:"q".repeat(32)},
+      {...base,instanceOwner:"other-owner"},{...base,instanceFence:2},{...base,canonicalWorktreePath:join(h.root,"other")},
+      {...base,runId:`${runId}:self-recheck`}];
+    for(const containmentBinding of bindings) await h.runner.run({...h.request,commandId:containmentBinding.commandId,containmentBinding});
+    const names=h.calls.filter(call=>call[0]==="create").map(create=>create[create.indexOf("--name")+1]);
+    expect(new Set(names).size).toBe(bindings.length);
+    expect(names.every(name=>name.length<=63)).toBe(true);
+  });
   it("does not create anything when already cancelled", async () => {
     const h=fixture(); h.controller.abort();
     await expect(h.runner.run(h.request)).rejects.toThrow(); expect(h.calls).toHaveLength(0);

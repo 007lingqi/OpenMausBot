@@ -8,9 +8,11 @@ import { openCollaborationLedger } from "./db.ts";
 import { InstanceLeaseCoordinator, StaleFenceError } from "./leases.ts";
 import { OutboxDispatcher } from "./outbox-dispatcher.ts";
 import { enqueueInboundCard, type OutboxDeliveryPort } from "./outbox.ts";
+import { resultDeliveryFixture } from "./outbox-result.test-fixtures.ts";
+import { readVerifiedCandidateResultReply } from "./candidate-result-evidence.ts";
 
 const scratch: string[] = [];
-afterEach(() => scratch.splice(0).forEach((path) => rmSync(path, { recursive: true, force: true })));
+afterEach(() => { vi.restoreAllMocks();scratch.splice(0).forEach((path) => rmSync(path, { recursive: true, force: true })); });
 
 function database(): DatabaseSync {
   const root = mkdtempSync(join(tmpdir(), "collaboration-outbox-"));
@@ -41,6 +43,55 @@ function enqueue(db: DatabaseSync, version: number, now: number): string {
 }
 
 describe("fenced outbox dispatcher", () => {
+  it("suppresses an unbound verified-result card through the real pre-send gate",async()=>{
+    const db=database();
+    const row=enqueueInboundCard(db,{sourceEventId:"unbound-result",aggregateType:"plan",aggregateId:"WI-UNBOUND",aggregateVersion:1,now:1000,
+      card:{type:"plan_status_card",status:"verified_result",headline:"修改和回归已核对",workItemId:"WI-UNBOUND",workItemVersion:1,planRevision:1,snapshotRevision:1,
+        candidateSha:"a".repeat(40),summary:"现在可以按优先级筛选。自动回归和独立复核均已通过。"}});
+    const lease=new InstanceLeaseCoordinator(db,"unbound-result-instance").acquire(1000,10000)!;
+    const deliver=vi.fn(async()=>({outcome:"sent" as const}));
+    try{
+      expect(await new OutboxDispatcher(db,{deliver},{maxAttempts:3,claimTtlMs:1000,baseBackoffMs:10,maxBackoffMs:100}).dispatchOne(lease,1001))
+        .toMatchObject({id:row.id,state:"superseded"});expect(deliver).not.toHaveBeenCalled();
+    }finally{db.close();}
+  });
+  it("records the exact confirmed candidate result with Outbox sent in one transaction and never sends twice",async()=>{
+    const root=mkdtempSync(join(tmpdir(),"outbox-result-"));scratch.push(root);const f=resultDeliveryFixture(root);
+    const deliver=vi.fn(async()=>({outcome:"sent" as const,candidateResultDelivery:f.proof()}));
+    const dispatcher=new OutboxDispatcher(f.db,{deliver},{maxAttempts:3,claimTtlMs:1000,baseBackoffMs:10,maxBackoffMs:100});
+    try {
+      expect(await dispatcher.dispatchOne(f.lease,4001)).toMatchObject({id:f.outbox.id,state:"sent"});
+      expect(f.gate).toHaveBeenCalled();
+      expect(f.db.prepare("SELECT o.sent_at=d.sent_at AS same_time,o.delivery_sequence=d.delivery_sequence AS same_sequence FROM collaboration_outbox o JOIN collaboration_candidate_result_deliveries d ON d.outbox_id=o.id WHERE o.id=?").get(f.outbox.id))
+        .toEqual({same_time:1,same_sequence:1});
+      expect(readVerifiedCandidateResultReply(f.db,f.target)).toMatch(/^[a-f0-9]{64}$/u);
+      expect(await dispatcher.dispatchOne(f.lease,4002)).toBeNull();expect(deliver).toHaveBeenCalledTimes(1);
+    }finally{f.db.close();}
+  });
+  it.each(["before", "during"])("does not complete a cancelled candidate result when cancellation occurs %s transport",async timing=>{
+    const root=mkdtempSync(join(tmpdir(),"outbox-result-cancel-"));scratch.push(root);const f=resultDeliveryFixture(root);
+    const cancel=()=>f.db.prepare("UPDATE collaboration_work_items SET control_state='cancelled',status='cancelled' WHERE id=?").run(f.workItemId);
+    if(timing==="before")cancel();
+    const deliver=vi.fn(async()=>{cancel();return{outcome:"sent" as const,candidateResultDelivery:f.proof()};});
+    try {
+      const outcome=await new OutboxDispatcher(f.db,{deliver},{maxAttempts:3,claimTtlMs:1000,baseBackoffMs:10,maxBackoffMs:100}).dispatchOne(f.lease,4001);
+      expect(outcome?.state).toBe(timing==="before"?"superseded":"sent");expect(deliver).toHaveBeenCalledTimes(timing==="before"?0:1);
+      expect(readVerifiedCandidateResultReply(f.db,f.target)).toBeNull();
+      expect(f.db.prepare("SELECT control_state FROM collaboration_work_items WHERE id=?").get(f.workItemId)).toEqual({control_state:"cancelled"});
+    }finally{f.db.close();}
+  });
+  it("does not promote a generic sent response or a mismatched proof into candidate completion",async()=>{
+    for(const mismatch of [false,true]){
+      const root=mkdtempSync(join(tmpdir(),"outbox-result-unproved-"));scratch.push(root);const f=resultDeliveryFixture(root);
+      const wrong=f.proof();if(wrong)wrong.outboxId="another-outbox";
+      try{
+        await new OutboxDispatcher(f.db,{async deliver(){return{outcome:"sent",candidateResultDelivery:mismatch?wrong:undefined};}},
+          {maxAttempts:3,claimTtlMs:1000,baseBackoffMs:10,maxBackoffMs:100}).dispatchOne(f.lease,4001);
+        expect(f.db.prepare("SELECT count(*) AS n FROM collaboration_candidate_result_deliveries").get()).toEqual({n:0});
+        expect(readVerifiedCandidateResultReply(f.db,f.target)).toBeNull();
+      }finally{f.gate.mockRestore();f.db.close();}
+    }
+  });
   it.each(["claim", "instance"])("rejects a successful send returned after its %s expires without a takeover", async boundary => {
     const db = database(); enqueue(db, 1, 1000);
     const lease = new InstanceLeaseCoordinator(db, "late-sender").acquire(1000, boundary === "instance" ? 100 : 10000)!;

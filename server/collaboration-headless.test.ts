@@ -151,13 +151,17 @@ describe("secure collaboration headless CLI", () => {
     writeFileSync(generation, "fixture-boot-generation");
     const command = { argv: ["node", "--test", "case.test.mjs"], timeoutMs: 1000, maxOutputBytes: 32000,
       acceptanceSourceFiles: [`src/save.${extension}`],
+      nodeTestDiscovery: { directories: ["tests"], excludeFiles: ["tests/rendered-html.test.mjs"] },
       assertionReporter: "node-test-v1", assertionContract: { format: "omb-assertions-v1", bindings: [{ conditionHash: "a".repeat(64), assertionIds: ["case"] }] } };
+    const evidencePolicy = { version: 1, policyId: "headless-test", specIdentityHash: "e".repeat(64),
+      conditions: [{ conditionHash: "a".repeat(64), requirements: [{ type: "assertions" }] }] };
     const environment = { OMB_DINGTALK_ENABLED: "0", OMB_EXECUTION_ENABLED: "1", OMB_EXECUTION_BACKEND: "docker",
       OMB_EXECUTION_REPOSITORY: root, OMB_EXECUTION_WORKTREE_ROOT: join(root, "worktrees"), OMB_EXECUTION_EXCHANGE_ROOT: join(root, "exchange"),
       OMB_EXECUTION_BASE_SHA: "b".repeat(40), OMB_DOCKER_COMMAND_IMAGE: "fixture:local", OMB_CONTAINMENT_VERIFIER_KEY_FILE: key,
       OMB_HOST_GENERATION_FILE: generation, OMB_EXECUTION_TARGET_COMMANDS_JSON: JSON.stringify({ cases: command }),
       OMB_EXECUTION_WRITE_SCOPES_JSON: '["src/**"]', OMB_EXECUTION_ACCEPTANCE_JSON: '[{"description":"保存成功","observation":"显示已保存"}]',
       OMB_ACCEPTANCE_MAPPING_ENABLED: "1", OMB_ACCEPTANCE_MAPPING_POLICY_REVISION:"fixture-v1",
+      OMB_ACCEPTANCE_EVIDENCE_POLICIES_JSON: JSON.stringify([evidencePolicy]),
       ...Object.fromEntries(["PROPOSER","VERIFIER"].flatMap(role => [
         [`OMB_ACCEPTANCE_MAPPING_${role}_MODEL`,"fixture-model"], [`OMB_ACCEPTANCE_MAPPING_${role}_ENDPOINT`,"https://model.example.invalid/responses"],
         [`OMB_ACCEPTANCE_MAPPING_${role}_CREDENTIAL_FILE`,"/not-read-during-probe"],
@@ -169,6 +173,7 @@ describe("secure collaboration headless CLI", () => {
     } };
     await runCollaborationHeadless(["--health", "--data-dir", root], environment, dependencies);
     expect(seen[0].execution?.repositories[root].targetCommands.cases).toEqual(command);
+    expect(seen[0].acceptanceEvidencePolicies).toEqual([evidencePolicy]);
     expect(seen[0].acceptanceMapping?.policyId).toMatch(/^mapping-v1:/);
     expect(seen[0].acceptanceMapping?.proposer).not.toBe(seen[0].acceptanceMapping?.verifier);
     await expect(runCollaborationHeadless(["--health", "--data-dir", root], { ...environment,
@@ -177,6 +182,15 @@ describe("secure collaboration headless CLI", () => {
     await expect(runCollaborationHeadless(["--health", "--data-dir", root], { ...environment,
       OMB_EXECUTION_TARGET_COMMANDS_JSON: JSON.stringify({ cases: { ...command, assertionReporter: "arbitrary" } }) }, dependencies)).rejects.toThrow("assertion reporter");
     expect(seen).toHaveLength(1);
+    for (const raw of ["{}", JSON.stringify([evidencePolicy, evidencePolicy]), JSON.stringify([{ ...evidencePolicy, skip: true }])]) {
+      await expect(runCollaborationHeadless(["--health", "--data-dir", root], { ...environment, OMB_ACCEPTANCE_EVIDENCE_POLICIES_JSON: raw }, dependencies))
+        .rejects.toThrow("acceptance_evidence_policies_invalid");
+    }
+    for (const nodeTestDiscovery of [{ directories: ["../tests"] }, { directories: ["tests"], excludeFiles: ["tests/*.mjs"] }]) {
+      await expect(runCollaborationHeadless(["--health", "--data-dir", root], { ...environment,
+        OMB_EXECUTION_TARGET_COMMANDS_JSON: JSON.stringify({ cases: { ...command, nodeTestDiscovery } }) }, dependencies))
+        .rejects.toThrow("node_test_discovery_invalid");
+    }
     for (const acceptanceSourceFiles of ["src/save.mjs", ["../outside.mjs"], ["src/*.mjs"], ["src/save.mjs", "src/save.mjs"]]) {
       await expect(runCollaborationHeadless(["--health", "--data-dir", root], { ...environment,
         OMB_EXECUTION_TARGET_COMMANDS_JSON: JSON.stringify({ cases: { ...command, acceptanceSourceFiles } }) }, dependencies))

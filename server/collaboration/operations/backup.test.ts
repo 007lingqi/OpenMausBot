@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
+import { COLLABORATION_SCHEMA_VERSION } from "../migrations.ts";
 
 import { startCollaborationService } from "../service.ts";
 import { InstanceLeaseCoordinator } from "../leases.ts";
@@ -75,7 +76,7 @@ describe("encrypted collaboration ledger backup", () => {
       encryptionKeyFile: keyFile,
       temporaryDirectory: join(root, "tmp"),
     });
-    expect(result).toMatchObject({ outputPath: artifact, schemaVersion: 37 });
+    expect(result).toMatchObject({ outputPath: artifact, schemaVersion: COLLABORATION_SCHEMA_VERSION });
     expect(readFileSync(artifact).includes(Buffer.from("backup work"))).toBe(false);
     expect(service.health().ready).toBe(true);
     service.close();

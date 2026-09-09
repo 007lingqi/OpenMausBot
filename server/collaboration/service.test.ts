@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
+import { COLLABORATION_SCHEMA_VERSION } from "./migrations.ts";
 
 import { FIRST_MILESTONE_DEFAULTS, OPENMAUSBOT_SOURCE_BASELINE } from "./config.ts";
 import { startCollaborationService } from "./service.ts";
@@ -31,8 +32,8 @@ describe("headless collaboration service", () => {
       authority: "headless",
       database: {
         file: "collaboration.sqlite",
-        schemaVersion: 37,
-        appliedMigrations: 37,
+        schemaVersion: COLLABORATION_SCHEMA_VERSION,
+        appliedMigrations: COLLABORATION_SCHEMA_VERSION,
         journalMode: "wal",
         foreignKeys: true,
       },
@@ -67,7 +68,7 @@ describe("headless collaboration service", () => {
       status: "healthy",
       ready: true,
       authority: "headless",
-      database: { schemaVersion: 37, appliedMigrations: 37 },
+      database: { schemaVersion: COLLABORATION_SCHEMA_VERSION, appliedMigrations: COLLABORATION_SCHEMA_VERSION },
       defaults: { executionMode: "observe", multiAgentConcurrency: false, previewDeployment: false },
     });
   });

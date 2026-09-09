@@ -20,9 +20,11 @@ import {
 import {
   CANDIDATE_VERIFICATION_MAX_ATTEMPTS,
   candidateHasPassedMetaReview,
+  candidateHasPassedTechnicalReview,
   CandidateVerificationCoordinator,
   type CandidateVerificationOutcome,
 } from "../candidate-verification.ts";
+import { prepareVerifiedCandidateResult } from "../candidate-result-completion.ts";
 import type { AcceptanceMappingModels } from "../acceptance-mapping.ts";
 import {
   type ContainmentBinding,
@@ -68,6 +70,7 @@ import {
   type CollaborationServiceOptions,
 } from "../service.ts";
 import { publishVerificationRuntimePolicy } from "../verification-runtime-policy.ts";
+import type { AcceptanceEvidencePolicy } from "../acceptance-evidence.ts";
 import { readRestoreGuard } from "../restore-guard.ts";
 import { UnavailableContainmentSupervisor } from "./containment-supervisor.ts";
 
@@ -171,6 +174,7 @@ export interface CollaborationHeadlessRuntimeOptions {
   naturalIntake?: NaturalIntakeInterpreter;
   onlineDocuments?: import("./dws-online-reader.ts").OnlineDocumentReader;
   acceptanceMapping?: AcceptanceMappingModels;
+  acceptanceEvidencePolicies?: readonly AcceptanceEvidencePolicy[];
   planningPolicy?: PlanningPolicy;
   planningDefaultDefinition?: { repository: string; acceptanceConditions: AcceptanceCondition[] };
   agent?: AgentRunPort;
@@ -295,6 +299,7 @@ export function enqueueExecutionOutcomeStatus(input: {
   now: number;
 }): void {
   const passed = input.outcome.report.state === "target_tests_passed" && !!input.outcome.resultSha;
+  if(passed && prepareVerifiedCandidateResult(input.database,input.outcome.runId,input.now)==="pending") return;
   if (passed) {
     const completion = completeVerifiedLowRiskCandidate(input.database, {
       workItemId: input.outcome.workItemId,
@@ -388,6 +393,7 @@ export function enqueuePendingOwnerDecisionCards(
   database: DatabaseSync,
   cardTemplateId: string | undefined,
   now: number,
+  candidateRunId?: string,
 ): number {
   const rows = database.prepare(
     "SELECT w.id AS work_item_id, w.version AS work_item_version, w.current_plan_revision AS plan_revision, " +
@@ -400,8 +406,9 @@ export function enqueuePendingOwnerDecisionCards(
       "AND r.status = 'succeeded' AND c.state = 'target_tests_passed' AND c.result_sha IS NOT NULL " +
       "AND r.attempt = (SELECT MAX(latest.attempt) FROM collaboration_runs latest " +
       "WHERE latest.work_item_id = w.id AND latest.plan_revision = w.current_plan_revision) " +
+      (candidateRunId ? "AND r.id = ? " : "") +
       "ORDER BY w.updated_at, w.id",
-  ).all() as unknown as Array<{
+  ).all(...(candidateRunId ? [candidateRunId] : [])) as unknown as Array<{
     work_item_id: string;
     work_item_version: number;
     plan_revision: number;
@@ -413,6 +420,48 @@ export function enqueuePendingOwnerDecisionCards(
   }>;
   let enqueued = 0;
   for (const row of rows) {
+    if (!candidateHasPassedTechnicalReview(database, row.run_id, row.result_sha)) continue;
+    try {
+      if (prepareVerifiedCandidateResult(database, row.run_id, now) === "pending") continue;
+    } catch (error) {
+      // A bad result for one candidate must not prevent unrelated candidates or startup.
+      // Database, lease and unknown failures are operational errors, not presentation failures.
+      if (!(error instanceof Error) || ![
+        "candidate_result_snapshot_changed",
+        "candidate_result_feature_description_missing",
+        "candidate_result_message_invalid",
+        "candidate_result_binding_invalid",
+      ].includes(error.message)) throw error;
+      const sourceEventId = `candidate-result-blocked:${row.run_id}:v${row.work_item_version}`;
+      database.exec("BEGIN IMMEDIATE");
+      try {
+        if (database.prepare("SELECT 1 FROM collaboration_work_items WHERE id=? AND version=? AND current_plan_revision=? " +
+          "AND control_state='active' AND accepted_candidate_sha IS NULL").get(row.work_item_id, row.work_item_version, row.plan_revision) &&
+          !database.prepare("SELECT 1 FROM collaboration_outbox WHERE source='dingtalk' AND source_event_id=?").get(sourceEventId)) {
+          enqueueInboundCard(database, {
+            sourceEventId,
+            aggregateType: "plan",
+            aggregateId: row.work_item_id,
+            aggregateVersion: row.plan_revision,
+            card: renderPlanStatusCard({
+              workItemId: row.work_item_id,
+              workItemVersion: row.work_item_version,
+              planRevision: row.plan_revision,
+              status: "verification_blocked",
+              failures: ["交付反馈暂时无法生成或核对，本次修改尚未确认完成。需要负责人检查反馈内容和当前验收要求。"],
+            }),
+            supersessionKey: `work-item:${row.work_item_id}:execution-status`,
+            now,
+          });
+          enqueued += 1;
+        }
+        database.exec("COMMIT");
+      } catch (noticeError) {
+        database.exec("ROLLBACK");
+        throw noticeError;
+      }
+      continue;
+    }
     if (!candidateHasPassedMetaReview(database, row.run_id, row.result_sha)) continue;
     const completion = completeVerifiedLowRiskCandidate(database, {
       workItemId: row.work_item_id,
@@ -772,7 +821,8 @@ export class CollaborationHeadlessRuntime {
       if (this.options.coordinator) await registerCoordinator(this.database, this.lease, this.options.coordinator, () => this.clock.now());
       if (readRestoreGuard(this.database).state === "live") {
         publishVerificationRuntimePolicy(this.database, { instance: this.lease, now: this.clock.now(),
-          repositories: this.options.execution?.repositories ?? {}, mappingPolicy: this.options.acceptanceMapping?.policyId });
+          repositories: this.options.execution?.repositories ?? {}, mappingPolicy: this.options.acceptanceMapping?.policyId,
+          acceptanceEvidencePolicies: this.options.acceptanceEvidencePolicies });
       }
       this.maintenance = this.options.maintenanceFactory
         ? this.options.maintenanceFactory({ database: this.database, dataDirectory: this.options.dataDirectory })
@@ -1379,7 +1429,7 @@ export class CollaborationHeadlessRuntime {
       result_sha: string;
       verifier_contract_attempts: number;
     } | undefined;
-    if (!row || candidateHasPassedMetaReview(this.database, row.run_id, row.result_sha)) return null;
+    if (!row || candidateHasPassedTechnicalReview(this.database, row.run_id, row.result_sha)) return null;
     return {
       runId: row.run_id,
       worktreePath: row.worktree_path,
@@ -1617,6 +1667,7 @@ export class CollaborationHeadlessRuntime {
       dataDirectory: this.options.dataDirectory,
       maxAttempts: CANDIDATE_VERIFICATION_MAX_ATTEMPTS,
       acceptanceMapping: this.options.acceptanceMapping,
+      acceptanceEvidencePolicies: this.options.acceptanceEvidencePolicies,
       clock: () => this.clock.now(),
     });
   }
@@ -2060,6 +2111,17 @@ export class CollaborationHeadlessRuntime {
     if (serviceReady && this.dispatcher) dispatched = await this.dispatcher.dispatchOne(this.lease!, dispatchNow);
     const maintenanceNow = this.clock.now();
     if (!this.checkDrainLease(maintenanceNow)) return { dispatched, maintained: false };
+    if (serviceReady && dispatched?.state === "sent") {
+      // Only revisit the candidate whose result was actually delivered (including reconciliation).
+      // dispatchOne has committed its delivery proof; the normal final gate still decides completion.
+      // SAFETY: outbox_id is the binding primary key and both selected IDs are non-null text; absence is handled before the full candidate gate runs.
+      const binding = this.database!.prepare(
+        "SELECT candidate_run_id,work_item_id FROM collaboration_candidate_result_bindings WHERE outbox_id=?",
+      ).get(dispatched.id) as { candidate_run_id: string; work_item_id: string } | undefined;
+      if (binding && enqueuePendingOwnerDecisionCards(this.database!, this.options.dingTalk?.cardTemplateId, maintenanceNow, binding.candidate_run_id)) {
+        this.syncMetaBundleBestEffort(binding.work_item_id, true);
+      }
+    }
     let maintained = false;
     if (serviceReady && this.maintenance) {
       await this.maintenance.run(this.lease!, maintenanceNow);

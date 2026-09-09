@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -32,6 +32,8 @@ import type {
   TargetCommandSpec,
 } from "./quality-gate.ts";
 import { startCollaborationService } from "./service.ts";
+import { NODE_TEST_REPORTER_SOURCE } from "./node-test-reporter.ts";
+import { resolveTargetCommandsForCandidate } from "./target-test-selection.ts";
 
 const scratch: string[] = [];
 
@@ -247,6 +249,64 @@ function ledger(root: string): DatabaseSync {
 }
 
 describe("trusted candidate executor", () => {
+  it.each([false, true])("runs committed discovered tests through the protected reporter and persists exact identity (failure=%s)", async failing => {
+    const reporter = join(temp(), "reporter.mjs"); writeFileSync(reporter, NODE_TEST_REPORTER_SOURCE);
+    // Real node:test execution behind the existing fake containment boundary; no Docker claim.
+    const runner = new FakeSandboxedCommandRunner(request => {
+      const ran = spawnSync(request.argv[0], ["--test", "--test-reporter", reporter, ...request.argv.slice(2)],
+        { cwd: request.cwd, env: request.environment, timeout: 5000 });
+      const result = sandboxedResult(request);
+      return { ...result, exitCode: ran.status, stdout: ran.stdout, stderr: ran.stderr,
+        attestation: { ...result.attestation, assertionReporter: "node-test-v1" } };
+    });
+    const command: TargetCommandSpec = { argv: [process.execPath, "--test", "src/tests/base.test.mjs"],
+      timeoutMs: 5000, maxOutputBytes: 32000, assertionReporter: "node-test-v1",
+      nodeTestDiscovery: { directories: ["src/tests"] } };
+    const h = setup({ commandRunner: runner, commands: { "pnpm test target": command }, agent: new FakeAgent(request => {
+      mkdirSync(join(request.cwd, "src/tests"));
+      writeFileSync(join(request.cwd, "src/tests/base.test.mjs"), "import { test } from 'node:test'; test('base', () => {});\n");
+      writeFileSync(join(request.cwd, "src/tests/priority.test.mjs"),
+        `import { test } from 'node:test'; test('priority', () => {${failing ? "throw new Error('priority defect');" : ""}});\n`);
+      return completed(request);
+    }) });
+    const db = ledger(h.root);
+    try {
+      const result = await h.service.executeCurrentPlan(h.workItemId, 1, 3000);
+      expect(result.report.state).toBe(failing ? "test_failed" : "target_tests_passed");
+      expect(runner.requests.map(request => request.argv)).toEqual([[...command.argv, "src/tests/priority.test.mjs"]]);
+      expect(result.evidence[0].assertions).toHaveLength(2);
+      expect(result.evidence[0].assertions?.map(assertion => assertion.state)).toContain(failing ? "failed" : "passed");
+      expect(db.prepare("SELECT argv_json FROM collaboration_test_evidence WHERE run_id=?").get(result.runId))
+        .toEqual({ argv_json: JSON.stringify(runner.requests[0].argv) });
+      const selection = resolveTargetCommandsForCandidate({ worktree: result.worktreePath, candidateSha: result.resultSha!,
+        commandIds: ["pnpm test target"], commands: { "pnpm test target": command }, readScope: ["**/*"], denyScope: [".env*", ".git/**"] });
+      expect(result.report).toMatchObject({ targetSelections: selection.selections });
+      expect(db.prepare("SELECT quality_json FROM collaboration_candidates WHERE run_id=?").get(result.runId))
+        .toEqual({ quality_json: JSON.stringify(result.report) });
+      expect(execFileSync("git", ["status", "--porcelain=v1", "-z", "--untracked-files=all"], { cwd: h.repo })).toEqual(h.originalStatus);
+    } finally { h.service.close(); db.close(); }
+  });
+  it("rejects discovered tests outside the validate-node scope without starting the test runner", async () => {
+    const runner = new FakeSandboxedCommandRunner();
+    const h = setup({ commandRunner: runner, commands: { "pnpm test target": {
+      argv: [process.execPath, "--test", "src/tests/base.test.mjs"], timeoutMs: 1000, maxOutputBytes: 32000,
+      assertionReporter: "node-test-v1", nodeTestDiscovery: { directories: ["src/tests"] },
+    } }, agent: new FakeAgent(request => {
+      mkdirSync(join(request.cwd, "src/tests"));
+      for (const file of ["base.test.mjs", "priority.test.mjs"]) writeFileSync(join(request.cwd, "src/tests", file), "import { test } from 'node:test'; test('works', () => {});\n");
+      return completed(request);
+    }) });
+    const db = ledger(h.root);
+    try {
+      db.prepare("UPDATE collaboration_work_nodes SET read_scope_json=? WHERE work_item_id=? AND node_type='validate'")
+        .run(JSON.stringify(["src/tests/base.test.mjs"]), h.workItemId);
+      const result = await h.service.executeCurrentPlan(h.workItemId, 1, 3000);
+      expect(result.report.reasons).toContain("target_test_selection_scope_denied");
+      expect(result.report.state).toBe("needs_configuration");
+      expect(runner.requests).toHaveLength(0);
+      expect(db.prepare("SELECT count(*) AS count FROM collaboration_test_evidence WHERE run_id=?").get(result.runId)).toEqual({ count: 0 });
+    } finally { h.service.close(); db.close(); }
+  });
   it("rejects an old ready plan with unread online material before reserving or running work", async () => {
     const run = vi.fn((request: AgentRunRequest) => completed(request));
     const h = setup({ agent: new FakeAgent(run) }); const db = ledger(h.root);

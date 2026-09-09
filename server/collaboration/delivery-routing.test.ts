@@ -1,4 +1,5 @@
 import { mkdtempSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -21,6 +22,9 @@ import { ModelNaturalIntakeInterpreter } from "./natural-intake.ts";
 import { validProposal, policy } from "./planner.test-fixtures.ts";
 import { approvalPayloadHash } from "./approval-presentation.ts";
 import { FetchDingTalkInteractiveCardSender } from "../integrations/dingtalk/interactive-card-sender.ts";
+import { renderDingTalkSessionMessage } from "../integrations/dingtalk/session-message.ts";
+import { resultDeliveryFixture } from "./outbox-result.test-fixtures.ts";
+import { readVerifiedCandidateResultReply } from "./candidate-result-evidence.ts";
 
 const roots: string[] = [];
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -52,6 +56,85 @@ function fixture(environment: NodeJS.ProcessEnv) {
   const sessions = new DingTalkSessionReplyRegistry();
   return { root, db, message, destinations, fetcher, sessions, delivery: createDingTalkDelivery(sessions, environment, root) };
 }
+
+function verifiedResultMessage(f: ReturnType<typeof fixture>): Parameters<OutboxDeliveryPort["deliver"]>[0] {
+  return { ...f.message("event-group-a"), aggregateType: "plan", kind: "plan_status_card", payload: {
+    type: "plan_status_card", status: "verified_result", headline: "修改和回归已核对",
+    workItemId: f.message("event-group-a").aggregateId, workItemVersion: 1, planRevision: 1, snapshotRevision: 1,
+    candidateSha: "a".repeat(40), summary: "现在可以按优先级筛选，并与状态和搜索一起使用。自动回归和独立复核均已通过。",
+  } };
+}
+const deliveryDigest = (value: string) => createHash("sha256").update(value).digest("hex");
+
+describe("actual verified-result delivery proofs", () => {
+  it("records an actual business-success reply without reviving a candidate cancelled while fetch was pending",async()=>{
+    const root=mkdtempSync(join(tmpdir(),"result-fetch-cancel-"));roots.push(root);const f=resultDeliveryFixture(root);
+    const requests:string[]=[];
+    vi.stubGlobal("fetch",async(_url:string|URL,init?:RequestInit)=>{
+      requests.push(String(init?.body));
+      f.db.prepare("UPDATE collaboration_work_items SET control_state='cancelled',status='cancelled' WHERE id=?").run(f.workItemId);
+      return new Response(JSON.stringify({errcode:0}));
+    });
+    const sessions=new DingTalkSessionReplyRegistry();sessions.capture({sourceEventId:"result-source",
+      webhookUrl:"https://oapi.dingtalk.com/robot/send?access_token=fixture-private",expiresAt:Date.now()+60000});
+    try{
+      const dispatcher=new OutboxDispatcher(f.db,createDingTalkDelivery(sessions,{},root),{maxAttempts:3,claimTtlMs:1000,baseBackoffMs:10,maxBackoffMs:100});
+      expect(await dispatcher.dispatchOne(f.lease,4001)).toMatchObject({state:"sent"});
+      expect(requests).toEqual([JSON.stringify(renderDingTalkSessionMessage(f.card))]);
+      expect(f.db.prepare("SELECT confirmation_kind,channel FROM collaboration_candidate_result_deliveries WHERE outbox_id=?").get(f.outbox.id))
+        .toEqual({confirmation_kind:"business_response",channel:"session"});
+      expect(readVerifiedCandidateResultReply(f.db,f.target)).toBeNull();
+      expect(f.db.prepare("SELECT status,control_state FROM collaboration_work_items WHERE id=?").get(f.workItemId)).toEqual({status:"cancelled",control_state:"cancelled"});
+    }finally{f.db.close();}
+  });
+  it.each(["session", "proactive"] as const)("binds the actual serialized %s request only after business success", async channel => {
+    const f=fixture({ OMB_DINGTALK_ALLOWED_CONVERSATION_IDS: "group-a", OMB_DINGTALK_PROACTIVE_OPEN_CONVERSATION_ID: "open-a" });
+    try {
+      if(channel==="session") f.sessions.capture({sourceEventId:"event-group-a",webhookUrl:"https://oapi.dingtalk.com/robot/send?access_token=fixture-private-webhook",expiresAt:Date.now()+60000});
+      const message=verifiedResultMessage(f),serialized=renderDingTalkSessionMessage(message.payload);
+      const delivered=await f.delivery.deliver(message);
+      expect(delivered).toEqual({outcome:"sent",candidateResultDelivery:{outboxId:message.id,
+        idempotencyKeyHash:deliveryDigest(JSON.stringify([message.id,message.dedupeKey])),sourceEventId:"event-group-a",
+        payloadHash:deliveryDigest(JSON.stringify(message.payload)),serializedHash:deliveryDigest(JSON.stringify(serialized)),
+        channel,destinationHash:deliveryDigest(`${channel}:${channel==="session"?"event-group-a":"open-a"}`),confirmationKind:"business_response"}});
+      const request=f.fetcher.mock.calls.find(([url])=>channel==="session"?String(url).includes("/robot/send?"):String(url).endsWith("/groupMessages/send"));
+      expect(request).toBeDefined();
+      if(channel==="session") expect(JSON.parse(String(request?.[1]?.body))).toEqual(serialized);
+      else expect(JSON.parse(String(request?.[1]?.body))).toEqual({msgParam:JSON.stringify(serialized.markdown),msgKey:"sampleMarkdown",openConversationId:"open-a",robotCode:"synthetic-client"});
+      expect(JSON.stringify(delivered)).not.toMatch(/fixture-private-webhook|synthetic-token|synthetic-receipt/u);
+    } finally {f.db.close();}
+  });
+  it.each([{}, {errcode:40035}, {errcode:0,success:false}])("does not issue a result proof for HTTP 200 without consistent business success: %j", response => {
+    const f=fixture({});
+    f.sessions.capture({sourceEventId:"event-group-a",webhookUrl:"https://oapi.dingtalk.com/robot/send?access_token=fixture",expiresAt:Date.now()+60000});
+    f.fetcher.mockImplementation(async()=>new Response(JSON.stringify(response),{status:200}));
+    return f.delivery.deliver(verifiedResultMessage(f)).then(result=>{
+      expect(result.outcome).not.toBe("sent");expect(result).not.toHaveProperty("candidateResultDelivery");
+    }).finally(()=>f.db.close());
+  });
+  it("reconciles an exactly bound accepted receipt without resending and rejects body, key or destination substitutions", async () => {
+    const environment={OMB_DINGTALK_ALLOWED_CONVERSATION_IDS:"group-a",OMB_DINGTALK_PROACTIVE_OPEN_CONVERSATION_ID:"open-a"};
+    const f=fixture(environment);
+    try {
+      const message=verifiedResultMessage(f);await f.delivery.deliver(message);
+      const sendCount=()=>f.fetcher.mock.calls.filter(([url])=>String(url).endsWith("/groupMessages/send")).length;
+      const restarted=createDingTalkDelivery(new DingTalkSessionReplyRegistry(),environment,f.root);
+      for(let index=0;index<2;index++) expect(await restarted.reconcile!(message)).toMatchObject({outcome:"sent",candidateResultDelivery:{
+        outboxId:message.id,channel:"proactive",destinationHash:deliveryDigest("proactive:open-a"),confirmationKind:"accepted_receipt"}});
+      expect(await restarted.deliver(message)).toMatchObject({outcome:"sent",candidateResultDelivery:{confirmationKind:"accepted_receipt"}});
+      // Force the outer receipt read to miss once; the real sender/vault/query path must still bind the recovered proof.
+      vi.spyOn(FetchDingTalkInteractiveCardSender.prototype,"queryAccepted").mockResolvedValueOnce(null);
+      expect(await restarted.deliver(message)).toMatchObject({outcome:"sent",candidateResultDelivery:{confirmationKind:"accepted_receipt"}});
+      expect(sendCount()).toBe(1);
+      const changedBody={...message,payload:{...message.payload,summary:"这是不同的结果。检查通过。"}};
+      expect(await restarted.reconcile!(changedBody)).toMatchObject({outcome:"unknown"});
+      expect(await restarted.reconcile!({...message,dedupeKey:`${message.dedupeKey}-different`})).toBeNull();
+      const otherDestination=createDingTalkDelivery(new DingTalkSessionReplyRegistry(),{...environment,OMB_DINGTALK_PROACTIVE_OPEN_CONVERSATION_ID:"open-other"},f.root);
+      expect(await otherDestination.reconcile!(message)).toMatchObject({outcome:"unknown"});
+      expect(sendCount()).toBe(1);
+    } finally {f.db.close();}
+  });
+});
 
 describe("production delivery group routing", () => {
   it("delivers a natural approval reply to its persisted original group without an external requirement event", async () => {

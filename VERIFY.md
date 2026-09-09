@@ -1,5 +1,17 @@
 # Meta 协作验证记录
 
+## 2026-09-09 完整验收证据闭环（发布前收口中）
+
+- 最终完整发布链84586/b318b7退出0：`pnpm test && pnpm typecheck && git diff --check`，包括主集全量、broker、Node、打包/代理路径、模型/文档relay合成冒烟与headless启动。首轮备份超时在此次全量中2项241ms通过，未放宽超时。输出部分截断，未为补取计数重跑。
+- 最终独立复核3文件68项通过（runtime真drain、result证据、有界摘要）；两个Medium关闭，未知数据库异常透传而非展示失败，回执后定向完成与Meta同步、错误proof/裸sent/业务失败、取消/重放及失租约重启补偿均通过。
+- 最后仅增加14行静态说明注释，未改语句/断言；新行lint0，既有352条保留（e95870）。重新打包后5个bundle逐字节相同，headless仅保留2行新增注释：移除这两行精确还原全测bundle SHA634d046f…（5b3f19）；最终headless SHA2283288e…。类型及差异检查通过，复用同执行内容的完整回归，不为注释再跑一遍。
+
+- 固定候选/政策/补测/结果/批准 8 文件 314 项通过，Node 原生 strip-types 导入、类型检查通过；实际 renderer→Outbox→full gate→完成组件正反例包含取消及不重复反馈。
+- transport：84 项整文件和新增 2 项定向通过。真实 sender/serializer，网络为 mock；涵盖 HTTP200业务失败、错误 body/key/目的地、accepted 回执恢复和发送途中取消。不作为真实群送达证据。
+- root：db/result/supplemental 3 文件48项通过（67551/35840d）。长文、敏感文本、完成类措辞和技术标识5个行为红灯后修正；反引号重组禁词先红后绿，最终有界摘要8项通过（086f63）且新增文件lint0；完整Spec未变。
+- 首轮发布链38715/4270bc：主集4337通过、18跳过、backup两项超时，后续命令未运行，因此不是完整绿。独立backup复跑30409/033bf1两项通过、245ms；未修改产品备份实现/调大时限。运行时最后接线随后有新增修改，必须另起最终发布回归。
+- snapshot b32313：当前真实库readOnly→新的私有备份，schema37、74表、原成功run与候选保持；policy1fcbb6绑定Spec身份46c531dd…，5条件完整，功能3+Git范围1+回归AND送达1。具体镜像构建/升级/双阶段真实Docker和真实平台结果尚待记录。
+
 ## 2026-09-09 验收映射安全诊断
 
 - 新增回归先红后绿；非作者对冻结的 acceptance-mapping、candidate-verification、runtime-verification-retry 三测试文件集成复跑，137/137 通过，六个实现/测试文件校验和前后不变。

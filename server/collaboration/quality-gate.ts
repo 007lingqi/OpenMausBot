@@ -1,8 +1,10 @@
 import { randomBytes } from "node:crypto";
 import { realpathSync } from "node:fs";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { isAbsolute, posix, relative, resolve, sep } from "node:path";
+import { z } from "zod";
 import { assertionContractSchema, readAssertionReport, type AssertionContract, type AssertionResult } from "./acceptance-assertions.ts";
 import { nodeTestAssertionId, validateNodeTestArgv } from "./node-test-reporter.ts";
+import type { CandidateTargetSelection } from "./target-test-selection.ts";
 
 import {
   type ContainmentPort,
@@ -10,6 +12,18 @@ import {
   type ContainmentProof,
   verifyContainmentProof,
 } from "./containment.ts";
+
+const discoveryPath = z.string().min(1).max(2000).refine(path => path !== "." && path !== ".." &&
+  !posix.isAbsolute(path) && posix.normalize(path) === path && !path.startsWith("../") &&
+  ![...path].some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127 || "\\*?[]{}".includes(character)) &&
+  !path.split("/").some(segment => /^(?:\.git|\.ssh|node_modules|\.env.*)$/iu.test(segment)));
+const discoveryPaths = z.array(discoveryPath).max(16).refine(paths => new Set(paths).size === paths.length);
+export const nodeTestDiscoverySchema = z.object({
+  directories: discoveryPaths.refine(paths => paths.length > 0).readonly(),
+  excludeFiles: discoveryPaths.readonly().optional(),
+}).strict().refine(policy => (policy.excludeFiles ?? []).every(file =>
+  policy.directories.some(directory => file.startsWith(`${directory}/`))));
+export type NodeTestDiscovery = z.infer<typeof nodeTestDiscoverySchema>;
 
 export interface TargetCommandSpec {
   argv: readonly [string, ...string[]];
@@ -20,6 +34,8 @@ export interface TargetCommandSpec {
   assertionReporter?: "node-test-v1";
   /** Trusted repository-relative source files; never supplied by chat or model output. */
   acceptanceSourceFiles?: readonly string[];
+  /** Trusted fixed-commit node:test roots; no import traversal or arbitrary argv. */
+  nodeTestDiscovery?: NodeTestDiscovery;
 }
 
 export interface SandboxCommandAttestation {
@@ -94,6 +110,8 @@ export interface CandidateStatusReport {
   fullGatePassed: false;
   label: string;
   reasons: string[];
+  /** Trusted resolver identity recorded with the original execution receipt. */
+  targetSelections?: Readonly<Record<string, CandidateTargetSelection>>;
 }
 
 const PACKAGE_MANAGERS = new Set(["npm", "npm.cmd", "pnpm", "pnpm.cmd", "yarn", "yarn.cmd", "bun"]);
@@ -107,6 +125,12 @@ function contained(root: string, candidate: string): boolean {
 export function validateTargetCommandSpec(commandId: string, spec: TargetCommandSpec): void {
   if (spec.assertionReporter !== undefined && spec.assertionReporter !== "node-test-v1")
     throw new Error("Target command assertion reporter is invalid");
+  if (spec.nodeTestDiscovery !== undefined) {
+    const policy = nodeTestDiscoverySchema.safeParse(spec.nodeTestDiscovery);
+    if (spec.assertionReporter !== "node-test-v1" || !policy.success ||
+      spec.argv.slice(2).some(file => policy.data.excludeFiles?.includes(posix.join(spec.cwd ?? ".", file))))
+      throw new Error("node_test_discovery_invalid");
+  }
   if (spec.acceptanceSourceFiles !== undefined) {
     const files = spec.acceptanceSourceFiles;
     if (spec.assertionReporter !== "node-test-v1" || !Array.isArray(files) || files.length > 16 ||

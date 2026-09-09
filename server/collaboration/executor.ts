@@ -32,6 +32,7 @@ import { assertLedgerArmed } from "./restore-guard.ts";
 import { ExecutionLifecycle } from "./execution-lifecycle.ts";
 import { assertExecutionRecoveryCanStart } from "./execution-recovery-authorization.ts";
 import { CommandCleanupError } from "./execution-limits.ts";
+import { resolveTargetCommandsForCandidate } from "./target-test-selection.ts";
 
 interface NodeRow {
   node_id: string;
@@ -44,6 +45,8 @@ interface NodeRow {
   deny_scope_json: string;
   commands_json: string;
   target_commands_json: string;
+  target_read_scope_json: string;
+  target_deny_scope_json: string;
   expected_artifacts_json: string;
   completion_definition: string;
   budget_json: string;
@@ -480,11 +483,16 @@ export class CandidateExecutor {
     let testEvidence: TestEvidence[] = [];
     let report: CandidateStatusReport;
     try {
+      const commandIds = parseStrings(node.target_commands_json);
+      const targets = resolveTargetCommandsForCandidate({
+        worktree: worktree.path, candidateSha: resultSha, commandIds, commands: configured.targetCommands,
+        readScope: parseStrings(node.target_read_scope_json), denyScope: parseStrings(node.target_deny_scope_json),
+      });
       const tests = await runTargetTests({
         worktree: worktree.path,
         environment: worktree.environment,
-        commandIds: parseStrings(node.target_commands_json),
-        commands: configured.targetCommands,
+        commandIds,
+        commands: targets.commands,
         runner: commandRunner,
         containment: this.options.containment,
         containmentContext: {
@@ -499,6 +507,7 @@ export class CandidateExecutor {
       report = tests.configurationProblems.length
         ? renderCandidateStatus({ modified: true, needsConfiguration: tests.configurationProblems })
         : renderCandidateStatus({ modified: true, evidence: testEvidence });
+      if (Object.keys(targets.selections).length) report.targetSelections = targets.selections;
     } catch (error) {
       if (error instanceof CommandCleanupError) throw error;
       report = renderCandidateStatus({ modified: true, needsConfiguration: [errorMessage(error)] });
@@ -539,7 +548,13 @@ export class CandidateExecutor {
           "n.completion_definition, n.budget_json, s.repository, w.current_plan_revision, " +
           "(SELECT v.commands_json FROM collaboration_work_nodes v " +
           " WHERE v.work_item_id = w.id AND v.plan_revision = p.revision AND v.node_type = 'validate' AND v.active = 1) " +
-          "AS target_commands_json " +
+          "AS target_commands_json, " +
+          "(SELECT v.read_scope_json FROM collaboration_work_nodes v " +
+          " WHERE v.work_item_id = w.id AND v.plan_revision = p.revision AND v.node_type = 'validate' AND v.active = 1) " +
+          "AS target_read_scope_json, " +
+          "(SELECT v.deny_scope_json FROM collaboration_work_nodes v " +
+          " WHERE v.work_item_id = w.id AND v.plan_revision = p.revision AND v.node_type = 'validate' AND v.active = 1) " +
+          "AS target_deny_scope_json " +
           "FROM collaboration_work_items w " +
           "JOIN collaboration_plan_revisions p ON p.work_item_id = w.id AND p.revision = w.current_plan_revision " +
           "JOIN collaboration_work_item_snapshots s ON s.work_item_id = w.id AND s.revision = p.snapshot_revision " +

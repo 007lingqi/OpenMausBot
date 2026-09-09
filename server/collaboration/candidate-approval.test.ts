@@ -9,7 +9,7 @@ import { OutboxDispatcher } from "./outbox-dispatcher.ts";
 import { InstanceLeaseCoordinator } from "./leases.ts";
 import { LocalOwnerRegistry } from "./owner.ts";
 import { readApprovalPresentation, approvalPayloadHash, confirmApprovalPresentation } from "./approval-presentation.ts";
-import { applyCollaborationMigrations } from "./migrations.ts";
+import { applyCollaborationMigrations, COLLABORATION_SCHEMA_VERSION } from "./migrations.ts";
 import { OwnerActionController } from "./actions.ts";
 import { renderDingTalkSessionMessage } from "../integrations/dingtalk/session-message.ts";
 
@@ -586,8 +586,8 @@ describe("fixed approval presentation provenance", () => {
       const tables = ["collaboration_work_items", "collaboration_external_events", "collaboration_outbox", "collaboration_candidate_reviews", "collaboration_owner_bindings"];
       const before = tables.map(table => f.database.prepare(`SELECT * FROM ${table}`).all());
       const migrations = f.database.prepare("SELECT * FROM collaboration_schema_migrations WHERE version<=36").all();
-      f.database.exec("DROP TABLE collaboration_approval_presentations; DELETE FROM collaboration_schema_migrations WHERE version=37; PRAGMA user_version=36");
-      expect(applyCollaborationMigrations(f.database)).toEqual({ schemaVersion: 37, appliedMigrations: 37 });
+      f.database.exec("DROP TABLE IF EXISTS collaboration_candidate_result_deliveries; DROP TABLE IF EXISTS collaboration_candidate_result_bindings; DROP TABLE IF EXISTS collaboration_candidate_recheck_attempts; DROP TABLE collaboration_approval_presentations; DELETE FROM collaboration_schema_migrations WHERE version>=37; PRAGMA user_version=36");
+      expect(applyCollaborationMigrations(f.database)).toEqual({ schemaVersion: COLLABORATION_SCHEMA_VERSION, appliedMigrations: COLLABORATION_SCHEMA_VERSION });
       expect(tables.map(table => f.database.prepare(`SELECT * FROM ${table}`).all())).toEqual(before);
       expect(f.database.prepare("SELECT * FROM collaboration_schema_migrations WHERE version<=36").all()).toEqual(migrations);
       expect(f.database.prepare("SELECT * FROM collaboration_approval_presentations").all()).toEqual([]);

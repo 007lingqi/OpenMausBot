@@ -4,6 +4,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { InboundCard } from "./message-renderer.ts";
 import { stageApprovalPresentation, type ApprovalDeliveryProof } from "./approval-presentation.ts";
 import { coalesceConversationNotification } from "./conversation-notifications.ts";
+import type { CandidateResultDeliveryProof } from "./candidate-result-evidence.ts";
 
 export interface CollaborationOutboxEntry {
   id: string;
@@ -27,7 +28,7 @@ export interface CollaborationOutboxEntry {
 export interface OutboxDeliveryPort {
   /** Query an existing accepted send only. null is absence of evidence, never permission to resend. */
   reconcile?(message: Parameters<OutboxDeliveryPort["deliver"]>[0]): Promise<
-    { outcome: "sent" } | { outcome: "unknown"; error: string } | null
+    { outcome: "sent"; candidateResultDelivery?: CandidateResultDeliveryProof } | { outcome: "unknown"; error: string } | null
   >;
   /** Remote sends without server-enforced idempotency may retry only proven non-delivery. */
   retryPolicy?: "only-confirmed-unsent";
@@ -41,7 +42,7 @@ export interface OutboxDeliveryPort {
     kind: CollaborationOutboxEntry["kind"];
     payload: InboundCard;
   }): Promise<
-    | { outcome: "sent"; transportId?: string; approvalDelivery?: ApprovalDeliveryProof }
+    | { outcome: "sent"; transportId?: string; approvalDelivery?: ApprovalDeliveryProof; candidateResultDelivery?: CandidateResultDeliveryProof }
     | { outcome: "retryable" | "unknown"; error: string }
     | { outcome: "permanent_failure"; error: string }
   >;

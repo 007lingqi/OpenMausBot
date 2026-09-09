@@ -5,10 +5,12 @@ import { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
 
 import { openCollaborationLedger } from "./collaboration/db.ts";
+import { acceptanceEvidencePoliciesSchema, type AcceptanceEvidencePolicy } from "./collaboration/acceptance-evidence.ts";
 import { OwnerActionController } from "./collaboration/actions.ts";
 import { approvalPayloadHash, isApprovalPresentationCard } from "./collaboration/approval-presentation.ts";
 import { CollaborationDegradationController } from "./collaboration/degradation.ts";
 import type { OutboxDeliveryPort } from "./collaboration/outbox.ts";
+import { candidateResultDeliveryProof } from "./collaboration/candidate-result-evidence.ts";
 import { LocalOwnerRegistry } from "./collaboration/owner.ts";
 import { authorizeExecutionRecoveryLocally, parseExecutionRecoveryRequest } from "./collaboration/execution-recovery-authorization.ts";
 import {
@@ -254,11 +256,21 @@ export function createDingTalkDelivery(
       return routedSourceEventId;
   }
   const reconcile: NonNullable<OutboxDeliveryPort["reconcile"]> = async message => {
-    const destination = proactiveDestination(databaseFile, routeEvent(message), proactiveRoutes);
+    const routedSourceEventId = routeEvent(message);
+    const destination = proactiveDestination(databaseFile, routedSourceEventId, proactiveRoutes);
     const result = await activeSender.queryAccepted({ proactiveOpenConversationId: destination ?? "",
       payload: message.payload, idempotencyKey: JSON.stringify([message.id, message.dedupeKey]) });
     if (!result) return null;
-    return result.ok ? { outcome: "sent" } : { outcome: "unknown", error: result.code ?? "proactive_delivery_unconfirmed" };
+    if (!result.ok) return { outcome: "unknown", error: result.code ?? "proactive_delivery_unconfirmed" };
+    const confirmed: Extract<Awaited<ReturnType<OutboxDeliveryPort["deliver"]>>, { outcome: "sent" }> = { outcome: "sent" };
+    if (routedSourceEventId && destination) {
+      const proof = candidateResultDeliveryProof(message.payload, routedSourceEventId, {
+        outboxId: message.id, idempotencyKey: JSON.stringify([message.id, message.dedupeKey]),
+        channel: "proactive", destination, confirmationKind: "accepted_receipt",
+      });
+      if (proof) confirmed.candidateResultDelivery = proof;
+    }
+    return confirmed;
   };
   return {
     retryPolicy: "only-confirmed-unsent",
@@ -280,18 +292,28 @@ export function createDingTalkDelivery(
           actions.close();
         }
       }
+      const destination = proactiveDestination(databaseFile, routedSourceEventId, proactiveRoutes);
       const result = await router.send({
         sourceEventId: routedSourceEventId,
-        proactiveOpenConversationId: proactiveDestination(databaseFile, routedSourceEventId, proactiveRoutes),
+        proactiveOpenConversationId: destination,
         payload,
         idempotencyKey: JSON.stringify([message.id, message.dedupeKey]),
       });
-      if (result.kind === "sent") return {
-        outcome: "sent" as const,
-        ...(!result.recovered && routedSourceEventId && isApprovalPresentationCard(message.payload) ? {
-          approvalDelivery: { sourceEventId: routedSourceEventId, payloadHash: approvalPayloadHash(message.payload) },
-        } : {}),
-      };
+      if (result.kind === "sent") {
+        const confirmed: Extract<Awaited<ReturnType<OutboxDeliveryPort["deliver"]>>, { outcome: "sent" }> = { outcome: "sent" };
+        if (!result.recovered && routedSourceEventId && isApprovalPresentationCard(message.payload)) {
+          confirmed.approvalDelivery = { sourceEventId: routedSourceEventId, payloadHash: approvalPayloadHash(message.payload) };
+        }
+        const actualDestination = result.channel === "session" ? routedSourceEventId : destination;
+        if (routedSourceEventId && actualDestination) {
+          const proof = candidateResultDeliveryProof(payload, routedSourceEventId, {
+            outboxId: message.id, idempotencyKey: JSON.stringify([message.id, message.dedupeKey]), channel: result.channel,
+            destination: actualDestination, confirmationKind: result.recovered ? "accepted_receipt" : "business_response",
+          });
+          if (proof) confirmed.candidateResultDelivery = proof;
+        }
+        return confirmed;
+      }
       if (result.kind === "permanent") return { outcome: "permanent_failure" as const, error: result.code };
       if (result.kind === "unknown") return { outcome: "unknown" as const, error: result.code };
       return { outcome: "retryable" as const, error: result.code };
@@ -365,7 +387,8 @@ function targetCommands(environment: NodeJS.ProcessEnv): Record<string, TargetCo
   if (entries.length < 1 || entries.length > 16) throw new Error("OMB_EXECUTION_TARGET_COMMANDS_JSON_invalid");
   for (const [id, value] of entries) {
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("OMB_EXECUTION_TARGET_COMMANDS_JSON_invalid");
-    const item = value as { argv?: unknown; cwd?: unknown; timeoutMs?: unknown; maxOutputBytes?: unknown; assertionContract?: TargetCommandSpec["assertionContract"]; assertionReporter?: TargetCommandSpec["assertionReporter"]; acceptanceSourceFiles?: TargetCommandSpec["acceptanceSourceFiles"] };
+    // SAFETY: Primitive fields are checked below; structured policies are validated by validateTargetCommandSpec before use.
+    const item = value as { argv?: unknown; cwd?: unknown; timeoutMs?: unknown; maxOutputBytes?: unknown; assertionContract?: TargetCommandSpec["assertionContract"]; assertionReporter?: TargetCommandSpec["assertionReporter"]; acceptanceSourceFiles?: TargetCommandSpec["acceptanceSourceFiles"]; nodeTestDiscovery?: TargetCommandSpec["nodeTestDiscovery"] };
     if (
       !Array.isArray(item.argv) || item.argv.length < 1 || item.argv.some((argument) => typeof argument !== "string") ||
       !Number.isSafeInteger(item.timeoutMs) || Number(item.timeoutMs) < 1 ||
@@ -383,10 +406,19 @@ function targetCommands(environment: NodeJS.ProcessEnv): Record<string, TargetCo
       ...(item.assertionReporter !== undefined ? { assertionReporter: item.assertionReporter } : {}),
       ...(item.acceptanceSourceFiles !== undefined ? { acceptanceSourceFiles: item.acceptanceSourceFiles } : {}),
     };
+    if (item.nodeTestDiscovery !== undefined) spec.nodeTestDiscovery = item.nodeTestDiscovery;
     validateTargetCommandSpec(id, spec);
     commands[id] = spec;
   }
   return commands;
+}
+
+function configuredAcceptanceEvidencePolicies(environment: NodeJS.ProcessEnv): AcceptanceEvidencePolicy[] {
+  const raw = environment.OMB_ACCEPTANCE_EVIDENCE_POLICIES_JSON;
+  if (raw === undefined) return [];
+  if (Buffer.byteLength(raw, "utf8") > 512 * 1024) throw new Error("acceptance_evidence_policies_invalid");
+  try { return acceptanceEvidencePoliciesSchema.parse(JSON.parse(raw)); }
+  catch { throw new Error("acceptance_evidence_policies_invalid"); }
 }
 
 function acceptanceConditions(environment: NodeJS.ProcessEnv): AcceptanceCondition[] {
@@ -562,6 +594,7 @@ function productionRuntimeOptions(
   const executionOptions = dockerExecutionOptions(environment);
   const naturalIntake = configuredNaturalIntake(environment);
   const acceptanceMapping = configuredAcceptanceMapping(environment);
+  const acceptanceEvidencePolicies = configuredAcceptanceEvidencePolicies(environment);
   const documentExtractor = configuredDocumentExtractor(environment);
   const onlineDocuments = configuredOnlineDocuments(environment, allowedConversationIds ?? new Set());
   if (naturalIntake && !executionOptions.planner) throw new Error("natural_intake_requires_planning_configuration");
@@ -572,6 +605,7 @@ function productionRuntimeOptions(
     probeOnly: options.healthOnly,
     logger: safeRuntimeLogger(io),
     ...executionOptions,
+    acceptanceEvidencePolicies,
     ...(naturalIntake ? { naturalIntake } : {}),
     ...(acceptanceMapping ? { acceptanceMapping } : {}),
     ...(onlineDocuments ? { onlineDocuments } : {}),

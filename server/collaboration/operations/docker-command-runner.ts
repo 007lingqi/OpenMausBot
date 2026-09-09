@@ -1,7 +1,9 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { basename, join, resolve } from "node:path";
 import { NODE_TEST_REPORTER_SOURCE, validateNodeTestArgv } from "../node-test-reporter.ts";
 import { CommandCleanupError } from "../execution-limits.ts";
+import { containmentBindingHash, type ContainmentBinding } from "../containment.ts";
 
 import type {
   SandboxedCommandRequest,
@@ -16,10 +18,13 @@ import {
 const SAFE_ENVIRONMENT_KEY = /^[A-Z_][A-Z0-9_]{0,127}$/u;
 const CONTAINER_ID = /^[0-9a-f]{64}$/u;
 
-function safeName(value: string): string {
-  const normalized = value.toLowerCase().replace(/[^a-z0-9_.-]+/gu, "-").replace(/^-+|-+$/gu, "");
+export function dockerCommandContainerName(binding: ContainmentBinding, commandId: string): string {
+  const normalized = `${binding.runId}-${commandId}`.toLowerCase().replace(/[^a-z0-9_.-]+/gu, "-").replace(/^-+|-+$/gu, "");
   if (!normalized) throw new Error("docker_container_name_invalid");
-  return `omb-${normalized.slice(0, 48)}`;
+  // A full SHA-256 digest fits in 43 base64url characters, leaving 15 for a readable prefix.
+  // Hash every binding field: truncating the run id previously discarded both role and nonce.
+  const digest = createHash("sha256").update(JSON.stringify({ bindingHash: containmentBindingHash(binding), commandId })).digest("base64url");
+  return `omb-${normalized.slice(0, 15)}-${digest}`;
 }
 
 function environmentArgs(environment: NodeJS.ProcessEnv): string[] {
@@ -93,14 +98,14 @@ export class DockerSandboxedCommandRunner implements SandboxedCommandRunner {
       if (["NODE_OPTIONS", "NODE_PATH", "NODE_TEST_CONTEXT"].some(key => request.environment[key] !== undefined)) throw new Error("docker_assertion_reporter_environment_invalid");
     }
     const startedAt = Date.now();
-    const runDirectory = join(this.exchangeRoot, safeName(`${request.containmentBinding.runId}-${request.commandId}-${request.containmentBinding.nonce}`));
+    const name = dockerCommandContainerName(request.containmentBinding, request.commandId);
+    const runDirectory = join(this.exchangeRoot, name);
     mkdirSync(runDirectory, { recursive: true, mode: 0o700 });
     const gate = join(runDirectory, "start");
     if (request.assertionReporter) writeFileSync(join(runDirectory, "node-test-reporter.mjs"), NODE_TEST_REPORTER_SOURCE, { mode: 0o444, flag: "wx" });
     const argv = request.assertionReporter
       ? [request.argv[0], "--test-reporter=/run/openmausbot/node-test-reporter.mjs", ...request.argv.slice(1)] : request.argv;
     const labels = this.containment.labels(request.containmentBinding).flatMap((label) => ["--label", label]);
-    const name = safeName(`${request.containmentBinding.runId}-${request.commandId}-${request.containmentBinding.nonce.slice(0, 8)}`);
     let id: string;
     try {
       const create = await this.docker.run([
@@ -202,5 +207,4 @@ export class DockerSandboxedCommandRunner implements SandboxedCommandRunner {
   }
 }
 
-export const dockerCommandContainerName = safeName;
 export const dockerCommandGateName = (path: string): string => basename(path);

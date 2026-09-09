@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { OPENMAUSBOT_SOURCE_BASELINE } from "./config.ts";
 
-export const COLLABORATION_SCHEMA_VERSION = 37;
+export const COLLABORATION_SCHEMA_VERSION = 39;
 
 interface Migration {
   version: number;
@@ -1618,6 +1618,71 @@ const migrations: readonly Migration[] = [
       CREATE TRIGGER approval_presentation_no_delete BEFORE DELETE ON collaboration_approval_presentations
         BEGIN SELECT RAISE(ABORT,'approval presentation history is immutable'); END;
     `); },
+  },
+  {
+    version: 38, name: "candidate-supplemental-recheck-budget", checksum: "v38:immutable-session-bound-three-attempt-recheck-budget",
+    apply(database) { database.exec(`
+      CREATE TABLE collaboration_candidate_recheck_attempts (
+        session_id TEXT PRIMARY KEY REFERENCES collaboration_verification_sessions(id),
+        candidate_run_id TEXT NOT NULL REFERENCES collaboration_runs(id),
+        candidate_sha TEXT NOT NULL CHECK(length(candidate_sha) IN (40,64) AND candidate_sha NOT GLOB '*[^a-f0-9]*'),
+        contract_hash TEXT NOT NULL CHECK(length(contract_hash)=64 AND contract_hash NOT GLOB '*[^a-f0-9]*'),
+        attempt INTEGER NOT NULL CHECK(attempt BETWEEN 1 AND 3),
+        verifier_attempt INTEGER NOT NULL CHECK(verifier_attempt>0),
+        instance_owner TEXT NOT NULL CHECK(length(instance_owner) BETWEEN 1 AND 512),
+        instance_fence INTEGER NOT NULL CHECK(instance_fence>0), created_at INTEGER NOT NULL,
+        UNIQUE(candidate_run_id,contract_hash,attempt), UNIQUE(candidate_run_id,verifier_attempt)
+      ) STRICT;
+      CREATE TRIGGER candidate_recheck_budget BEFORE INSERT ON collaboration_candidate_recheck_attempts
+        WHEN NEW.attempt<>(SELECT COALESCE(MAX(attempt),0)+1 FROM collaboration_candidate_recheck_attempts
+          WHERE candidate_run_id=NEW.candidate_run_id AND contract_hash=NEW.contract_hash)
+          OR NEW.verifier_attempt<=(SELECT COALESCE(MAX(verifier_attempt),0) FROM collaboration_candidate_recheck_attempts
+            WHERE candidate_run_id=NEW.candidate_run_id)
+        BEGIN SELECT RAISE(ABORT,'candidate recheck budget sequence mismatch'); END;
+      CREATE TRIGGER candidate_recheck_session_binding BEFORE INSERT ON collaboration_candidate_recheck_attempts
+        WHEN NOT EXISTS(SELECT 1 FROM collaboration_verification_sessions s
+          WHERE s.id=NEW.session_id AND s.candidate_run_id=NEW.candidate_run_id AND s.candidate_sha=NEW.candidate_sha
+            AND s.instance_owner=NEW.instance_owner AND s.instance_fence=NEW.instance_fence
+            AND NOT EXISTS(SELECT 1 FROM collaboration_verification_settlements f WHERE f.session_id=s.id)
+            AND NOT EXISTS(SELECT 1 FROM collaboration_verification_finalization_intents f WHERE f.session_id=s.id)
+            AND NOT EXISTS(SELECT 1 FROM collaboration_verification_commands c WHERE c.session_id=s.id))
+        BEGIN SELECT RAISE(ABORT,'candidate recheck session binding mismatch'); END;
+      CREATE TRIGGER candidate_recheck_no_update BEFORE UPDATE ON collaboration_candidate_recheck_attempts
+        BEGIN SELECT RAISE(ABORT,'candidate recheck budget is immutable'); END;
+      CREATE TRIGGER candidate_recheck_no_delete BEFORE DELETE ON collaboration_candidate_recheck_attempts
+        BEGIN SELECT RAISE(ABORT,'candidate recheck budget is immutable'); END;
+    `); },
+  },
+  {
+    version:39,name:"verified-result-delivery",checksum:"v39:fixed-candidate-result-body-and-accepted-delivery",
+    apply(database){database.exec(`
+      CREATE TABLE collaboration_candidate_result_bindings (
+        outbox_id TEXT PRIMARY KEY REFERENCES collaboration_outbox(id),
+        work_item_id TEXT NOT NULL REFERENCES collaboration_work_items(id), work_item_version INTEGER NOT NULL CHECK(work_item_version>0),
+        conversation_id TEXT NOT NULL REFERENCES collaboration_conversations(id), plan_revision INTEGER NOT NULL CHECK(plan_revision>0), snapshot_revision INTEGER NOT NULL CHECK(snapshot_revision>0),
+        candidate_run_id TEXT NOT NULL REFERENCES collaboration_runs(id), base_sha TEXT NOT NULL, candidate_sha TEXT NOT NULL,
+        spec_hash TEXT NOT NULL CHECK(length(spec_hash)=64), spec_identity_hash TEXT NOT NULL CHECK(length(spec_identity_hash)=64), policy_hash TEXT NOT NULL CHECK(length(policy_hash)=64),
+        payload_hash TEXT NOT NULL CHECK(length(payload_hash)=64), serialized_hash TEXT NOT NULL CHECK(length(serialized_hash)=64), created_at INTEGER NOT NULL,
+        UNIQUE(candidate_run_id,spec_hash,policy_hash,work_item_version)
+      ) STRICT;
+      CREATE TABLE collaboration_candidate_result_deliveries (
+        outbox_id TEXT PRIMARY KEY REFERENCES collaboration_candidate_result_bindings(outbox_id),
+        payload_hash TEXT NOT NULL CHECK(length(payload_hash)=64), serialized_hash TEXT NOT NULL CHECK(length(serialized_hash)=64),
+        source_event_id TEXT NOT NULL CHECK(length(source_event_id) BETWEEN 1 AND 512), delivery_sequence INTEGER NOT NULL CHECK(delivery_sequence>0), sent_at INTEGER NOT NULL,
+        idempotency_key_hash TEXT NOT NULL CHECK(length(idempotency_key_hash)=64), channel TEXT NOT NULL CHECK(channel IN ('session','proactive')),
+        destination_hash TEXT NOT NULL CHECK(length(destination_hash)=64), confirmation_kind TEXT NOT NULL CHECK(confirmation_kind IN ('business_response','accepted_receipt'))
+      ) STRICT;
+      CREATE TRIGGER candidate_result_delivery_binding BEFORE INSERT ON collaboration_candidate_result_deliveries
+        WHEN NOT EXISTS(SELECT 1 FROM collaboration_candidate_result_bindings b JOIN collaboration_outbox o ON o.id=b.outbox_id
+          WHERE b.outbox_id=NEW.outbox_id AND b.payload_hash=NEW.payload_hash AND b.serialized_hash=NEW.serialized_hash
+            AND o.delivery_state='sent' AND o.sent_at=NEW.sent_at AND o.delivery_sequence=NEW.delivery_sequence AND o.superseded_at IS NULL)
+        BEGIN SELECT RAISE(ABORT,'candidate result delivery is not bound'); END;
+    `);
+      for(const table of ["bindings","deliveries"])for(const operation of ["UPDATE","DELETE"]){
+        database.exec(`CREATE TRIGGER candidate_result_${table}_no_${operation.toLowerCase()} BEFORE ${operation} ON collaboration_candidate_result_${table}
+          BEGIN SELECT RAISE(ABORT,'candidate result evidence is immutable'); END;`);
+      }
+    },
   },
 ];
 

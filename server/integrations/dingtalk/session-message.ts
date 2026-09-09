@@ -68,6 +68,7 @@ const PLAN_HEADLINES: Record<string, string> = {
   planning_failed: "修改方案还没整理完成",
   candidate_ready: "待负责人审批",
   completed: "修改完成",
+  verified_result: "修改和回归已核对",
   execution_failed: "执行未完成",
   verification_pending: "正在核对修改结果",
   verification_blocked: "修改结果尚未通过复核",
@@ -240,6 +241,8 @@ export function renderDingTalkSessionMessage(payload: unknown): Record<string, u
           `- 确认继续：@研发助手 批准 ${workItemId}`,
           `- 需要调整：@研发助手 退回 ${workItemId} 请说明原因`);
       }
+    } else if (status === "verified_result") {
+      lines.push("",text(card?.summary,"修改结果正在核对。",600));
     } else if (status === "completed") {
       const summary = text(userFacingSummary(card?.summary, "已按确认的需求完成修改。"), "已按确认的需求完成修改。", 1_000);
       lines.push("", summary);
@@ -278,7 +281,7 @@ export function renderDingTalkSessionMessage(payload: unknown): Record<string, u
     : [];
   return {
     msgtype: "markdown",
-    markdown: { title: headline, text: type === "command_status_card" && card?.command === "conversation" && card?.presentation === "business"
+    markdown: { title: headline, text: type === "plan_status_card" && status === "verified_result" ? text(card?.summary,"修改结果正在核对。",600) : type === "command_status_card" && card?.command === "conversation" && card?.presentation === "business"
       ? text(card.summary, "任务状态已更新。", 1_000) : lines.join("\n") },
     ...(atUserIds.length ? { at: { atUserIds, isAtAll: false } } : {}),
   };

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { COLLABORATION_SCHEMA_VERSION } from "./migrations.ts";
 import { startCollaborationService } from "./service.ts";
 import { InstanceLeaseCoordinator } from "./leases.ts";
 import { DwsOnlineDocumentReader, type DwsReadCommandPort } from "./operations/dws-online-reader.ts";
@@ -55,10 +56,10 @@ describe("durable online document ingestion", () => {
       expect(readLatestWorkItemSnapshot(h.db, h.id)!.acceptanceConditions).toEqual([]);
       h.service.close();
       // Reconstruct v32 without touching the original successful input or its Spec.
-      h.db.exec("DROP TABLE collaboration_approval_presentations; DROP TABLE collaboration_conversation_intents; DROP TABLE collaboration_online_read_recoveries; DROP TRIGGER online_read_jobs_binding; ALTER TABLE collaboration_online_read_jobs DROP COLUMN recovery_generation; CREATE TRIGGER online_read_jobs_binding BEFORE UPDATE ON collaboration_online_read_jobs WHEN NEW.id<>OLD.id OR NEW.work_item_id<>OLD.work_item_id OR NEW.source_event_id<>OLD.source_event_id OR NEW.normalized_hash<>OLD.normalized_hash OR NEW.reference_hash<>OLD.reference_hash OR NEW.grant_fingerprint<>OLD.grant_fingerprint OR NEW.attempts<OLD.attempts OR NEW.projection_attempts<OLD.projection_attempts BEGIN SELECT RAISE(ABORT,'online source and budget are immutable'); END; DROP TABLE collaboration_natural_material_recoveries; DROP VIEW collaboration_natural_all_jobs; DROP TABLE collaboration_natural_material_jobs; DELETE FROM collaboration_schema_migrations WHERE version>=33; PRAGMA user_version=32");
+      h.db.exec("DROP TABLE IF EXISTS collaboration_candidate_result_deliveries; DROP TABLE IF EXISTS collaboration_candidate_result_bindings; DROP TABLE IF EXISTS collaboration_candidate_recheck_attempts; DROP TABLE collaboration_approval_presentations; DROP TABLE collaboration_conversation_intents; DROP TABLE collaboration_online_read_recoveries; DROP TRIGGER online_read_jobs_binding; ALTER TABLE collaboration_online_read_jobs DROP COLUMN recovery_generation; CREATE TRIGGER online_read_jobs_binding BEFORE UPDATE ON collaboration_online_read_jobs WHEN NEW.id<>OLD.id OR NEW.work_item_id<>OLD.work_item_id OR NEW.source_event_id<>OLD.source_event_id OR NEW.normalized_hash<>OLD.normalized_hash OR NEW.reference_hash<>OLD.reference_hash OR NEW.grant_fingerprint<>OLD.grant_fingerprint OR NEW.attempts<OLD.attempts OR NEW.projection_attempts<OLD.projection_attempts BEGIN SELECT RAISE(ABORT,'online source and budget are immutable'); END; DROP TABLE collaboration_natural_material_recoveries; DROP VIEW collaboration_natural_all_jobs; DROP TABLE collaboration_natural_material_jobs; DELETE FROM collaboration_schema_migrations WHERE version>=33; PRAGMA user_version=32");
       const restarted = startCollaborationService(h.options);
       try {
-        expect(h.db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 37 });
+        expect(h.db.prepare("PRAGMA user_version").get()).toEqual({ user_version: COLLABORATION_SCHEMA_VERSION });
         expect(h.db.prepare("SELECT * FROM collaboration_natural_intake_jobs WHERE source_event_id='source'").get()).toEqual(original);
         expect(await restarted.processOnlineDocuments(h.now())).toBe(h.id);
         await restarted.processNaturalIntake(h.now());
