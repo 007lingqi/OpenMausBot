@@ -9,6 +9,7 @@ import { OutboxDispatcher } from "./outbox-dispatcher.ts";
 import { enqueueInboundCard, type OutboxDeliveryPort } from "./outbox.ts";
 import { resultDeliveryFixture } from "./outbox-result.test-fixtures.ts";
 import { readVerifiedCandidateResultReply } from "./candidate-result-evidence.ts";
+import { seedIssuedCandidateRevision } from "./candidate-revision.test-fixtures.ts";
 
 const roots: string[] = [];
 afterEach(() => { vi.restoreAllMocks(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -26,6 +27,24 @@ function fixture(reconcile: NonNullable<OutboxDeliveryPort["reconcile"]>) {
   return { db, path, id, lease, deliver, build };
 }
 describe("durable query-only delivery reconciliation", () => {
+  it.each(["before", "during"])("does not use a parent receipt after revision %s reconciliation", async timing => {
+    const root = mkdtempSync(join(tmpdir(), "outbox-query-revision-")); roots.push(root);
+    const f = resultDeliveryFixture(root);
+    f.db.prepare("UPDATE collaboration_outbox SET delivery_state='dead_letter',attempt=1 WHERE id=?").run(f.outbox.id);
+    const revise = () => seedIssuedCandidateRevision(f.db, { runId: f.target.candidateRunId, candidateSha: f.target.candidateSha, stage: "reserved" });
+    if (timing === "before") revise();
+    const deliver = vi.fn(async () => ({ outcome: "sent" as const }));
+    const reconcile = vi.fn(async () => { if (timing === "during") revise(); return { outcome: "sent" as const, candidateResultDelivery: f.proof("proactive", "accepted_receipt") }; });
+    try {
+      expect(await new OutboxDispatcher(f.db, { deliver, reconcile }, { maxAttempts: 3, claimTtlMs: 1000, baseBackoffMs: 10, maxBackoffMs: 100 }).dispatchOne(f.lease, 4001))
+        .toMatchObject({ state: "superseded", operation: "reconcile" });
+      expect(reconcile).toHaveBeenCalledTimes(timing === "before" ? 0 : 1);
+      expect(deliver).not.toHaveBeenCalled();
+      expect(readVerifiedCandidateResultReply(f.db, f.target)).toBeNull();
+      expect(f.db.prepare("SELECT accepted_candidate_sha FROM collaboration_work_items WHERE id=?").get(f.workItemId)).toEqual({ accepted_candidate_sha: null });
+    } finally { f.db.close(); }
+  });
+
   it("records an exact accepted candidate receipt in the sent transaction without resend or duplicate confirmation",async()=>{
     const root=mkdtempSync(join(tmpdir(),"outbox-result-query-"));roots.push(root);const f=resultDeliveryFixture(root);
     f.db.prepare("UPDATE collaboration_outbox SET delivery_state='dead_letter',attempt=1,last_error='proactive_delivery_unconfirmed' WHERE id=?").run(f.outbox.id);

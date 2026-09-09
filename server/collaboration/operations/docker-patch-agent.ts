@@ -141,6 +141,7 @@ export class DockerPatchApplier implements PatchApplierPort {
 
   async apply(request: AgentRunRequest, changes: PatchChange[]): Promise<ContainmentProof> {
     assertPatchActive(request.signal);
+    request.assertAuthorityCurrent?.();
     if (this.active.has(request.runId)) throw new Error("docker_patch_already_active_or_unsettled");
     let finish!: () => void;
     const active: PatchApplication = { controller: new AbortController(), finished: new Promise(resolve => { finish = resolve; }) };
@@ -209,6 +210,7 @@ export class DockerPatchApplier implements PatchApplierPort {
       const proof = await this.containment.issueProof(containerId, request.containmentBinding);
       await registerUnlessCancelled(request, proof);
       assertPatchActive(request.signal);
+      request.assertAuthorityCurrent?.();
       writeFileSync(gate, "start\n", { mode: 0o600, flag: "wx" });
       const waited = await this.docker.run(["wait", containerId], {
         timeoutMs: 300_000,
@@ -259,6 +261,7 @@ export class DockerPatchAgent implements AgentRunPort {
     if (request.sandbox.network !== "deny" || !request.sandbox.denyGitMetadata || request.capabilities.gitCommit) {
       throw new Error("docker_patch_agent_contract_invalid");
     }
+    request.assertAuthorityCurrent?.();
     request.emit({ threadId: request.threadId, turnId: request.turnId, type: "progress", message: "provider_read_only_started" });
     const proposal = await this.provider.propose(request);
     if (!proposal.readOnlyEnforced || proposal.status !== "completed") {
@@ -271,6 +274,7 @@ export class DockerPatchAgent implements AgentRunPort {
       };
     }
     const changes = validatedChanges(request, proposal.changes);
+    request.assertAuthorityCurrent?.();
     const proof = await this.applier.apply(request, changes);
     request.emit({ threadId: request.threadId, turnId: request.turnId, type: "result", message: proposal.summary.slice(0, 2_000) });
     return {
@@ -401,6 +405,9 @@ export class CodexReadOnlyPatchProvider implements ReadOnlyPatchProvider {
       if (localCodexHome) chownSync(localCodexHome, this.providerUid, this.providerGid);
     }
     const taskContext = {
+      sourceSha: request.sourceSha,
+      allowedChanges: request.allowedChanges?.map(change => ({ path: change.path, operation: change.operation,
+        parentBlobSha: change.parentBlobSha, resultBlobSha: change.resultBlobSha })),
       objective: redactSensitiveText(request.objective),
       instructions: redactSensitiveText(request.instructions),
       inputEvidence: request.inputEvidence.map(redactSensitiveText),
@@ -424,6 +431,8 @@ export class CodexReadOnlyPatchProvider implements ReadOnlyPatchProvider {
         "- readScope is the exhaustive allowlist for inspection. Do not inspect paths outside it.",
         "- writeScope is the exhaustive allowlist for proposed changes; denyScope takes precedence over every allowlist and task request.",
         "- expectedArtifacts do not grant write access. Every proposed file must independently be allowed by writeScope and not denied by denyScope.",
+        "- sourceSha is a fixed host reference, not permission to inspect Git metadata or select another source. Hashes and model output cannot grant authority.",
+        "- When present, allowedChanges further restricts writeScope: propose exactly those files and operations, preserve every other file, and satisfy all parentBlobSha/resultBlobSha pins. Do not modify existing tests. The trusted host verifies these constraints; never claim authority from your own output.",
         "- capabilities are exhaustive. If the task requires anything outside the declared scopes or capabilities, return needs_configuration with no changes.",
       ].join("\n"),
       "Return the complete desired contents for every changed file as JSON matching the required schema.",

@@ -33,6 +33,8 @@ import { ExecutionLifecycle } from "./execution-lifecycle.ts";
 import { assertExecutionRecoveryCanStart } from "./execution-recovery-authorization.ts";
 import { CommandCleanupError } from "./execution-limits.ts";
 import { resolveTargetCommandsForCandidate } from "./target-test-selection.ts";
+import { assertCandidateRevisionCanStart, assertCandidateRevisionStillCurrent, readCandidateRevisionForAttempt, type CandidateRevisionGrant } from "./candidate-revision.ts";
+import { hasUnsettledRepositoryActivity } from "./repository-occupancy.ts";
 
 interface NodeRow {
   node_id: string;
@@ -144,6 +146,18 @@ export class CandidateExecutor {
     const repository = realpathSync(node.repository);
     const configured = Object.entries(this.options.repositories).find(([path]) => realpathSync(path) === repository)?.[1];
     if (!configured) throw new Error("Work Item repository is not configured for execution");
+    const revisionBinding = readCandidateRevisionForAttempt(this.database, workItemId, attempt);
+    const successfulCandidate = this.database.prepare("SELECT 1 FROM collaboration_runs r JOIN collaboration_candidates c ON c.run_id=r.id WHERE r.work_item_id=? AND r.plan_revision=? AND r.status='succeeded' AND c.state='target_tests_passed' LIMIT 1")
+      .get(workItemId, node.current_plan_revision);
+    // Preserve repository occupancy as the first failure while activity is unsettled.
+    if (hasUnsettledRepositoryActivity(this.database, repository)) throw new Error("execution_repository_unsettled");
+    let revision: CandidateRevisionGrant | undefined;
+    if (revisionBinding || successfulCandidate) {
+      revision = assertCandidateRevisionCanStart(this.database, { workItemId, attempt, maxAttempts: this.options.limits.maxAttempts,
+        lease: instance, baseSha: configured.baseSha, now: Date.now() });
+      if (revision.nodeId !== node.node_id || revision.planRevision !== node.current_plan_revision || realpathSync(revision.repository) !== repository)
+        throw new Error("candidate_revision_execution_binding_mismatch");
+    }
     if (attempt > this.options.limits.maxAttempts) {
       assertExecutionRecoveryCanStart(this.database, { workItemId, attempt, maxAttempts: this.options.limits.maxAttempts,
         lease: instance, baseSha: configured.baseSha, now: Date.now() });
@@ -151,34 +165,41 @@ export class CandidateExecutor {
     const runId = randomUUID();
     const lifecycle = new ExecutionLifecycle(this.database, runId, instance);
     lifecycle.reserve({ workItemId, planRevision: node.current_plan_revision, repository, baseSha: configured.baseSha,
-      attempt, maxAttempts: this.options.limits.maxAttempts });
+      attempt, maxAttempts: this.options.limits.maxAttempts, buildParentSha: revision?.buildParentSha });
     let ordinal = 0;
     let cleanupUnknown = false;
+    const assertRevisionCurrent = () => {
+      if (revision) assertCandidateRevisionStillCurrent(this.database, { workItemId, attempt, sessionId: runId });
+    };
     const agent: AgentRunPort = {
       run: async request => {
+        assertRevisionCurrent();
         const command = ++ordinal;
         lifecycle.command(command, request.containmentBinding);
         try {
-          return await this.options.agent.run({ ...request, registerContainment: async proof => {
+          return await this.options.agent.run({ ...request, assertAuthorityCurrent: revision ? assertRevisionCurrent : undefined, registerContainment: async proof => {
             await request.registerContainment(proof);
             lifecycle.proof(command, proof);
+            assertRevisionCurrent();
           } });
         } catch (error) { if (error instanceof CommandCleanupError) cleanupUnknown = true; throw error; }
       },
       interrupt: run => this.options.agent.interrupt(run),
     };
     const commandRunner: SandboxedCommandRunner | undefined = this.options.commandRunner ? { run: async request => {
+      assertRevisionCurrent();
       const command = ++ordinal;
       lifecycle.command(command, request.containmentBinding);
       try {
         return await this.options.commandRunner.run({ ...request, registerContainment: async proof => {
           await request.registerContainment(proof);
           lifecycle.proof(command, proof);
+          assertRevisionCurrent();
         } });
       } catch (error) { if (error instanceof CommandCleanupError) cleanupUnknown = true; throw error; }
     } } : undefined;
     try {
-      return await this.executeReserved({ workItemId, attempt, now, node, repository, configured, runId, instance, agent, commandRunner });
+      return await this.executeReserved({ workItemId, attempt, now, node, repository, configured, runId, instance, agent, commandRunner, revision });
     } catch (error) { if (error instanceof CommandCleanupError) cleanupUnknown = true; throw error; }
     finally {
       let settled = false;
@@ -190,10 +211,11 @@ export class CandidateExecutor {
     }
   }
 
-  private async executeReserved({ workItemId, attempt, now, node, repository, configured, runId, instance, agent, commandRunner }: {
+  private async executeReserved({ workItemId, attempt, now, node, repository, configured, runId, instance, agent, commandRunner, revision }: {
     workItemId: string; attempt: number; now: number; node: NodeRow; repository: string;
     configured: RepositoryExecutionConfig; runId: string; instance: InstanceLease;
     agent: AgentRunPort; commandRunner: SandboxedCommandRunner | undefined;
+    revision?: CandidateRevisionGrant;
   }): Promise<CandidateExecutionOutcome> {
     const threadId = `collaboration-${runId}`;
     const turnId = randomUUID();
@@ -203,6 +225,7 @@ export class CandidateExecutor {
       nodeId: node.node_id,
       attempt,
       expectedBaseSha: configured.baseSha,
+      buildParentSha: revision?.buildParentSha,
     });
     const containmentBinding: ContainmentBinding = {
       runId,
@@ -222,6 +245,7 @@ export class CandidateExecutor {
       instance,
       containmentBinding,
       now,
+      revision,
     });
 
     const controller = new AbortController();
@@ -237,8 +261,10 @@ export class CandidateExecutor {
       planRevision: node.current_plan_revision,
       nodeId: node.node_id,
       cwd: worktree.path,
+      sourceSha: worktree.buildParentSha ?? worktree.baseSha,
+      allowedChanges: revision?.allowedChanges.map(change => ({ ...change })),
       objective: node.objective,
-      instructions: node.instructions,
+      instructions: revision?.instructions ?? node.instructions,
       inputEvidence: parseStrings(node.input_evidence_json),
       readScope: parseStrings(node.read_scope_json),
       writeScope: parseStrings(node.write_scope_json),
@@ -435,19 +461,27 @@ export class CandidateExecutor {
     );
 
     await this.worktrees.assertOriginalUnchanged(worktree);
-    if ((await this.worktrees.currentHead(worktree)) !== worktree.baseSha) {
+    if ((await this.worktrees.currentHead(worktree)) !== (worktree.buildParentSha ?? worktree.baseSha)) {
       return this.finalizeWithoutCandidate(runId, workItemId, node, worktree, "invalid", ["unexpected_agent_commit"], now);
     }
     const changedPaths = await this.worktrees.changedPaths(worktree);
     const mandatoryDeny = [".env", ".env*", "**/.env*", ".git", ".git/**", ...parseStrings(node.deny_scope_json)];
     const diff = this.worktrees.validateDiff(worktree, changedPaths, parseStrings(node.write_scope_json), mandatoryDeny);
     if (!changedPaths.length) diff.violations.push("no_changes");
+    if (revision) {
+      try { await this.worktrees.assertRevisionDelta(worktree, revision.allowedChanges); }
+      catch { diff.violations.push("candidate_revision_delta_invalid"); }
+    }
     if (diff.violations.length) {
       return this.finalizeWithoutCandidate(runId, workItemId, node, worktree, "invalid", diff.violations, now, changedPaths);
     }
     const beforeCommitBlock = this.executionBlockReason(runId, workItemId, node.current_plan_revision, node.node_id);
     if (beforeCommitBlock) {
       return this.finalizeWithoutCandidate(runId, workItemId, node, worktree, "invalid", [beforeCommitBlock], now, changedPaths);
+    }
+    if (revision) {
+      try { assertCandidateRevisionStillCurrent(this.database, { workItemId, attempt, sessionId: runId }); }
+      catch { return this.finalizeWithoutCandidate(runId, workItemId, node, worktree, "invalid", ["candidate_revision_authority_stale"], now, changedPaths); }
     }
     assertCurrentInstanceLease(this.database, instance, Date.now());
     appendExecutionAudit(this.database, {
@@ -463,6 +497,14 @@ export class CandidateExecutor {
       nodeId: node.node_id,
       runId,
     });
+    if (revision) {
+      try { assertCandidateRevisionStillCurrent(this.database, { workItemId, attempt, sessionId: runId }); }
+      catch { return this.finalizeCandidate(runId, workItemId, node, worktree, resultSha, changedPaths,
+        renderCandidateStatus({ modified: true, violations: ["candidate_revision_authority_stale"] }), [], now); }
+      try { await this.worktrees.assertRevisionDelta(worktree, revision.allowedChanges, resultSha); }
+      catch { return this.finalizeCandidate(runId, workItemId, node, worktree, resultSha, changedPaths,
+        renderCandidateStatus({ modified: true, violations: ["candidate_revision_committed_delta_invalid"] }), [], now); }
+    }
 
     const afterCommitBlock = this.executionBlockReason(runId, workItemId, node.current_plan_revision, node.node_id);
     if (afterCommitBlock) {
@@ -631,6 +673,7 @@ export class CandidateExecutor {
     instance: InstanceLease;
     containmentBinding: ContainmentBinding;
     now: number;
+    revision?: CandidateRevisionGrant;
   }): void {
     this.database.exec("BEGIN IMMEDIATE");
     try {
@@ -638,6 +681,13 @@ export class CandidateExecutor {
         throw new Error("Plan changed or Owner control prevents execution");
       }
       assertCurrentInstanceLease(this.database, input.instance, Date.now());
+      if (input.revision) {
+        assertCandidateRevisionStillCurrent(this.database, { workItemId: input.workItemId, attempt: input.attempt, sessionId: input.runId });
+        const binding = readCandidateRevisionForAttempt(this.database, input.workItemId, input.attempt);
+        if (!binding || binding.stage !== "started" || binding.sessionId !== input.runId || binding.instanceOwner !== input.instance.ownerId ||
+          binding.instanceFence !== input.instance.fence || binding.requestHash !== input.revision.requestHash || binding.buildParentSha !== input.worktree.buildParentSha)
+          throw new Error("candidate_revision_started_binding_mismatch");
+      }
       const claimed = this.database
         .prepare(
           "UPDATE collaboration_work_nodes SET lease_owner = ?, lease_expires_at = ?, " +
@@ -753,6 +803,7 @@ export class CandidateExecutor {
     ownerInterrupted = false,
   ): CandidateExecutionOutcome {
     let finalizedReport = report;
+    let candidateSha = resultSha;
     this.database.exec("BEGIN IMMEDIATE");
     try {
       const runFence = this.database
@@ -769,19 +820,38 @@ export class CandidateExecutor {
         Date.now(),
       );
       const transactionBlock = this.executionBlockReason(runId, workItemId, node.current_plan_revision, node.node_id);
-      const effectiveReport = transactionBlock
+      let effectiveReport = transactionBlock
         ? renderCandidateStatus({ modified: changedPaths.length > 0, violations: [transactionBlock] })
         : report;
+      // SAFETY: the run fence above proved this row exists; schema requires a positive integer attempt.
+      const runAttempt = this.database.prepare("SELECT attempt FROM collaboration_runs WHERE id=?").get(runId) as { attempt: number };
+      const revision = readCandidateRevisionForAttempt(this.database, workItemId, runAttempt.attempt);
+      let revisionAuthorityStale = false;
+      let quality: CandidateStatusReport & { lineage?: object; rejectedCandidateSha?: string } = effectiveReport;
+      if (revision) {
+        if (revision.stage !== "started" || revision.sessionId !== runId || revision.baseSha !== worktree.baseSha || revision.buildParentSha !== worktree.buildParentSha)
+          throw new Error("candidate_revision_finalization_binding_mismatch");
+        try { assertCandidateRevisionStillCurrent(this.database, { workItemId, attempt: runAttempt.attempt, sessionId: runId }); }
+        catch {
+          revisionAuthorityStale = true;
+          effectiveReport = renderCandidateStatus({ modified: changedPaths.length > 0, violations: ["candidate_revision_authority_stale"] });
+          candidateSha = null;
+        }
+        quality = { ...effectiveReport, lineage: { version: 1, requestId: revision.requestId, requestHash: revision.requestHash,
+          parentRunId: revision.parentRunId, parentSha: revision.parentSha, baseSha: revision.baseSha,
+          buildParentSha: revision.buildParentSha, candidateSha } };
+        if (candidateSha === null && resultSha !== null) quality.rejectedCandidateSha = resultSha;
+      }
       finalizedReport = effectiveReport;
       const effectiveOwnerInterrupted = ownerInterrupted || transactionBlock === "owner_interrupt";
       const runStatus = effectiveOwnerInterrupted
         ? "failed"
-        : explicitRunStatus ??
+        : revisionAuthorityStale ? "invalid" : explicitRunStatus ??
           (effectiveReport.state === "invalid"
             ? "invalid"
             : effectiveReport.state === "needs_configuration"
               ? "needs_configuration"
-              : "succeeded");
+              : revision && effectiveReport.state !== "target_tests_passed" ? "failed" : "succeeded");
       const nodeRuntimeState =
         effectiveOwnerInterrupted
           ? "interrupted"
@@ -811,7 +881,7 @@ export class CandidateExecutor {
           "UPDATE collaboration_runs SET status = ?, result_sha = ?, finished_at = ?, error = ?, " +
             "version = version + 1 WHERE id = ?",
         )
-        .run(runStatus, resultSha, Date.now(), effectiveReport.reasons.join("; ") || null, runId);
+        .run(runStatus, candidateSha, Date.now(), effectiveReport.reasons.join("; ") || null, runId);
       this.database
         .prepare(
           "INSERT INTO collaboration_candidates " +
@@ -823,10 +893,10 @@ export class CandidateExecutor {
           runId,
           effectiveReport.state,
           worktree.baseSha,
-          resultSha,
+          candidateSha,
           JSON.stringify(changedPaths),
           JSON.stringify(effectiveReport.reasons),
-          JSON.stringify(effectiveReport),
+          JSON.stringify(quality),
           now,
         );
       const insertEvidence = this.database.prepare(
@@ -876,7 +946,7 @@ export class CandidateExecutor {
         runId,
         action: "candidate.finalized",
         outcome: effectiveReport.state,
-        resource: { baseSha: worktree.baseSha, resultSha, quality: effectiveReport.state, ownerInterrupted: effectiveOwnerInterrupted },
+        resource: { baseSha: worktree.baseSha, resultSha: candidateSha, quality: effectiveReport.state, ownerInterrupted: effectiveOwnerInterrupted },
         now,
       });
       this.database.exec("COMMIT");
@@ -890,7 +960,7 @@ export class CandidateExecutor {
       planRevision: node.current_plan_revision,
       nodeId: node.node_id,
       baseSha: worktree.baseSha,
-      resultSha,
+      resultSha: candidateSha,
       branch: worktree.branch,
       worktreePath: worktree.path,
       changedPaths,

@@ -14,7 +14,8 @@ import { OwnerActionController } from "./actions.ts";
 import { renderDingTalkSessionMessage } from "../integrations/dingtalk/session-message.ts";
 
 import { startCollaborationService } from "./service.ts";
-import { completeVerifiedLowRiskCandidate } from "./candidate-approval.ts";
+import { completeVerifiedLowRiskCandidate, readCandidateApprovalTarget } from "./candidate-approval.ts";
+import { seedIssuedCandidateRevision } from "./candidate-revision.test-fixtures.ts";
 import { readConversationContext, type ConversationJob } from "./conversation-context.ts";
 import { enqueueOwnerDecisionForWorkItem } from "./operations/runtime.ts";
 
@@ -398,6 +399,31 @@ describe("natural approval controls", () => {
 });
 
 describe("fixed approval presentation provenance", () => {
+  it("suppresses a queued parent approval card when a candidate revision is issued", async () => {
+    const f = presentationFixture(), card = f.create();
+    try {
+      seedIssuedCandidateRevision(f.database, { runId: "run-1", candidateSha: "2".repeat(40) });
+      expect(await sendPresentation(f)).toMatchObject({ id: card.id, state: "superseded" });
+      expect(f.database.prepare("SELECT sent_at FROM collaboration_outbox WHERE id=?").get(card.id)).toEqual({ sent_at: null });
+    } finally { f.database.close(); }
+  });
+
+  it("invalidates a delivered parent approval without erasing delivery when revision is reserved", async () => {
+    const f = presentationFixture(), card = f.create();
+    const service = startCollaborationService({ dataDirectory: f.dataDirectory });
+    try {
+      await sendPresentation(f);
+      expect(readApprovalPresentation(f.database, card.id, 500)).not.toBeNull();
+      seedIssuedCandidateRevision(f.database, { runId: "run-1", candidateSha: "2".repeat(40), stage: "reserved" });
+      expect(readApprovalPresentation(f.database, card.id, 501)).toBeNull();
+      expect(readCandidateApprovalTarget(f.database, f.workItemId)).toBeNull();
+      expect(service.performNaturalApproval(naturalMessage(), 600)).toMatchObject({ allowed: false });
+      expect(f.database.prepare("SELECT delivery_state FROM collaboration_outbox WHERE id=?").get(card.id)).toEqual({ delivery_state: "sent" });
+      expect(f.database.prepare("SELECT control_state,accepted_candidate_sha FROM collaboration_work_items WHERE id=?").get(f.workItemId))
+        .toEqual({ control_state: "active", accepted_candidate_sha: null });
+    } finally { service.close(); f.database.close(); }
+  });
+
   it("stages without authorizing and activates only with a proven original-group send, surviving restart", async () => {
     const f = presentationFixture(), card = f.create();
     expect(readApprovalPresentation(f.database, card.id, 301)).toBeNull();
@@ -586,6 +612,10 @@ describe("fixed approval presentation provenance", () => {
       const tables = ["collaboration_work_items", "collaboration_external_events", "collaboration_outbox", "collaboration_candidate_reviews", "collaboration_owner_bindings"];
       const before = tables.map(table => f.database.prepare(`SELECT * FROM ${table}`).all());
       const migrations = f.database.prepare("SELECT * FROM collaboration_schema_migrations WHERE version<=36").all();
+      for (const name of ["verification_sessions", "candidate_reviews", "candidate_recheck_attempts", "accept"]) {
+        f.database.exec(`DROP TRIGGER IF EXISTS candidate_revision_blocks_${name}`);
+      }
+      f.database.exec("DROP TABLE collaboration_candidate_revision_stages; DROP TABLE collaboration_candidate_revision_requests");
       f.database.exec("DROP TABLE IF EXISTS collaboration_candidate_result_deliveries; DROP TABLE IF EXISTS collaboration_candidate_result_bindings; DROP TABLE IF EXISTS collaboration_candidate_recheck_attempts; DROP TABLE collaboration_approval_presentations; DELETE FROM collaboration_schema_migrations WHERE version>=37; PRAGMA user_version=36");
       expect(applyCollaborationMigrations(f.database)).toEqual({ schemaVersion: COLLABORATION_SCHEMA_VERSION, appliedMigrations: COLLABORATION_SCHEMA_VERSION });
       expect(tables.map(table => f.database.prepare(`SELECT * FROM ${table}`).all())).toEqual(before);
@@ -597,6 +627,20 @@ describe("fixed approval presentation provenance", () => {
 });
 
 describe("candidate approval routing", () => {
+  it("does not auto-complete a low-risk parent while revision is issued or reserved", () => {
+    for (const stage of ["issued", "reserved"] as const) {
+      const f = seedCandidate({ changedPaths: ["app/release-board.tsx"] });
+      try {
+        expect(readCandidateApprovalTarget(f.database, f.workItemId)).not.toBeNull();
+        seedIssuedCandidateRevision(f.database, { runId: "run-1", candidateSha: "2".repeat(40), stage });
+        expect(completeVerifiedLowRiskCandidate(f.database, { workItemId: f.workItemId, runId: "run-1",
+          sourceEventId: "superseded-auto-complete", now: Date.now() }).completed).toBe(false);
+        expect(f.database.prepare("SELECT control_state,accepted_candidate_sha FROM collaboration_work_items WHERE id=?").get(f.workItemId))
+          .toEqual({ control_state: "active", accepted_candidate_sha: null });
+      } finally { f.database.close(); }
+    }
+  });
+
   it("lets the authenticated Owner approve the displayed fixed change without an ID, once across restart", async () => {
     const f = presentationFixture(), card = f.create();
     const file = join(f.dataDirectory, "collaboration", "collaboration.sqlite");

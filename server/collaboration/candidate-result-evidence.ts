@@ -4,6 +4,7 @@ import { z } from "zod";
 import { renderDingTalkSessionMessage } from "../integrations/dingtalk/session-message.ts";
 import type { InboundCard } from "./message-renderer.ts";
 import { redactSensitiveText } from "./sensitive-text.ts";
+import { candidateIsSupersededByRevision } from "./candidate-revision.ts";
 
 const digest=z.string().regex(/^[a-f0-9]{64}$/u);
 const sha=z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u);
@@ -56,6 +57,7 @@ export function readCandidateResultBinding(db:DatabaseSync,outboxId:string):Cand
 
 /** State-only half of the send gate. The caller must additionally revalidate the technical acceptance gate. */
 export function isCurrentCandidateResultBinding(db:DatabaseSync,binding:CandidateResultBinding,completed=false):boolean {
+  if(candidateIsSupersededByRevision(db,binding.candidate_run_id,binding.candidate_sha)) return false;
   const row=z.object({version:z.number(),conversation_id:z.string(),current_plan_revision:z.number().nullable(),control_state:z.string(),status:z.string(),accepted_candidate_sha:z.string().nullable(),snapshot_revision:z.number(),base_sha:z.string(),result_sha:z.string()}).optional().parse(
     db.prepare("SELECT w.version,w.conversation_id,w.current_plan_revision,w.control_state,w.status,w.accepted_candidate_sha,p.snapshot_revision,c.base_sha,c.result_sha FROM collaboration_work_items w "+
       "JOIN collaboration_plan_revisions p ON p.work_item_id=w.id AND p.revision=w.current_plan_revision JOIN collaboration_runs r ON r.work_item_id=w.id AND r.plan_revision=w.current_plan_revision "+

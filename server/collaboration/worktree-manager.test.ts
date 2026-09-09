@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -29,6 +29,57 @@ function fixture(): { root: string; repo: string; sha: string } {
 }
 
 describe("managed Git worktrees", () => {
+  it("pins the exact revision delta and refuses inherited-test edits or mismatched parent/result blobs", async () => {
+    const { root, repo, sha } = fixture(), manager = new WorktreeManager(join(root, "managed"));
+    const worktree = await manager.prepare({ repository: repo, workItemId: "WI-EXACT-DELTA", nodeId: "modify", attempt: 2, expectedBaseSha: sha, buildParentSha: sha });
+    const parentBlobSha = git(repo, ["rev-parse", `${sha}:src/value.txt`]);
+    writeFileSync(join(worktree.path, "src/value.txt"), "seam\n");
+    writeFileSync(join(worktree.path, "src/added.txt"), "new test\n");
+    const resultBlobSha = git(worktree.path, ["hash-object", "src/value.txt"]);
+    const changes = [{ path: "src/value.txt", operation: "modify" as const, parentBlobSha, resultBlobSha },
+      { path: "src/added.txt", operation: "add" as const, parentBlobSha: null }];
+    await manager.assertRevisionDelta(worktree, changes);
+    for (const invalid of [changes.slice(0, 1), [{ ...changes[0], parentBlobSha: "0".repeat(40) }, changes[1]],
+      [{ ...changes[0], resultBlobSha: "0".repeat(40) }, changes[1]], [{ ...changes[0], operation: "add" as const, parentBlobSha: null }, changes[1]]]) {
+      await expect(manager.assertRevisionDelta(worktree, invalid)).rejects.toThrow(/revision/iu);
+    }
+    const result = await manager.commitCandidate(worktree, { workItemId: "WI-EXACT-DELTA", planRevision: 1, nodeId: "modify", runId: "run-2" });
+    await manager.assertRevisionDelta(worktree, changes, result);
+    await expect(manager.assertRevisionDelta(worktree, [{ ...changes[0], resultBlobSha: "0".repeat(40) }, changes[1]], result)).rejects.toThrow(/revision/iu);
+  });
+  it("builds a revision on the fixed parent while preserving the configured base and original dirty state", async () => {
+    const { root, repo, sha } = fixture(), parentTree = join(root, "parent");
+    git(repo, ["worktree", "add", "-b", "parent-candidate", parentTree, sha]);
+    writeFileSync(join(parentTree, "src/value.txt"), "parent\n");
+    git(parentTree, ["add", "."]); git(parentTree, ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "parent"]);
+    const parentSha = git(parentTree, ["rev-parse", "HEAD"]);
+    writeFileSync(join(repo, "src/value.txt"), "owner-local-change\n");
+    const manager = new WorktreeManager(join(root, "managed"));
+    const worktree = await manager.prepare({ repository: repo, workItemId: "WI-REVISION", nodeId: "modify", attempt: 2, expectedBaseSha: sha, buildParentSha: parentSha });
+    expect(worktree.baseSha).toBe(sha); expect(worktree.buildParentSha).toBe(parentSha);
+    expect(await manager.currentHead(worktree)).toBe(parentSha);
+    expect(readFileSync(join(worktree.path, "src/value.txt"), "utf8")).toBe("parent\n");
+    writeFileSync(join(worktree.path, "src/new.txt"), "new\n");
+    expect(await manager.changedPaths(worktree)).toEqual(["src/new.txt", "src/value.txt"]);
+    const result = await manager.commitCandidate(worktree, { workItemId: "WI-REVISION", planRevision: 1, nodeId: "modify", runId: "run-2" });
+    expect(git(worktree.path, ["rev-parse", `${result}^`])).toBe(parentSha);
+    expect(git(repo, ["rev-parse", "HEAD"])).toBe(sha);
+    await manager.assertOriginalUnchanged(worktree);
+    expect(readFileSync(join(repo, "src/value.txt"), "utf8")).toBe("owner-local-change\n");
+  });
+
+  it("rejects a non-descendant or shortened build parent without replacing the locked repository base", async () => {
+    const { root, repo, sha } = fixture(), foreign = fixture();
+    writeFileSync(join(foreign.repo, "src/value.txt"), "unrelated\n");
+    git(foreign.repo, ["add", "."]); git(foreign.repo, ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "different"]);
+    const orphan = git(foreign.repo, ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit-tree", "HEAD^{tree}", "-m", "unrelated-root"]);
+    git(repo, ["fetch", foreign.repo, orphan]);
+    const unrelated = git(repo, ["rev-parse", "FETCH_HEAD"]), manager = new WorktreeManager(join(root, "managed"));
+    for (const [attempt, buildParentSha] of [sha.slice(0, 12), unrelated].entries()) {
+      await expect(manager.prepare({ repository: repo, workItemId: "WI-BAD-PARENT", nodeId: "modify", attempt, expectedBaseSha: sha, buildParentSha })).rejects.toThrow(/build parent/iu);
+    }
+    expect(git(repo, ["rev-parse", "HEAD"])).toBe(sha);
+  });
   it("locks a full base SHA and parses unusual NUL-delimited paths", async () => {
     const { root, repo, sha } = fixture();
     const manager = new WorktreeManager(join(root, "managed"));

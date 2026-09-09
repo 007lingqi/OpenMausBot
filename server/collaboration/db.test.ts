@@ -3,10 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import { COLLABORATION_SCHEMA_VERSION } from "./migrations.ts";
+import { applyCollaborationMigrations, COLLABORATION_SCHEMA_VERSION } from "./migrations.ts";
 
 import { OPENMAUSBOT_SOURCE_BASELINE } from "./config.ts";
 import { COLLABORATION_DATABASE_NAME, openCollaborationLedger } from "./db.ts";
+import { InstanceLeaseCoordinator } from "./leases.ts";
+import { z } from "zod";
+import { createCandidateRevisionFixture } from "./candidate-revision.test-fixtures.ts";
 
 const scratch: string[] = [];
 const dropMappingRecovery = `DROP TABLE IF EXISTS collaboration_candidate_result_deliveries; DROP TABLE IF EXISTS collaboration_candidate_result_bindings; DROP TABLE IF EXISTS collaboration_candidate_recheck_attempts; DROP TABLE collaboration_approval_presentations; DROP TABLE collaboration_conversation_intents; DROP TABLE collaboration_online_read_recoveries; DROP TABLE collaboration_natural_material_recoveries; DROP VIEW collaboration_natural_all_jobs; DROP TABLE collaboration_natural_material_jobs; DROP TABLE collaboration_online_read_receipts; DROP TABLE collaboration_online_read_jobs; DROP TABLE collaboration_coordinator_proofs; DROP VIEW collaboration_mapping_all_results; DROP VIEW collaboration_mapping_all_attempts;
@@ -22,7 +25,57 @@ function temporaryDirectory(): string {
   return directory;
 }
 
+function stripCandidateRevisionSchema(db: DatabaseSync): void {
+  const rows = z.array(z.object({ name: z.string().regex(/^[a-z_]+$/u) })).parse(db.prepare("SELECT name FROM sqlite_schema WHERE type='trigger' AND name LIKE 'candidate_revision_%'").all());
+  for (const row of rows) db.exec(`DROP TRIGGER "${row.name}"`);
+  db.exec("DROP TABLE IF EXISTS collaboration_candidate_revision_stages; DROP TABLE IF EXISTS collaboration_candidate_revision_requests");
+}
+
 describe("collaboration ledger", () => {
+  it.each(["execution", "verification", "orphan-dispatch"])("requires quiescence before adding revision guards when %s activity is unresolved", activity => {
+    const f = createCandidateRevisionFixture({ takeLease: false });
+    try {
+      if (activity === "execution") f.db.prepare("INSERT INTO collaboration_execution_sessions VALUES('unsettled',?,1,?,?,2,'old-instance',1,?)").run(f.workItemId, f.repository, f.baseSha, f.now);
+      if (activity === "verification") f.db.prepare("INSERT INTO collaboration_verification_sessions VALUES('unsettled','parent-run',?,1,1,?,'old-instance',1,?)").run(f.repository, f.parentSha, f.now);
+      if (activity === "orphan-dispatch") f.db.prepare("INSERT INTO collaboration_execution_dispatches VALUES(?,1,2,'old-instance',1,?)").run(f.workItemId, f.now);
+      stripCandidateRevisionSchema(f.db); f.db.exec("DELETE FROM collaboration_schema_migrations WHERE version=40; PRAGMA user_version=39");
+      expect(() => applyCollaborationMigrations(f.db)).toThrow("candidate_revision_migration_requires_quiescence");
+      expect(f.db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 39 });
+    } finally { f.close(); }
+  });
+  it("upgrades a stopped ledger with an explicitly failed preparation without deleting its consumed dispatch", () => {
+    const f = createCandidateRevisionFixture({ takeLease: false });
+    try {
+      f.db.prepare("INSERT INTO collaboration_execution_dispatches VALUES(?,1,2,'old-instance',1,?)").run(f.workItemId, f.now);
+      f.db.prepare("INSERT INTO collaboration_execution_preparation_results VALUES(?,2,'failed',3,3,?)").run(f.workItemId, f.now);
+      const dispatches = f.db.prepare("SELECT * FROM collaboration_execution_dispatches ORDER BY attempt").all();
+      stripCandidateRevisionSchema(f.db); f.db.exec("DELETE FROM collaboration_schema_migrations WHERE version=40; PRAGMA user_version=39");
+      expect(applyCollaborationMigrations(f.db).schemaVersion).toBe(40);
+      expect(f.db.prepare("SELECT * FROM collaboration_execution_dispatches ORDER BY attempt").all()).toEqual(dispatches);
+    } finally { f.close(); }
+  });
+  it("adds immutable candidate revision storage at schema 40 without inventing requests", () => {
+    const ledger = openCollaborationLedger(temporaryDirectory());
+    try {
+      expect(ledger.migrationState.schemaVersion).toBe(40);
+      const db = new DatabaseSync(ledger.filePath);
+      try {
+        expect(db.prepare("SELECT * FROM collaboration_candidate_revision_requests").all()).toEqual([]);
+        expect(db.prepare("SELECT * FROM collaboration_candidate_revision_stages").all()).toEqual([]);
+      } finally { db.close(); }
+    } finally { ledger.close(); }
+  });
+  it("refuses migration 40 while a coordinator lease is live, preserving the prior schema", () => {
+    const ledger = openCollaborationLedger(temporaryDirectory()), db = new DatabaseSync(ledger.filePath); ledger.close();
+    try {
+      stripCandidateRevisionSchema(db);
+      db.exec("DELETE FROM collaboration_schema_migrations WHERE version=40; PRAGMA user_version=39");
+      new InstanceLeaseCoordinator(db, "old-instance").acquire(Date.now(), 60_000);
+      expect(() => applyCollaborationMigrations(db)).toThrow("candidate_revision_migration_requires_quiescence");
+      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 39 });
+      expect(db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name LIKE 'collaboration_candidate_revision_%'").all()).toEqual([]);
+    } finally { db.close(); }
+  });
   it("upgrades v37 without rewriting history or fabricating supplemental reservations", () => {
     const root = temporaryDirectory(), ledger = openCollaborationLedger(root), path = ledger.filePath; ledger.close();
     const db = new DatabaseSync(path);
@@ -32,6 +85,7 @@ describe("collaboration ledger", () => {
     const attempts = db.prepare("SELECT * FROM collaboration_acceptance_mapping_attempts").all();
     const results = db.prepare("SELECT * FROM collaboration_acceptance_mapping_results").all();
     const migrations = db.prepare("SELECT * FROM collaboration_schema_migrations WHERE version<=37").all();
+    stripCandidateRevisionSchema(db);
     db.exec("DROP TABLE collaboration_candidate_result_deliveries; DROP TABLE collaboration_candidate_result_bindings; DROP TABLE collaboration_candidate_recheck_attempts; DELETE FROM collaboration_schema_migrations WHERE version>=38; PRAGMA user_version=37");
     expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 37 }); db.close();
     const upgraded = openCollaborationLedger(root);
@@ -49,6 +103,7 @@ describe("collaboration ledger", () => {
     const root = temporaryDirectory(), ledger = openCollaborationLedger(root), path = ledger.filePath; ledger.close();
     const db = new DatabaseSync(path);
     const before = db.prepare("SELECT * FROM collaboration_ledger_metadata").all();
+    stripCandidateRevisionSchema(db);
     db.exec("DROP TABLE IF EXISTS collaboration_candidate_result_deliveries; DROP TABLE IF EXISTS collaboration_candidate_result_bindings; DROP TABLE IF EXISTS collaboration_candidate_recheck_attempts; DROP TABLE collaboration_approval_presentations; DROP TABLE collaboration_conversation_intents; DROP TABLE collaboration_online_read_recoveries; DROP TABLE collaboration_natural_material_recoveries; DROP VIEW collaboration_natural_all_jobs; DROP TABLE collaboration_natural_material_jobs; DROP TABLE collaboration_online_read_receipts; DROP TABLE collaboration_online_read_jobs; DELETE FROM collaboration_schema_migrations WHERE version>=32; PRAGMA user_version=31"); db.close();
     const upgraded = openCollaborationLedger(root); expect(upgraded.migrationState.schemaVersion).toBe(COLLABORATION_SCHEMA_VERSION); upgraded.close();
     const after = new DatabaseSync(path);
@@ -62,6 +117,7 @@ describe("collaboration ledger", () => {
     const db = new DatabaseSync(path);
     db.prepare("INSERT INTO collaboration_acceptance_mapping_attempts VALUES('preserve-v30',1,'{}',1000)").run();
     const before = db.prepare("SELECT * FROM collaboration_acceptance_mapping_attempts").all();
+    stripCandidateRevisionSchema(db);
     db.exec("DROP TABLE IF EXISTS collaboration_candidate_result_deliveries; DROP TABLE IF EXISTS collaboration_candidate_result_bindings; DROP TABLE IF EXISTS collaboration_candidate_recheck_attempts; DROP TABLE collaboration_approval_presentations; DROP TABLE collaboration_conversation_intents; DROP TABLE collaboration_online_read_recoveries; DROP TABLE collaboration_natural_material_recoveries; DROP VIEW collaboration_natural_all_jobs; DROP TABLE collaboration_natural_material_jobs; DROP TABLE collaboration_online_read_receipts; DROP TABLE collaboration_online_read_jobs; DROP TABLE collaboration_coordinator_proofs; DELETE FROM collaboration_schema_migrations WHERE version>=31; PRAGMA user_version=30"); db.close();
     const upgraded = openCollaborationLedger(root); expect(upgraded.migrationState.schemaVersion).toBe(COLLABORATION_SCHEMA_VERSION); upgraded.close();
     const after = new DatabaseSync(path);
@@ -79,6 +135,7 @@ describe("collaboration ledger", () => {
     const before = db.prepare("SELECT * FROM collaboration_acceptance_mapping_attempts").all();
     const results = db.prepare("SELECT * FROM collaboration_acceptance_mapping_results").all();
     const metadata = db.prepare("SELECT * FROM collaboration_ledger_metadata").get();
+    stripCandidateRevisionSchema(db);
     db.exec(dropMappingRecovery + "DELETE FROM collaboration_schema_migrations WHERE version>=30; PRAGMA user_version=29"); db.close();
     const upgraded = openCollaborationLedger(directory); expect(upgraded.migrationState.schemaVersion).toBe(COLLABORATION_SCHEMA_VERSION); upgraded.close();
     const after = new DatabaseSync(path); after.exec("PRAGMA foreign_keys=ON");
@@ -100,6 +157,7 @@ describe("collaboration ledger", () => {
   it("upgrades v28 without inventing a previously authorized runtime policy", () => {
     const directory = temporaryDirectory(); const ledger = openCollaborationLedger(directory); const path = ledger.filePath; ledger.close();
     const db = new DatabaseSync(path); const before = db.prepare("SELECT * FROM collaboration_ledger_metadata").get();
+    stripCandidateRevisionSchema(db);
     db.exec("DROP TABLE IF EXISTS collaboration_candidate_result_deliveries; DROP TABLE IF EXISTS collaboration_candidate_result_bindings; DROP TABLE IF EXISTS collaboration_candidate_recheck_attempts; DROP TABLE collaboration_approval_presentations; DROP TABLE collaboration_conversation_intents; DROP TABLE collaboration_online_read_recoveries; DROP TABLE collaboration_natural_material_recoveries; DROP VIEW collaboration_natural_all_jobs; DROP TABLE collaboration_natural_material_jobs; DROP TABLE collaboration_online_read_receipts; DROP TABLE collaboration_online_read_jobs; DROP TABLE collaboration_coordinator_proofs; DROP VIEW collaboration_mapping_all_results; DROP VIEW collaboration_mapping_all_attempts; DROP TABLE collaboration_mapping_recovery_results; DROP TABLE collaboration_mapping_recovery_attempts; DROP TABLE collaboration_verification_runtime_policies; DELETE FROM collaboration_schema_migrations WHERE version>=29; PRAGMA user_version=28"); db.close();
     const upgraded = openCollaborationLedger(directory);
     expect(upgraded.migrationState).toEqual({ schemaVersion: COLLABORATION_SCHEMA_VERSION, appliedMigrations: COLLABORATION_SCHEMA_VERSION }); upgraded.close();
@@ -114,6 +172,7 @@ describe("collaboration ledger", () => {
     const ledger = openCollaborationLedger(directory); const path = ledger.filePath; ledger.close();
     const db = new DatabaseSync(path);
     const before = db.prepare("SELECT * FROM collaboration_ledger_metadata").get();
+    stripCandidateRevisionSchema(db);
     db.exec("DROP TABLE IF EXISTS collaboration_candidate_result_deliveries; DROP TABLE IF EXISTS collaboration_candidate_result_bindings; DROP TABLE IF EXISTS collaboration_candidate_recheck_attempts; DROP TABLE collaboration_approval_presentations; DROP TABLE collaboration_conversation_intents; DROP TABLE collaboration_online_read_recoveries; DROP TABLE collaboration_natural_material_recoveries; DROP VIEW collaboration_natural_all_jobs; DROP TABLE collaboration_natural_material_jobs; DROP TABLE collaboration_online_read_receipts; DROP TABLE collaboration_online_read_jobs; DROP TABLE collaboration_coordinator_proofs; DROP VIEW collaboration_mapping_all_results; DROP VIEW collaboration_mapping_all_attempts; DROP TABLE collaboration_mapping_recovery_results; DROP TABLE collaboration_mapping_recovery_attempts; DROP TABLE collaboration_verification_runtime_policies; DROP TABLE collaboration_delivery_queries; DELETE FROM collaboration_schema_migrations WHERE version>=28; PRAGMA user_version=27"); db.close();
     const upgraded = openCollaborationLedger(directory);
     expect(upgraded.migrationState).toEqual({ schemaVersion: COLLABORATION_SCHEMA_VERSION, appliedMigrations: COLLABORATION_SCHEMA_VERSION }); upgraded.close();
@@ -127,6 +186,7 @@ describe("collaboration ledger", () => {
     const directory = temporaryDirectory();
     const store = openCollaborationLedger(directory); const path = store.filePath; store.close();
     const before = new DatabaseSync(path);
+    stripCandidateRevisionSchema(before);
     before.exec(`DROP TABLE IF EXISTS collaboration_candidate_result_deliveries; DROP TABLE IF EXISTS collaboration_candidate_result_bindings; DROP TABLE IF EXISTS collaboration_candidate_recheck_attempts; DROP TABLE collaboration_approval_presentations; DROP TABLE collaboration_conversation_intents; DROP TABLE collaboration_online_read_recoveries; DROP TABLE collaboration_natural_material_recoveries; DROP VIEW collaboration_natural_all_jobs; DROP TABLE collaboration_natural_material_jobs; DROP TABLE collaboration_online_read_receipts; DROP TABLE collaboration_online_read_jobs; DROP TABLE collaboration_coordinator_proofs; DROP VIEW collaboration_mapping_all_results; DROP VIEW collaboration_mapping_all_attempts; DROP TABLE collaboration_mapping_recovery_results; DROP TABLE collaboration_mapping_recovery_attempts; DROP TABLE collaboration_verification_runtime_policies; DROP TABLE collaboration_delivery_queries; DROP TRIGGER document_resources_recovery_immutable;
       ALTER TABLE collaboration_document_resources DROP COLUMN instance_owner;
       ALTER TABLE collaboration_document_resources DROP COLUMN instance_fence;
@@ -150,6 +210,7 @@ describe("collaboration ledger", () => {
     const directory = temporaryDirectory();
     const store = openCollaborationLedger(directory); const path = store.filePath; store.close();
     const db = new DatabaseSync(path);
+    stripCandidateRevisionSchema(db);
     db.exec("DROP TABLE IF EXISTS collaboration_candidate_result_deliveries; DROP TABLE IF EXISTS collaboration_candidate_result_bindings; DROP TABLE IF EXISTS collaboration_candidate_recheck_attempts; DROP TABLE collaboration_approval_presentations; DROP TABLE collaboration_conversation_intents; DROP TABLE collaboration_online_read_recoveries; DROP TABLE collaboration_natural_material_recoveries; DROP VIEW collaboration_natural_all_jobs; DROP TABLE collaboration_natural_material_jobs; DROP TABLE collaboration_online_read_receipts; DROP TABLE collaboration_online_read_jobs; DROP TABLE collaboration_coordinator_proofs; DROP VIEW collaboration_mapping_all_results; DROP VIEW collaboration_mapping_all_attempts; DROP TABLE collaboration_mapping_recovery_results; DROP TABLE collaboration_mapping_recovery_attempts; DROP TABLE collaboration_verification_runtime_policies; DROP TABLE collaboration_delivery_queries; DROP TABLE collaboration_document_resources; DELETE FROM collaboration_schema_migrations WHERE version>=26; PRAGMA user_version=25");
     const metadata = db.prepare("SELECT * FROM collaboration_ledger_metadata").get(); db.close();
     const upgraded = openCollaborationLedger(directory);
@@ -164,6 +225,7 @@ describe("collaboration ledger", () => {
     const directory = temporaryDirectory();
     const store = openCollaborationLedger(directory); store.close();
     const db = new DatabaseSync(join(directory, COLLABORATION_DATABASE_NAME));
+    stripCandidateRevisionSchema(db);
     db.exec("DROP TABLE IF EXISTS collaboration_candidate_result_deliveries; DROP TABLE IF EXISTS collaboration_candidate_result_bindings; DROP TABLE IF EXISTS collaboration_candidate_recheck_attempts; DROP TABLE collaboration_approval_presentations; DROP TABLE collaboration_conversation_intents; DROP TABLE collaboration_online_read_recoveries; DROP TABLE collaboration_natural_material_recoveries; DROP VIEW collaboration_natural_all_jobs; DROP TABLE collaboration_natural_material_jobs; DROP TABLE collaboration_online_read_receipts; DROP TABLE collaboration_online_read_jobs; DROP TABLE collaboration_coordinator_proofs; DROP VIEW collaboration_mapping_all_results; DROP VIEW collaboration_mapping_all_attempts; DROP TABLE collaboration_mapping_recovery_results; DROP TABLE collaboration_mapping_recovery_attempts; DROP TABLE collaboration_verification_runtime_policies; DROP TABLE collaboration_delivery_queries; DROP TABLE collaboration_document_resources; DROP TABLE collaboration_natural_intake_recoveries; DROP TABLE collaboration_natural_intake_recovery_requests; DROP TABLE collaboration_attachment_recovery_requests; DROP TABLE collaboration_attachment_projection_recoveries; DROP TABLE collaboration_attachment_projection_failures; DROP TABLE collaboration_attachment_failures; DELETE FROM collaboration_schema_migrations WHERE version>=22; PRAGMA user_version=21");
     const before = db.prepare("SELECT * FROM collaboration_ledger_metadata").get();
     db.close();
@@ -184,6 +246,7 @@ describe("collaboration ledger", () => {
       db.exec(`DROP TABLE collaboration_${kind}_finalization_intents`);
     }
     for (const table of ["proofs", "commands", "settlements", "sessions"]) db.exec(`DROP TABLE collaboration_execution_${table}`);
+    stripCandidateRevisionSchema(db);
     db.exec("DROP TABLE IF EXISTS collaboration_candidate_result_deliveries; DROP TABLE IF EXISTS collaboration_candidate_result_bindings; DROP TABLE IF EXISTS collaboration_candidate_recheck_attempts; DROP TABLE collaboration_approval_presentations; DROP TABLE collaboration_conversation_intents; DROP TABLE collaboration_online_read_recoveries; DROP TABLE collaboration_natural_material_recoveries; DROP VIEW collaboration_natural_all_jobs; DROP TABLE collaboration_natural_material_jobs; DROP TABLE collaboration_online_read_receipts; DROP TABLE collaboration_online_read_jobs; DROP TABLE collaboration_coordinator_proofs; DROP VIEW collaboration_mapping_all_results; DROP VIEW collaboration_mapping_all_attempts; DROP TABLE collaboration_mapping_recovery_results; DROP TABLE collaboration_mapping_recovery_attempts; DROP TABLE collaboration_verification_runtime_policies; DROP TABLE collaboration_delivery_queries; DROP TABLE collaboration_document_resources; DROP TABLE collaboration_natural_intake_recoveries; DROP TABLE collaboration_natural_intake_recovery_requests; DROP TABLE collaboration_attachment_recovery_requests; DROP TABLE collaboration_attachment_projection_recoveries; DROP TABLE collaboration_attachment_projection_failures; DROP TABLE collaboration_attachment_failures; DELETE FROM collaboration_schema_migrations WHERE version>=20; PRAGMA user_version=19"); db.close();
     const upgraded = openCollaborationLedger(directory);
     expect(upgraded.migrationState.schemaVersion).toBe(COLLABORATION_SCHEMA_VERSION); upgraded.close();
@@ -205,6 +268,7 @@ describe("collaboration ledger", () => {
     }
     for(const table of ["proofs","commands","settlements","sessions"]) db.exec(`DROP TABLE collaboration_execution_${table}`);
     for(const table of ["proofs","commands","settlements","sessions"]) db.exec(`DROP TABLE collaboration_verification_${table}`);
+    stripCandidateRevisionSchema(db);
     db.exec("DROP TABLE IF EXISTS collaboration_candidate_result_deliveries; DROP TABLE IF EXISTS collaboration_candidate_result_bindings; DROP TABLE IF EXISTS collaboration_candidate_recheck_attempts; DROP TABLE collaboration_approval_presentations; DROP TABLE collaboration_conversation_intents; DROP TABLE collaboration_online_read_recoveries; DROP TABLE collaboration_natural_material_recoveries; DROP VIEW collaboration_natural_all_jobs; DROP TABLE collaboration_natural_material_jobs; DROP TABLE collaboration_online_read_receipts; DROP TABLE collaboration_online_read_jobs; DROP TABLE collaboration_coordinator_proofs; DROP VIEW collaboration_mapping_all_results; DROP VIEW collaboration_mapping_all_attempts; DROP TABLE collaboration_mapping_recovery_results; DROP TABLE collaboration_mapping_recovery_attempts; DROP TABLE collaboration_verification_runtime_policies; DROP TABLE collaboration_delivery_queries; DROP TABLE collaboration_document_resources; DROP TABLE collaboration_natural_intake_recoveries; DROP TABLE collaboration_natural_intake_recovery_requests; DROP TABLE collaboration_attachment_recovery_requests; DROP TABLE collaboration_attachment_projection_recoveries; DROP TABLE collaboration_attachment_projection_failures; DROP TABLE collaboration_attachment_failures; DELETE FROM collaboration_schema_migrations WHERE version>=19; PRAGMA user_version=18"); db.close();
     const upgraded=openCollaborationLedger(directory);
     expect(upgraded.migrationState.schemaVersion).toBe(COLLABORATION_SCHEMA_VERSION); upgraded.close();

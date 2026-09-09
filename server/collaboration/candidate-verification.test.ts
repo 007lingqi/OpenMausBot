@@ -14,6 +14,7 @@ import {
   candidateHasPassedTechnicalReview,
   completedCandidateHasPassedMetaReview,
   readCandidateTechnicalAcceptance,
+  candidateRevisionLineageMatches,
 } from "./candidate-verification.ts";
 import {
   containmentBindingHash,
@@ -44,6 +45,7 @@ import { acceptanceEvidencePolicySchema, type AcceptanceEvidencePolicy } from ".
 import { prepareVerifiedCandidateResult, isCurrentCandidateResultDelivery } from "./candidate-result-completion.ts";
 import { candidateResultDeliveryProof, confirmCandidateResultDelivery } from "./candidate-result-evidence.ts";
 import { renderDingTalkSessionMessage } from "../integrations/dingtalk/session-message.ts";
+import { seedIssuedCandidateRevision } from "./candidate-revision.test-fixtures.ts";
 
 const scratch: string[] = [];
 const resources: Array<{ close(): void }> = [];
@@ -151,8 +153,14 @@ interface Fixture {
   commands: Record<string, TargetCommandSpec>;
 }
 
+interface FixtureLineage {
+  version: number; requestId: string; requestHash: string; parentRunId: string;
+  parentSha: string; baseSha: string; buildParentSha: string; candidateSha: string;
+}
+
 function fixture(observation = "pnpm test target 验证候选结果", selfReport = true, mapping = false, discovery = false,
-  acceptanceConditions?: readonly { description: string; observation: string }[], outsideChange = false): Fixture {
+  acceptanceConditions?: readonly { description: string; observation: string }[], outsideChange = false,
+  quality?: (target: { runId: string; baseSha: string; candidateSha: string }) => { state?: string; lineage?: FixtureLineage }): Fixture {
   const id = ++sequence;
   const root = mkdtempSync(join(tmpdir(), "openmausbot-verification-"));
   scratch.push(root);
@@ -222,7 +230,7 @@ function fixture(observation = "pnpm test target 验证候选结果", selfReport
       "VALUES (?,?,?,?,?,?,?,?,?)",
   ).run(
     `candidate-${id}`, runId, "target_tests_passed", baseSha, candidateSha,
-    JSON.stringify(["src/value.txt"]), "[]", JSON.stringify({ state: "target_tests_passed" }), 3_100,
+    JSON.stringify(["src/value.txt"]), "[]", JSON.stringify(quality?.({ runId, baseSha, candidateSha }) ?? { state: "target_tests_passed" }), 3_100,
   );
   database.prepare(
     "INSERT INTO collaboration_test_evidence " +
@@ -275,6 +283,38 @@ function fixtureSpec(item: Fixture, includeModifyScope = false) {
   };
   return includeModifyScope ? { ...spec, modifyWriteScope: JSON.parse(row.write_scope_json), modifyDenyScope: JSON.parse(row.modify_deny_scope_json) } : spec;
 }
+
+function revisedFixture(boundary?: string) {
+  const item = fixture();
+  const stage = boundary === "issued" || boundary === "reserved" ? boundary : "started";
+  const grant = seedIssuedCandidateRevision(item.database, { runId: item.runId, candidateSha: item.candidateSha, stage });
+  // SAFETY: The fixture inserts a non-null session only for the requested started stage.
+  const stored = item.database.prepare("SELECT session_id FROM collaboration_candidate_revision_stages WHERE request_id=? AND stage='started'")
+    .get(grant.requestId) as { session_id: string } | undefined;
+  const runId = boundary === "session" || !stored ? `${item.runId}-revision` : stored.session_id;
+  git(item.worktree, ["commit", "--allow-empty", "-m", "fixed revised candidate"]);
+  const candidateSha = git(item.worktree, ["rev-parse", "HEAD"]), now = Date.now();
+  const lineage = { version: 1, requestId: grant.requestId, requestHash: grant.requestHash,
+    parentRunId: grant.parentRunId, parentSha: grant.parentSha, baseSha: grant.baseSha, buildParentSha: grant.buildParentSha, candidateSha };
+  if (boundary === "version") lineage.version = 2;
+  for (const key of ["requestId", "requestHash", "parentRunId", "parentSha", "baseSha", "buildParentSha", "candidateSha"] as const) {
+    if (boundary === key) lineage[key] = `mismatched-${key}`;
+  }
+  const quality = boundary === "missing" ? {} : { lineage: boundary === "extra" ? { ...lineage, untrusted: true } : lineage };
+  item.database.prepare("INSERT INTO collaboration_runs(id,work_item_id,plan_revision,node_id,attempt,agent_id,thread_id,turn_id,status,repository_path,worktree_path,branch,base_sha,result_sha,started_at,finished_at) " +
+    "SELECT ?,work_item_id,plan_revision,node_id,?,agent_id,thread_id||'-revision',turn_id||'-revision','succeeded',repository_path,worktree_path,branch,?,?,?,? FROM collaboration_runs WHERE id=?")
+    .run(runId, grant.attempt, boundary === "run-base" ? "f".repeat(40) : grant.baseSha, boundary === "run-result" ? "f".repeat(40) : candidateSha, now, now, item.runId);
+  item.database.prepare("INSERT INTO collaboration_candidates(id,run_id,state,base_sha,result_sha,changed_paths_json,violations_json,quality_json,created_at) " +
+    "SELECT id||'-revision',?,'target_tests_passed',?,?,changed_paths_json,'[]',?,? FROM collaboration_candidates WHERE run_id=?")
+    .run(runId, boundary === "candidate-base" ? "f".repeat(40) : grant.baseSha, candidateSha, JSON.stringify(quality), now, item.runId);
+  // SAFETY: fixture() persists exactly one self-report and containment binding for its original run.
+  const self = item.database.prepare("SELECT stdout,containment_binding_json FROM collaboration_test_evidence WHERE run_id=?").get(item.runId) as { stdout: string; containment_binding_json: string };
+  item.database.prepare("INSERT INTO collaboration_test_evidence(id,run_id,command_id,argv_json,cwd,exit_code,duration_ms,stdout,stderr,state,created_at,containment_binding_json) " +
+    "SELECT id||'-revision',?,command_id,argv_json,cwd,exit_code,duration_ms,?,stderr,state,?,? FROM collaboration_test_evidence WHERE run_id=?")
+    .run(runId, JSON.stringify({ ...JSON.parse(self.stdout), runId }), now, JSON.stringify({ ...JSON.parse(self.containment_binding_json), runId }), item.runId);
+  if (stored) item.database.prepare("INSERT INTO collaboration_execution_settlements(session_id,evidence_json,created_at) VALUES(?,'[]',?)").run(stored.session_id, now);
+  return { ...item, runId, candidateSha, grant };
+}
 function typedPolicy(item: Fixture): AcceptanceEvidencePolicy {
   const specIdentityHash = createHash("sha256").update(JSON.stringify(fixtureSpec(item, true))).digest("hex");
   return acceptanceEvidencePolicySchema.parse({ version: 1, policyId: "release-board-test", specIdentityHash,
@@ -309,6 +349,39 @@ function preparedResult(item: Fixture) {
 }
 
 describe("typed evidence for the five unchanged release-room conditions", () => {
+  it("does not prepare or complete a previously verified parent after a candidate revision is issued", async () => {
+    const item = fixture(undefined, true, false, false, releaseConditions), policies = [typedPolicy(item)];
+    item.database.prepare("UPDATE collaboration_work_nodes SET risk='low' WHERE work_item_id=?").run(item.workItemId);
+    publishTyped(item, policies);
+    expect((await typedCoordinator(item, new FakeRunner(), policies).verify({ candidateRunId: item.runId, worktreePath: item.worktree,
+      instance: { ownerId: "instance-1", fence: 1 }, now: Date.now() })).passed).toBe(true);
+    expect(candidateHasPassedTechnicalReview(item.database, item.runId, item.candidateSha)).toBe(true);
+    seedIssuedCandidateRevision(item.database, { runId: item.runId, candidateSha: item.candidateSha });
+    expect(candidateHasPassedTechnicalReview(item.database, item.runId, item.candidateSha)).toBe(false);
+    expect(readCandidateTechnicalAcceptance(item.database, item.runId, item.candidateSha)).toBeNull();
+    expect(prepareVerifiedCandidateResult(item.database, item.runId, Date.now())).toBe("not_required");
+    expect(item.database.prepare("SELECT count(*) AS n FROM collaboration_candidate_result_bindings").get()).toEqual({ n: 0 });
+    expect(completeVerifiedLowRiskCandidate(item.database, { workItemId: item.workItemId, runId: item.runId,
+      sourceEventId: "superseded-result", now: Date.now() }).completed).toBe(false);
+  });
+
+  it("preserves late delivery facts without using them to complete a revised parent", async () => {
+    const item = fixture(undefined, true, false, false, releaseConditions), policies = [typedPolicy(item)];
+    publishTyped(item, policies);
+    expect((await typedCoordinator(item, new FakeRunner(), policies).verify({ candidateRunId: item.runId, worktreePath: item.worktree,
+      instance: { ownerId: "instance-1", fence: 1 }, now: Date.now() })).passed).toBe(true);
+    expect(prepareVerifiedCandidateResult(item.database, item.runId, Date.now())).toBe("pending");
+    const result = preparedResult(item);
+    expect(isCurrentCandidateResultDelivery(item.database, result.outbox)).toBe(true);
+    seedIssuedCandidateRevision(item.database, { runId: item.runId, candidateSha: item.candidateSha, stage: "reserved" });
+    expect(isCurrentCandidateResultDelivery(item.database, result.outbox)).toBe(false);
+    const sentAt = Date.now();
+    item.database.prepare("UPDATE collaboration_outbox SET delivery_state='sent',sent_at=?,delivery_sequence=1 WHERE id=?").run(sentAt, result.outbox.id);
+    confirmCandidateResultDelivery(item.database, result.outbox.id, result.proof, sentAt);
+    expect(item.database.prepare("SELECT count(*) AS n FROM collaboration_candidate_result_deliveries").get()).toEqual({ n: 1 });
+    expect(candidateHasPassedMetaReview(item.database, item.runId, item.candidateSha)).toBe(false);
+  });
+
   it("prepares one real two-sentence result, completes only after bound delivery and does not enqueue another completion message", async () => {
     const item = fixture(undefined, true, false, false, releaseConditions), policies = [typedPolicy(item)];
     item.database.prepare("UPDATE collaboration_work_nodes SET risk='low' WHERE work_item_id=?").run(item.workItemId);
@@ -625,6 +698,75 @@ function mappingHarness(item: Fixture) {
 }
 
 describe("independent candidate verification", () => {
+  it("verifies a revised candidate only with its own started session, fixed host lineage and fresh reviews", async () => {
+    const item = revisedFixture();
+    expect(candidateRevisionLineageMatches(item.database, item.runId, item.candidateSha)).toBe(true);
+    expect(candidateHasPassedMetaReview(item.database, item.runId, item.candidateSha)).toBe(false);
+    expect((await verify(item, new FakeRunner())).passed).toBe(true);
+    expect(candidateHasPassedMetaReview(item.database, item.runId, item.candidateSha)).toBe(true);
+    expect(candidateHasPassedMetaReview(item.database, item.grant.parentRunId, item.grant.parentSha)).toBe(false);
+  });
+
+  it.each(["issued", "reserved", "session", "missing", "extra", "run-base", "candidate-base", "run-result",
+    "version", "requestId", "requestHash", "parentRunId", "parentSha", "baseSha", "buildParentSha", "candidateSha"])("rejects revision lineage at the %s boundary", async boundary => {
+    const item = revisedFixture(boundary), runner = new FakeRunner();
+    expect(candidateRevisionLineageMatches(item.database, item.runId, item.candidateSha)).toBe(false);
+    expect(await verify(item, runner)).toMatchObject({ passed: false, status: "stale", reasons: ["candidate_revision_lineage_invalid"] });
+    expect(runner.requests).toHaveLength(0);
+    expect(item.database.prepare("SELECT count(*) AS n FROM collaboration_candidate_reviews WHERE candidate_run_id=?").get(item.runId)).toEqual({ n: 0 });
+  });
+
+  it.each(["mapping", "runner", "settlement"])("does not publish a passed parent when revision arrives during %s", async boundary => {
+    const item = fixture(undefined, true, boundary === "mapping");
+    const revise = () => seedIssuedCandidateRevision(item.database, { runId: item.runId, candidateSha: item.candidateSha, stage: "reserved" });
+    let active: CandidateVerificationCoordinator;
+    let runner: FakeRunner;
+    if (boundary === "mapping") {
+      const harness = mappingHarness(item);
+      const original = harness.proposer.complete.bind(harness.proposer);
+      harness.proposer.complete = async input => { revise(); return original(input); };
+      active = harness.coordinator; runner = harness.runner;
+    } else {
+      runner = new FakeRunner(() => { if (boundary === "runner") revise(); });
+      const containment = new FakeContainment();
+      const inspect = containment.inspect.bind(containment);
+      let revised = false;
+      containment.inspect = async identity => {
+        // SAFETY: SQLite count(*) always returns one integer row; this fixture owns the review table.
+        const reviews = item.database.prepare("SELECT count(*) AS n FROM collaboration_candidate_reviews").get() as { n: number };
+        if (boundary === "settlement" && reviews.n === 2 && !revised) { revise(); revised = true; }
+        return inspect(identity);
+      };
+      active = new CandidateVerificationCoordinator(item.database, { commandRunner: runner, containment, commands: item.commands, dataDirectory: item.dataDirectory });
+    }
+    const outcome = await active.verify({ candidateRunId: item.runId, worktreePath: item.worktree,
+      instance: { ownerId: "instance-1", fence: 1 }, now: Date.now() });
+    expect(outcome).toMatchObject({ passed: false, status: "stale", reasons: ["candidate_superseded_by_revision"] });
+    expect(runner.requests).toHaveLength(boundary === "mapping" ? 0 : 1);
+    expect(item.database.prepare("SELECT count(*) AS n FROM collaboration_candidate_reviews").get()).toEqual({ n: boundary === "settlement" ? 2 : 0 });
+    expect(hasUnsettledVerification(item.database, item.repository)).toBe(false);
+    expect(active.isCurrentNotification(item.runId, outcome)).toBe(false);
+    expect(candidateHasPassedMetaReview(item.database, item.runId, item.candidateSha)).toBe(false);
+  });
+
+  it("refuses to reserve another parent verification after revision issuance", async () => {
+    const item = fixture(), runner = new FakeRunner();
+    seedIssuedCandidateRevision(item.database, { runId: item.runId, candidateSha: item.candidateSha });
+    expect(await verify(item, runner)).toMatchObject({ passed: false, status: "stale", reasons: ["candidate_superseded_by_revision"] });
+    expect(runner.requests).toHaveLength(0);
+    expect(item.database.prepare("SELECT count(*) AS n FROM collaboration_verification_sessions").get()).toEqual({ n: 0 });
+  });
+
+  it("rejects a candidate that claims revision lineage without a persisted revision grant", async () => {
+    const item = fixture(undefined, true, false, false, undefined, false, ({ candidateSha, baseSha }) => ({
+      lineage: { version: 1, requestId: "forged-revision", requestHash: "a".repeat(64), parentRunId: "forged-parent",
+        parentSha: "b".repeat(40), baseSha, buildParentSha: "b".repeat(40), candidateSha },
+    }));
+    expect((await verify(item, new FakeRunner())).passed).toBe(false);
+    expect(candidateHasPassedMetaReview(item.database, item.runId, item.candidateSha)).toBe(false);
+    expect(candidateHasPassedTechnicalReview(item.database, item.runId, item.candidateSha)).toBe(false);
+  });
+
   it("preserves the legacy contract hash when discovery and typed policies are not configured", async () => {
     const item = fixture();
     const command = item.commands["pnpm test target"];

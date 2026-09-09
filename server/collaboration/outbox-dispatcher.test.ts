@@ -10,6 +10,7 @@ import { OutboxDispatcher } from "./outbox-dispatcher.ts";
 import { enqueueInboundCard, type OutboxDeliveryPort } from "./outbox.ts";
 import { resultDeliveryFixture } from "./outbox-result.test-fixtures.ts";
 import { readVerifiedCandidateResultReply } from "./candidate-result-evidence.ts";
+import { seedIssuedCandidateRevision } from "./candidate-revision.test-fixtures.ts";
 
 const scratch: string[] = [];
 afterEach(() => { vi.restoreAllMocks();scratch.splice(0).forEach((path) => rmSync(path, { recursive: true, force: true })); });
@@ -43,6 +44,23 @@ function enqueue(db: DatabaseSync, version: number, now: number): string {
 }
 
 describe("fenced outbox dispatcher", () => {
+  it.each(["before", "during"])("never completes a parent revised %s transport, retaining actual late delivery", async timing => {
+    const root = mkdtempSync(join(tmpdir(), "outbox-result-revision-")); scratch.push(root);
+    const f = resultDeliveryFixture(root);
+    const revise = () => seedIssuedCandidateRevision(f.db, { runId: f.target.candidateRunId, candidateSha: f.target.candidateSha,
+      stage: "reserved", now: Date.now() - 900_001 });
+    if (timing === "before") revise();
+    const deliver = vi.fn(async () => { if (timing === "during") revise(); return { outcome: "sent" as const, candidateResultDelivery: f.proof() }; });
+    try {
+      const result = await new OutboxDispatcher(f.db, { deliver }, { maxAttempts: 3, claimTtlMs: 1000, baseBackoffMs: 10, maxBackoffMs: 100 }).dispatchOne(f.lease, 4001);
+      expect(result?.state).toBe(timing === "before" ? "superseded" : "sent");
+      expect(deliver).toHaveBeenCalledTimes(timing === "before" ? 0 : 1);
+      expect(f.db.prepare("SELECT count(*) AS n FROM collaboration_candidate_result_deliveries").get()).toEqual({ n: timing === "before" ? 0 : 1 });
+      expect(readVerifiedCandidateResultReply(f.db, f.target)).toBeNull();
+      expect(f.db.prepare("SELECT accepted_candidate_sha FROM collaboration_work_items WHERE id=?").get(f.workItemId)).toEqual({ accepted_candidate_sha: null });
+    } finally { f.db.close(); }
+  });
+
   it("suppresses an unbound verified-result card through the real pre-send gate",async()=>{
     const db=database();
     const row=enqueueInboundCard(db,{sourceEventId:"unbound-result",aggregateType:"plan",aggregateId:"WI-UNBOUND",aggregateVersion:1,now:1000,

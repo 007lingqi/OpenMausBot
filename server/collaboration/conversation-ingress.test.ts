@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
+import { z } from "zod";
 import { startCollaborationService } from "./service.ts";
 import { ModelNaturalIntakeInterpreter } from "./natural-intake.ts";
 import type { ConversationIntentRequest } from "./conversation-intent.ts";
@@ -19,6 +20,12 @@ import { LocalOwnerRegistry } from "./owner.ts";
 import { enqueueInboundCard } from "./outbox.ts";
 
 const paths: string[] = [];
+function stripCandidateRevisionSchema(database: DatabaseSync): void {
+  const triggers = z.array(z.object({ name: z.string().regex(/^[a-z_]+$/u) })).parse(
+    database.prepare("SELECT name FROM sqlite_schema WHERE type='trigger' AND name LIKE 'candidate_revision_%'").all());
+  for (const { name } of triggers) database.exec(`DROP TRIGGER "${name}"`);
+  database.exec("DROP TABLE collaboration_candidate_revision_stages; DROP TABLE collaboration_candidate_revision_requests");
+}
 afterEach(() => { for (const path of paths.splice(0)) rmSync(path, { force: true, recursive: true }); });
 function message(id: string, text: string, group = "group", person = "product") {
   return { sourceEventId: id, transportMessageId: id, conversationId: group, addressedToBot: true, text,
@@ -307,6 +314,7 @@ describe("durable conversational ingress before Work Item mutation", () => {
       h.service.ingestDingTalkMessage(message("new", "修正登录提示。")); await h.service.processNaturalIntake(); h.service.close();
       const before = taskState(h.db), events = h.db.prepare("SELECT * FROM collaboration_external_events").all();
       const migrations = h.db.prepare("SELECT * FROM collaboration_schema_migrations WHERE version<=35 ORDER BY version").all();
+      stripCandidateRevisionSchema(h.db);
       h.db.exec("DROP TABLE IF EXISTS collaboration_candidate_result_deliveries; DROP TABLE IF EXISTS collaboration_candidate_result_bindings; DROP TABLE IF EXISTS collaboration_candidate_recheck_attempts; DROP TABLE collaboration_approval_presentations; DROP TABLE collaboration_conversation_intents; DELETE FROM collaboration_schema_migrations WHERE version>=36; PRAGMA user_version=35");
       expect(applyCollaborationMigrations(h.db)).toEqual({ schemaVersion: COLLABORATION_SCHEMA_VERSION, appliedMigrations: COLLABORATION_SCHEMA_VERSION });
       expect(taskState(h.db)).toEqual(before);

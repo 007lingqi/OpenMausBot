@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
+import { z } from "zod";
 import { COLLABORATION_SCHEMA_VERSION } from "./migrations.ts";
 import { startCollaborationService } from "./service.ts";
 import { policy, validProposal } from "./planner.test-fixtures.ts";
@@ -18,6 +19,12 @@ import type { DingTalkInboundMessage } from "../integrations/dingtalk/types.ts";
 import { proactiveDestination } from "./delivery-routing.ts";
 
 const scratch: string[] = [];
+function stripCandidateRevisionSchema(database: DatabaseSync): void {
+  const triggers = z.array(z.object({ name: z.string().regex(/^[a-z_]+$/u) })).parse(
+    database.prepare("SELECT name FROM sqlite_schema WHERE type='trigger' AND name LIKE 'candidate_revision_%'").all());
+  for (const { name } of triggers) database.exec(`DROP TRIGGER "${name}"`);
+  database.exec("DROP TABLE collaboration_candidate_revision_stages; DROP TABLE collaboration_candidate_revision_requests");
+}
 afterEach(() => { for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true }); });
 function message(id: string, text: string, replyToSourceEventId?: string): DingTalkInboundMessage {
   return { sourceEventId: id, transportMessageId: `transport-${id}`, conversationId: "external-group", addressedToBot: true, text,
@@ -164,6 +171,7 @@ describe("Owner-bound natural requirement recovery", () => {
     const h = await fixture();
     const jobs = h.db.prepare("SELECT * FROM collaboration_natural_intake_jobs").all();
     h.service.close();
+    stripCandidateRevisionSchema(h.db);
     h.db.exec("DROP TABLE IF EXISTS collaboration_candidate_result_deliveries; DROP TABLE IF EXISTS collaboration_candidate_result_bindings; DROP TABLE IF EXISTS collaboration_candidate_recheck_attempts; DROP TABLE collaboration_approval_presentations; DROP TABLE collaboration_conversation_intents; DROP TABLE collaboration_online_read_recoveries; DROP TABLE collaboration_natural_material_recoveries; DROP VIEW collaboration_natural_all_jobs; DROP TABLE collaboration_natural_material_jobs; DROP TABLE collaboration_online_read_receipts; DROP TABLE collaboration_online_read_jobs; DROP TABLE collaboration_coordinator_proofs; DROP VIEW collaboration_mapping_all_results; DROP VIEW collaboration_mapping_all_attempts; DROP TABLE collaboration_mapping_recovery_results; DROP TABLE collaboration_mapping_recovery_attempts; DROP TABLE collaboration_verification_runtime_policies; DROP TABLE collaboration_delivery_queries; DROP TABLE collaboration_document_resources; DROP TABLE collaboration_natural_intake_recoveries; DROP TABLE collaboration_natural_intake_recovery_requests; DELETE FROM collaboration_schema_migrations WHERE version>=25; PRAGMA user_version=24");
     h.db.close();
     const upgraded = openCollaborationLedger(join(h.directory, "collaboration"));

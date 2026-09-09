@@ -5,6 +5,13 @@ export interface AgentRunEvent {
   message: string;
 }
 
+export interface CandidateRevisionFileChange {
+  path: string;
+  operation: "add" | "modify";
+  parentBlobSha: string | null;
+  resultBlobSha?: string;
+}
+
 export interface AgentRunRequest {
   runId: string;
   threadId: string;
@@ -13,6 +20,12 @@ export interface AgentRunRequest {
   planRevision: number;
   nodeId: string;
   cwd: string;
+  /** Host-locked immutable source, never inferred from the provider's current HEAD. */
+  sourceSha?: string;
+  /** Exact host-authorized parent-to-child delta, absent for ordinary execution. */
+  allowedChanges?: readonly CandidateRevisionFileChange[];
+  /** Trusted host-only gate, never serialized into worker or model task data. */
+  assertAuthorityCurrent?(): void;
   objective: string;
   instructions: string;
   inputEvidence: string[];

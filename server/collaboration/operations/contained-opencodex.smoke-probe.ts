@@ -19,6 +19,7 @@ async function main(): Promise<void> {
   writeFileSync(join(cwd, "src/greeting.js"), 'export function greeting() { return "helo"; }\n', { mode: 0o644 });
   const git = (...args: string[]) => execFileSync("git", ["-C", cwd, "-c", "core.hooksPath=/dev/null", "-c", "user.name=Contained Smoke", "-c", "user.email=smoke@example.invalid", ...args], { stdio: "ignore" });
   git("init", "-q"); git("add", "."); git("commit", "-qm", "synthetic greeting fixture");
+  const sourceSha = execFileSync("git", ["-C", cwd, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
   const runId = randomUUID(), raw = new NodeDockerCommandPort();
   let id: string | undefined, control = "", registered = false;
   const docker: DockerCommandPort = { async run(args, options) {
@@ -31,7 +32,8 @@ async function main(): Promise<void> {
   } };
   const containment = new DockerCliContainmentSupervisor({ docker, hostGeneration: readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim(), verifierKey: randomBytes(32) });
   const binding = { runId, canonicalWorktreePath: cwd, instanceOwner: "one-shot-contained-model-probe", instanceFence: 1, nonce: randomBytes(32).toString("hex") };
-  const request = { runId, cwd, workItemId: "WI-SYNTHETIC-GREETING", threadId: runId, turnId: runId, nodeId: "modify", planRevision: 1,
+  // SAFETY: every AgentRunRequest field is locally constructed for this synthetic repo, whose committed sourceSha was fixed above.
+  const request = { runId, cwd, sourceSha, workItemId: "WI-SYNTHETIC-GREETING", threadId: runId, turnId: runId, nodeId: "modify", planRevision: 1,
     objective: '修复问候文本的拼写：src/greeting.js 的 greeting() 当前返回 "helo"，应返回 "hello"。',
     instructions: "只修复这一个返回文本，不新增文件、不改接口。之后由可信执行器与独立检查分别验证；本阶段只提交修改建议。",
     inputEvidence: ["受信任测试夹具，不是真实群任务。"], readScope: ["src/greeting.js"], writeScope: ["src/greeting.js"], denyScope: [".git", ".env*"],

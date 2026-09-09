@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Readable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { COLLABORATION_SCHEMA_VERSION } from "../migrations.ts";
 import { WorktreeManager } from "../worktree-manager.ts";
 import { CommandCleanupError } from "../execution-limits.ts";
@@ -771,11 +772,18 @@ describe("runtime repository single-writer scheduling", () => {
     } finally { db.close(); await stopHarness(h); }
   });
 
-  it("upgrades the previous dispatch schema without losing a waiting preparation", async () => {
+  it("preserves an older unknown preparation and refuses the v40 migration until writers are confirmed settled", async () => {
     const root = temporaryDirectory();
     const h = createHarness([createRepository(root, "schema-15-preparation")]);
     const db = new DatabaseSync(h.databaseFile);
     // Reconstruct the exact v15 delta in this disposable fixture only.
+    // v40 adds triggers to older tables; remove those before dropping the tables they reference.
+    const revisionTriggers = z.array(z.object({ name: z.string().regex(/^candidate_revision_[a-z_]+$/u) })).parse(
+      db.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'candidate_revision_%'").all());
+    for (const row of revisionTriggers) {
+      db.exec(`DROP TRIGGER ${row.name}`);
+    }
+    db.exec("DROP TABLE collaboration_candidate_revision_stages; DROP TABLE collaboration_candidate_revision_requests");
     for (const kind of ["execution", "verification"]) {
       for (const table of ["commands", "proofs"]) db.exec(`DROP TRIGGER ${kind}_${table}_finalizing`);
       db.exec(`DROP TABLE collaboration_${kind}_finalization_intents`);
@@ -785,11 +793,13 @@ describe("runtime repository single-writer scheduling", () => {
     db.exec("DROP TABLE IF EXISTS collaboration_candidate_result_deliveries; DROP TABLE IF EXISTS collaboration_candidate_result_bindings; DROP TABLE IF EXISTS collaboration_candidate_recheck_attempts; DROP TABLE collaboration_approval_presentations; DROP TABLE collaboration_conversation_intents; DROP TABLE collaboration_online_read_recoveries; DROP TABLE collaboration_natural_material_recoveries; DROP VIEW collaboration_natural_all_jobs; DROP TABLE collaboration_natural_material_jobs; DROP TABLE collaboration_online_read_receipts; DROP TABLE collaboration_online_read_jobs; DROP TABLE collaboration_coordinator_proofs; DROP VIEW collaboration_mapping_all_results; DROP VIEW collaboration_mapping_all_attempts; DROP TABLE collaboration_mapping_recovery_results; DROP TABLE collaboration_mapping_recovery_attempts; DROP TABLE collaboration_verification_runtime_policies; DROP TABLE collaboration_delivery_queries; DROP TABLE collaboration_document_resources; DROP TABLE collaboration_natural_intake_recoveries; DROP TABLE collaboration_natural_intake_recovery_requests; DROP TABLE collaboration_attachment_recovery_requests; DROP TABLE collaboration_attachment_projection_recoveries; DROP TABLE collaboration_attachment_projection_failures; DROP TABLE collaboration_attachment_failures; DROP TABLE collaboration_acceptance_mapping_results; DROP TABLE collaboration_acceptance_mapping_attempts; DROP INDEX collaboration_outbox_delivery_sequence; ALTER TABLE collaboration_outbox DROP COLUMN delivery_sequence; DROP TABLE collaboration_sent_association_choices; DROP TABLE collaboration_execution_preparation_results; DELETE FROM collaboration_schema_migrations WHERE version>=16; PRAGMA user_version=15");
     db.prepare("INSERT INTO collaboration_execution_dispatches (work_item_id,plan_revision,attempt,instance_owner,instance_fence,created_at) VALUES (?,1,1,'dead-instance',1,1)").run(h.items[0].workItemId);
     const original = db.prepare("SELECT * FROM collaboration_execution_dispatches").get();
-    await h.runtime.start();
     try {
-      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: COLLABORATION_SCHEMA_VERSION });
+      // v16–39 preserve this legacy reservation; v40 must not infer that an unknown writer has stopped.
+      await expect(h.runtime.start()).rejects.toThrow("candidate_revision_migration_requires_quiescence");
+      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: COLLABORATION_SCHEMA_VERSION - 1 });
       expect(db.prepare("SELECT * FROM collaboration_execution_dispatches").get()).toEqual(original);
-      expect(db.prepare("SELECT state FROM collaboration_execution_preparation_results").get()).toEqual({ state: "interrupted" });
+      expect(db.prepare("SELECT state FROM collaboration_execution_preparation_results").get()).toBeUndefined();
+      expect(h.agent.startedWorkItems).toEqual([]);
     } finally { db.close(); await stopHarness(h); }
   });
   it("notifies once about an orphan preparation without silently retrying it", async () => {

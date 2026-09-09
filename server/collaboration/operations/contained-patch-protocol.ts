@@ -1,12 +1,12 @@
 import { posix } from "node:path";
 import type { AgentRunRequest } from "../provider-runner.ts";
 import { redactSensitiveText } from "../sensitive-text.ts";
-import { matchesPathScope } from "../worktree-manager.ts";
+import { assertRevisionChanges, gitBlobSha, matchesPathScope } from "../worktree-manager.ts";
 import type { ProviderReadViewFile } from "./provider-read-view.ts";
 
 export const CONTAINED_VIEW_ROOT = "/workspace/view";
 export const CONTAINED_CANDIDATE_ROOT = "/run/omb-private/candidate";
-export type ContainedProviderRequest = Omit<AgentRunRequest, "signal" | "emit" | "registerContainment">;
+export type ContainedProviderRequest = Omit<AgentRunRequest, "signal" | "emit" | "registerContainment" | "assertAuthorityCurrent">;
 export interface ContainedProposal {
   status: "completed" | "failed" | "needs_configuration";
   summary: string;
@@ -26,10 +26,15 @@ function list(values: string[], count: number, length: number): string[] {
 /** Data only: never serialize the host environment, paths, callbacks or proof.
  * The worker gets an inert local binding; only the coordinator owns the real one. */
 export function containedProviderRequest(request: AgentRunRequest): ContainedProviderRequest {
+  if (request.sourceSha !== undefined && !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(request.sourceSha)) throw Error("contained_source_pin_invalid");
+  if (request.allowedChanges !== undefined) assertRevisionChanges(request.allowedChanges, request.sourceSha ?? "");
   return {
     runId: text(request.runId, 200), threadId: text(request.threadId, 200), turnId: text(request.turnId, 200),
     workItemId: text(request.workItemId, 200), nodeId: text(request.nodeId, 200), planRevision: request.planRevision,
     cwd: CONTAINED_VIEW_ROOT, objective: text(request.objective, 32_000), instructions: text(request.instructions, 64_000),
+    sourceSha: request.sourceSha,
+    allowedChanges: request.allowedChanges?.map(change => ({ path: change.path, operation: change.operation,
+      parentBlobSha: change.parentBlobSha, resultBlobSha: change.resultBlobSha })),
     inputEvidence: list(request.inputEvidence, 64, 32_000), readScope: list(request.readScope, 64, 2000),
     writeScope: list(request.writeScope, 64, 2000), denyScope: list(request.denyScope, 64, 2000),
     expectedArtifacts: list(request.expectedArtifacts, 64, 2000), completionDefinition: text(request.completionDefinition, 32_000),
@@ -42,11 +47,13 @@ export function containedProviderRequest(request: AgentRunRequest): ContainedPro
 
 /** Both the coordinator and trusted worker validate untrusted model JSON.
  * viewFiles is coordinator-owned metadata, never taken from model output. */
-export function validateContainedProposal(request: Pick<AgentRunRequest, "writeScope" | "denyScope">, value: unknown,
-  viewFiles: ReadonlyArray<Pick<ProviderReadViewFile, "path" | "automaticReplacementAllowed">>): ContainedProposal {
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- This function is the untrusted model JSON parser boundary; its body validates the contract before returning a named ContainedProposal.
+export function validateContainedProposal(request: Pick<AgentRunRequest, "writeScope" | "denyScope" | "allowedChanges" | "sourceSha">, value: unknown,
+  viewFiles: ReadonlyArray<Pick<ProviderReadViewFile, "path" | "automaticReplacementAllowed"> & Partial<Pick<ProviderReadViewFile, "blobSha">>>): ContainedProposal {
   const fail = (): never => { throw Error("contained_proposal_invalid_or_denied"); };
   if (!value || typeof value !== "object" || Array.isArray(value)) return fail();
   const proposal = value as Partial<ContainedProposal>;
+  if (request.allowedChanges !== undefined) assertRevisionChanges(request.allowedChanges, request.sourceSha ?? "");
   if (!["completed", "failed", "needs_configuration"].includes(proposal.status ?? "") ||
     typeof proposal.summary !== "string" || Buffer.byteLength(proposal.summary) > 8000 || proposal.summary.length > 2000 ||
     !Array.isArray(proposal.changes) || proposal.changes.length > 64 ||
@@ -67,5 +74,14 @@ export function validateContainedProposal(request: Pick<AgentRunRequest, "writeS
     seen.add(path);
     return { path, contents: change.contents };
   });
+  if (request.allowedChanges !== undefined && proposal.status === "completed") {
+    const allowed = new Map(request.allowedChanges.map(change => [change.path, change]));
+    if (changes.length !== allowed.size) return fail();
+    for (const change of changes) {
+      const fixed = allowed.get(change.path), original = view.get(change.path);
+      if (!fixed || (fixed.operation === "add" ? original !== undefined : original?.blobSha !== fixed.parentBlobSha) ||
+        (fixed.resultBlobSha !== undefined && gitBlobSha(change.contents, request.sourceSha ?? "") !== fixed.resultBlobSha)) return fail();
+    }
+  }
   return { status: proposal.status!, summary: redactSensitiveText(proposal.summary), changes };
 }

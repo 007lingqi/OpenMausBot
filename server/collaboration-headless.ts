@@ -13,6 +13,7 @@ import type { OutboxDeliveryPort } from "./collaboration/outbox.ts";
 import { candidateResultDeliveryProof } from "./collaboration/candidate-result-evidence.ts";
 import { LocalOwnerRegistry } from "./collaboration/owner.ts";
 import { authorizeExecutionRecoveryLocally, parseExecutionRecoveryRequest } from "./collaboration/execution-recovery-authorization.ts";
+import { authorizeCandidateRevisionLocally, parseCandidateRevisionRequest } from "./collaboration/candidate-revision.ts";
 import {
   configuredCredentialPath,
   readEncryptionKey,
@@ -85,6 +86,7 @@ interface HeadlessArguments {
   help: boolean;
   recoverOwner: boolean;
   executionRecoveryFile?: string;
+  candidateRevisionFile?: string;
   expectedGeneration?: number;
   identitySource?: { kind: "stdin" } | { kind: "file"; path: string };
 }
@@ -123,6 +125,7 @@ function usage(): string {
     "Usage: pnpm collaboration:headless [--data-dir PATH] [--health]",
     "       pnpm collaboration:headless --recover-owner --expected-generation N (--identity-stdin | --identity-file PATH)",
     "       pnpm collaboration:headless --authorize-execution-recovery /absolute/request.json",
+    "       pnpm collaboration:headless --authorize-candidate-revision /absolute/request.json",
     "",
     "  --data-dir PATH           Store collaboration state below PATH",
     "  --health                  Print health JSON and exit",
@@ -131,6 +134,7 @@ function usage(): string {
     "  --identity-stdin          Read new corp/staff identity as JSON from stdin",
     "  --identity-file PATH      Read new identity from an absolute regular 0600 file",
     "  --authorize-execution-recovery PATH  Authorize one fixed execution recovery from a private local file and exit",
+    "  --authorize-candidate-revision PATH  Register a bounded revision of one fixed candidate from a private local file and exit",
   ].join("\n");
 }
 
@@ -140,11 +144,17 @@ export function parseHeadlessArguments(argv: readonly string[], environment: Nod
   let help = false;
   let recoverOwner = false;
   let executionRecoveryFile: string | undefined;
+  let candidateRevisionFile: string | undefined;
   let expectedGeneration: number | undefined;
   let identitySource: HeadlessArguments["identitySource"];
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
-    if (argument === "--authorize-execution-recovery") {
+    if (argument === "--authorize-candidate-revision") {
+      const value = argv[index + 1];
+      if (candidateRevisionFile || !value || !isAbsolute(value)) throw new Error("candidate_revision_arguments_invalid");
+      candidateRevisionFile = value;
+      index += 1;
+    } else if (argument === "--authorize-execution-recovery") {
       const value = argv[index + 1];
       if (executionRecoveryFile || !value || !isAbsolute(value)) throw new Error("execution_recovery_arguments_invalid");
       executionRecoveryFile = value;
@@ -181,6 +191,9 @@ export function parseHeadlessArguments(argv: readonly string[], environment: Nod
       throw new Error(`Unknown argument: ${argument}`);
     }
   }
+  if (candidateRevisionFile && (executionRecoveryFile || healthOnly || help || recoverOwner || expectedGeneration || identitySource)) {
+    throw new Error("candidate_revision_arguments_invalid");
+  }
   if (executionRecoveryFile && (healthOnly || help || recoverOwner || expectedGeneration || identitySource)) {
     throw new Error("execution_recovery_arguments_invalid");
   }
@@ -192,7 +205,7 @@ export function parseHeadlessArguments(argv: readonly string[], environment: Nod
   } else if (expectedGeneration || identitySource) {
     throw new Error("owner_recovery_options_require_--recover-owner");
   }
-  return { dataDirectory: resolve(dataDirectory), healthOnly, help, recoverOwner, expectedGeneration, identitySource, executionRecoveryFile };
+  return { dataDirectory: resolve(dataDirectory), healthOnly, help, recoverOwner, expectedGeneration, identitySource, executionRecoveryFile, candidateRevisionFile };
 }
 
 function safeRuntimeLogger(io: HeadlessIo): RuntimeLogger {
@@ -790,6 +803,26 @@ function authorizeExecutionRecovery(options: HeadlessArguments, io: HeadlessIo):
   } finally { database.close(); ledger.close(); }
 }
 
+function authorizeCandidateRevision(options: HeadlessArguments, io: HeadlessIo): void {
+  const raw = readSecureCredentialFile(options.candidateRevisionFile!);
+  let request: ReturnType<typeof parseCandidateRevisionRequest>;
+  try {
+    const value: unknown = JSON.parse(raw.toString("utf8"));
+    request = parseCandidateRevisionRequest(value);
+  } catch {
+    throw new Error("candidate_revision_request_invalid");
+  } finally { raw.fill(0); }
+  // Local operator access is the trust boundary; no transport event or Owner identity is manufactured.
+  const ledger = openCollaborationLedger(join(options.dataDirectory, "collaboration"));
+  const database = new DatabaseSync(ledger.filePath);
+  try {
+    database.exec("PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000");
+    const result = authorizeCandidateRevisionLocally(database, request);
+    io.stdout.write(`${JSON.stringify({ status: "candidate_revision_authorized", workItemId: result.workItemId,
+      attempt: result.attempt, duplicate: result.duplicate, expiresAt: result.expiresAt })}\n`);
+  } finally { database.close(); ledger.close(); }
+}
+
 function waitForSignal(io: HeadlessIo): { promise: Promise<NodeJS.Signals>; dispose(): void } {
   let resolveSignal: ((signal: NodeJS.Signals) => void) | undefined;
   const promise = new Promise<NodeJS.Signals>((resolve) => (resolveSignal = resolve));
@@ -835,6 +868,10 @@ export async function runCollaborationHeadless(
   }
   if (options.executionRecoveryFile) {
     authorizeExecutionRecovery(options, io);
+    return null;
+  }
+  if (options.candidateRevisionFile) {
+    authorizeCandidateRevision(options, io);
     return null;
   }
   const shutdownTimeoutMs = dependencies.shutdownTimeoutMs ?? 10_000;

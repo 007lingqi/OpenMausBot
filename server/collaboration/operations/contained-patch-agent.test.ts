@@ -8,12 +8,12 @@ import { DockerContainedPatchAgent } from "./contained-patch-agent.ts";
 import { DockerCliContainmentSupervisor, type DockerCommandPort } from "./docker-containment.ts";
 import { readDockerLaunch } from "./docker-launch.ts";
 
-function fixture(mode: "success" | "provider-failure" | "register-failure" | "source-drift" | "cleanup-unknown" | "hang-exit" = "success") {
+function fixture(mode: "success" | "provider-failure" | "register-failure" | "source-drift" | "cleanup-unknown" | "hang-exit" | "authority-revoked" = "success") {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "contained-agent-"))), cwd = join(root, "candidate"), exchange = join(root, "exchange"), channel = join(root, "channel");
   mkdirSync(cwd); mkdirSync(channel); mkdirSync(join(cwd, "src")); writeFileSync(join(cwd, "src/main.ts"), "export const value = 'P1';\n");
   const git = (...args: string[]) => execFileSync("git", ["-C", cwd, "-c", "core.hooksPath=/dev/null", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", ...args], { stdio: "ignore" });
   git("init", "-q"); git("add", "."); git("commit", "-qm", "fixture");
-  const id = "a".repeat(64), controller = new AbortController(); let control = "", running = false, registered = false, finishWait: ((value: ReturnType<typeof result>) => void) | undefined;
+  const id = "a".repeat(64), controller = new AbortController(); let control = "", running = false, registered = false, authorityCurrent = true, finishWait: ((value: ReturnType<typeof result>) => void) | undefined;
   const calls: readonly string[][] = [];
   function result(stdout = "", exitCode = 0) { return { stdout: Buffer.from(stdout), stderr: Buffer.alloc(0), exitCode }; }
   const docker: DockerCommandPort = { run: vi.fn<DockerCommandPort["run"]>(async (args, options) => {
@@ -32,6 +32,8 @@ function fixture(mode: "success" | "provider-failure" | "register-failure" | "so
     terminateBoundContainer: vi.fn(async () => { if (mode === "cleanup-unknown") return { state: "unknown" }; running = false; finishWait?.(result("137")); return { state: "empty" }; }),
   };
   const request = { runId: "run-1", threadId: "thread-1", turnId: "turn-1", workItemId: "WI-1", nodeId: "modify", planRevision: 1,
+    sourceSha: execFileSync("git", ["-C", cwd, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
+    assertAuthorityCurrent: () => { if (!authorityCurrent) throw Error("fixture_authority_revoked"); },
     cwd, objective: "change default", instructions: "update source", inputEvidence: [], readScope: ["src/**"], writeScope: ["src/**"], denyScope: [".git/**", ".env*"],
     expectedArtifacts: ["src/main.ts"], completionDefinition: "P2", environment: {}, capabilities: { network: false, dependencyInstallation: false, arbitraryCommands: false, gitCommit: false },
     sandbox: { filesystemRoot: cwd, readOnlyPaths: [], denyGitMetadata: true, network: "deny" }, signal: controller.signal,
@@ -46,6 +48,7 @@ function fixture(mode: "success" | "provider-failure" | "register-failure" | "so
     expect(registered).toBe(true);
     const path = join(control, "proposal.json");
     if (!existsSync(path)) {
+      if (mode === "authority-revoked") authorityCurrent = false;
       if (mode === "source-drift") writeFileSync(join(cwd, "src/main.ts"), "export const value = 'concurrent';\n");
       writeFileSync(path, JSON.stringify(mode === "provider-failure" ? { status: "needs_configuration", summary: "unclear", need: "provider_source_unavailable", changes: [] } : { status: "completed", summary: "updated", changes: [{ path: "src/main.ts", contents: "export const value = 'P2';\n" }] }), { mode: 0o600 });
     }
@@ -60,11 +63,32 @@ function fixture(mode: "success" | "provider-failure" | "register-failure" | "so
 }
 
 describe("independent contained patch Agent", () => {
+  it("keeps the actual applier gate closed when authority is revoked during model waiting", async () => {
+    const f = fixture("authority-revoked");
+    try {
+      await expect(f.agent.run(f.request)).rejects.toThrow("fixture_authority_revoked");
+      expect(readFileSync(join(f.cwd, "src/main.ts"), "utf8")).toBe("export const value = 'P1';\n");
+      expect(f.request.registerContainment).toHaveBeenCalledOnce();
+      expect(f.containment.terminateBoundContainer).toHaveBeenCalledOnce();
+      expect(readdirSync(f.exchange)).toEqual([]);
+    } finally { f.stop(); }
+  });
+  it("does not retarget the host source pin when a clean candidate HEAD advances before view creation", async () => {
+    const f = fixture();
+    try {
+      writeFileSync(join(f.cwd, "src/main.ts"), "export const value = 'other candidate';\n"); f.git("add", "."); f.git("commit", "-qm", "unexpected head");
+      const result = await f.agent.run(f.request);
+      expect(result).toMatchObject({ status: "needs_configuration", need: "provider_source_unavailable" });
+      expect(f.calls.some(args => args[0] === "wait")).toBe(false);
+      expect(readFileSync(join(f.cwd, "src/main.ts"), "utf8")).toContain("other candidate");
+    } finally { f.stop(); }
+  });
   it.each(["json", "ts"])("reports a trusted %s read failure without losing registered containment or opening the model gate", async extension => {
     const f = fixture();
     const source = extension === "json" ? '{"password":"synthetic-private-value", invalid}' : 'const password = "synthetic-private-value"; const broken = ;';
     try {
       writeFileSync(join(f.cwd, `src/broken.${extension}`), source); f.git("add", "."); f.git("commit", "-qm", "unreadable fixture");
+      f.request.sourceSha = execFileSync("git", ["-C", f.cwd, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
       const result = await f.agent.run(f.request);
       expect(result).toMatchObject({ status: "needs_configuration", need: "provider_source_unavailable", sandboxEnforced: true });
       expect(f.request.registerContainment).toHaveBeenCalledExactlyOnceWith(result.containmentProof);
@@ -81,6 +105,7 @@ describe("independent contained patch Agent", () => {
     const f = fixture("cleanup-unknown");
     try {
       writeFileSync(join(f.cwd, "src/broken.json"), "{invalid}"); f.git("add", "."); f.git("commit", "-qm", "unreadable fixture");
+      f.request.sourceSha = execFileSync("git", ["-C", f.cwd, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
       await expect(f.agent.run(f.request)).rejects.toHaveProperty("name", "CommandCleanupError");
       expect(existsSync(f.control())).toBe(true);
       expect(existsSync(join(f.control(), "proposal.start"))).toBe(false);

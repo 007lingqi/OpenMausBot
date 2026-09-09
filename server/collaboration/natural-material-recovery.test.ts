@@ -18,6 +18,14 @@ import { renderDingTalkSessionMessage } from "../integrations/dingtalk/session-m
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+function stripCandidateRevisionSchema(db: DatabaseSync): void {
+  for (const row of db.prepare("SELECT name FROM sqlite_schema WHERE type='trigger' AND name LIKE 'candidate_revision_%'").all()) {
+    const name = String(row.name);
+    if (!/^candidate_revision_[a-z_]+$/u.test(name)) throw new Error("invalid candidate revision fixture trigger");
+    db.exec(`DROP TRIGGER "${name}"`);
+  }
+  db.exec("DROP TABLE collaboration_candidate_revision_stages; DROP TABLE collaboration_candidate_revision_requests");
+}
 async function fixture(materialCount = 1) {
   const root = mkdtempSync(join(tmpdir(), "material-owner-recovery-")); roots.push(root);
   const file = join(root, "collaboration", "collaboration.sqlite");
@@ -36,7 +44,8 @@ async function fixture(materialCount = 1) {
   const first = startCollaborationService({ dataDirectory: root, planning });
   const db = new DatabaseSync(file); db.exec("PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000");
   const now = Date.now();
-  const lease = new InstanceLeaseCoordinator(db, "reader").acquire(now, 120000)!;
+  const leases = new InstanceLeaseCoordinator(db, "reader");
+  let lease = leases.acquire(now, 120000)!;
   const owner = new LocalOwnerRegistry(file); owner.bootstrap({ senderCorpId: "corp", senderStaffId: "owner", now }); owner.close();
   const message: DingTalkInboundMessage = { sourceEventId: "source", transportMessageId: "source", conversationId: "group", addressedToBot: true,
     text: `请修复 ${grants.map(grant => grant.node).join(" ")} 中的问题`, receivedAt: now, sender: { senderCorpId: "corp", senderStaffId: "owner", senderId: "owner", displayName: "负责人" } };
@@ -54,6 +63,8 @@ async function fixture(materialCount = 1) {
     .toEqual(Array.from({ length: materialCount }, () => ({ status: "failed", attempts: 3 })));
   const request = { ...message, sourceEventId: "owner-recovery", transportMessageId: "owner-recovery", text: "继续整理需求", replyToSourceEventId: "source" };
   return { db, service, options, request, id, now, reads: () => reads, succeed: () => { fail = false; },
+    releaseLease: () => leases.release(lease, Date.now()),
+    reacquireLease: () => { const priorFence = lease.fence; lease = leases.acquire(Date.now(), 120000)!; expect(lease.fence).toBeGreaterThan(priorFence); },
     recover: (input = request) => recoverNaturalIntake(db, input, now, () => {}), close: () => { service.close(); db.close(); } };
 }
 
@@ -66,6 +77,8 @@ describe("Owner recovery of late document interpretation", () => {
       expect(generation).toBe(0);
       const bodies = h.db.prepare("SELECT * FROM collaboration_online_read_receipts").all();
       const inputs = h.db.prepare("SELECT * FROM collaboration_natural_intake_jobs").all();
+      h.releaseLease();
+      stripCandidateRevisionSchema(h.db);
       h.db.exec(`DROP TABLE IF EXISTS collaboration_candidate_result_deliveries; DROP TABLE IF EXISTS collaboration_candidate_result_bindings; DROP TABLE IF EXISTS collaboration_candidate_recheck_attempts; DROP TABLE collaboration_approval_presentations; DROP TABLE collaboration_conversation_intents; DROP TABLE collaboration_online_read_recoveries; DROP TRIGGER online_read_jobs_binding; ALTER TABLE collaboration_online_read_jobs DROP COLUMN recovery_generation; CREATE TRIGGER online_read_jobs_binding BEFORE UPDATE ON collaboration_online_read_jobs WHEN NEW.id<>OLD.id OR NEW.work_item_id<>OLD.work_item_id OR NEW.source_event_id<>OLD.source_event_id OR NEW.normalized_hash<>OLD.normalized_hash OR NEW.reference_hash<>OLD.reference_hash OR NEW.grant_fingerprint<>OLD.grant_fingerprint OR NEW.attempts<OLD.attempts OR NEW.projection_attempts<OLD.projection_attempts BEGIN SELECT RAISE(ABORT,'online source and budget are immutable'); END; DROP TABLE collaboration_natural_material_recoveries; DROP TRIGGER natural_material_immutable;
         ALTER TABLE collaboration_natural_material_jobs DROP COLUMN recovery_generation;
         CREATE TRIGGER natural_material_immutable BEFORE UPDATE ON collaboration_natural_material_jobs
@@ -75,6 +88,7 @@ describe("Owner recovery of late document interpretation", () => {
         DELETE FROM collaboration_schema_migrations WHERE version>=34; PRAGMA user_version=33`);
       const upgraded = startCollaborationService(h.options);
       try {
+        h.reacquireLease();
         expect(h.db.prepare("PRAGMA user_version").get()).toEqual({ user_version: COLLABORATION_SCHEMA_VERSION });
         expect(h.db.prepare("SELECT * FROM collaboration_natural_material_jobs").get()).toEqual({ ...original, recovery_generation: 0 });
         expect(h.db.prepare("SELECT * FROM collaboration_online_read_receipts").all()).toEqual(bodies);

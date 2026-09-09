@@ -1,9 +1,8 @@
-import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { CommandCleanupError, isolatedExecutionEnvironment } from "../execution-limits.ts";
+import { CommandCleanupError } from "../execution-limits.ts";
 import type { AgentRunPort, AgentRunRequest, AgentRunResult } from "../provider-runner.ts";
 import type { ContainmentBinding } from "../containment.ts";
 import { CONTAINED_CANDIDATE_ROOT, containedProviderRequest, validateContainedProposal } from "./contained-patch-protocol.ts";
@@ -154,10 +153,8 @@ export class DockerContainedPatchAgent implements AgentRunPort {
       await unlessCancelled(request.signal, () => request.registerContainment(proof));
       assertActive(request.signal);
       try {
-        const baseSha = execFileSync("git", ["--no-optional-locks", "-C", source, "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "rev-parse", "--verify", "HEAD^{commit}"],
-          { env: { ...isolatedExecutionEnvironment(process.env, source), GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
-            timeout: 5000, maxBuffer: 4096, stdio: ["ignore", "pipe", "pipe"] }).toString("utf8").trim();
-        view = createProviderReadView({ source, destination: join(directory, "view"), baseSha, readScope: request.readScope, denyScope: request.denyScope });
+        if (!request.sourceSha) throw Error("contained_source_pin_required");
+        view = createProviderReadView({ source, destination: join(directory, "view"), baseSha: request.sourceSha, readScope: request.readScope, denyScope: request.denyScope });
       } catch {
         // The supervisor has already registered containment, but the model and
         // applier gates are still closed. Keep this known cause without source
@@ -182,6 +179,7 @@ export class DockerContainedPatchAgent implements AgentRunPort {
           await delay(this.options.pollMs, undefined, { signal: request.signal });
         }
       };
+      request.assertAuthorityCurrent?.();
       writeControl(directory, "proposal.start", { start: true });
       const proposal = validateContainedProposal(request, await receipt("proposal.json"), view.files);
       if (proposal.status === "completed") {
@@ -200,6 +198,7 @@ export class DockerContainedPatchAgent implements AgentRunPort {
           }
         }
         assertActive(request.signal);
+        request.assertAuthorityCurrent?.();
         writeControl(directory, "apply.json", { root: CONTAINED_CANDIDATE_ROOT, writeScopes: request.writeScope, changes: proposal.changes });
         writeControl(directory, "apply.start", { start: true });
         const applied = await receipt("applied.json") as { status?: unknown; paths?: unknown };

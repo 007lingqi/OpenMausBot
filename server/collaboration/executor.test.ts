@@ -34,6 +34,8 @@ import type {
 import { startCollaborationService } from "./service.ts";
 import { NODE_TEST_REPORTER_SOURCE } from "./node-test-reporter.ts";
 import { resolveTargetCommandsForCandidate } from "./target-test-selection.ts";
+import { authorizeCandidateRevisionLocally, reserveCandidateRevision, readCandidateRevisionForAttempt } from "./candidate-revision.ts";
+import { candidateRevisionTransaction, createCandidateRevisionFixture } from "./candidate-revision.test-fixtures.ts";
 
 const scratch: string[] = [];
 
@@ -249,6 +251,146 @@ function ledger(root: string): DatabaseSync {
 }
 
 describe("trusted candidate executor", () => {
+  it("rejects direct repeated execution of a successful candidate without a revision grant before reserving another session", async () => {
+    const f = createCandidateRevisionFixture({ takeLease: false }), agent = new FakeAgent(vi.fn(request => completed(request)));
+    const executor = new CandidateExecutor(f.filePath, { agent, containment: new FakeContainment(), commandRunner: new FakeSandboxedCommandRunner(),
+      managedWorktreeRoot: join(f.root, "managed"), repositories: { [f.repository]: { baseSha: f.baseSha, targetCommands: { "test-target": targetCommand() } } },
+      limits: { maxAttempts: 3, agentTimeoutMs: 2000, maxAgentEventBytes: 16000, interruptGraceMs: 500 } });
+    try {
+      await expect(executor.executeCurrentPlan(f.workItemId, 2)).rejects.toThrow(/candidate_revision/u);
+      expect(f.db.prepare("SELECT count(*) AS n FROM collaboration_execution_sessions WHERE attempt=2").get()).toEqual({ n: 0 });
+      expect(f.db.prepare("SELECT count(*) AS n FROM collaboration_runs").get()).toEqual({ n: 1 });
+    } finally { executor.close(); f.close(); }
+  });
+
+  it.each([{ tamper: false, failing: false }, { tamper: true, failing: false }, { tamper: false, failing: true }])("executes a host-bound revision on the parent and rejects old-test changes (tamper=$tamper, failedTests=$failing)", async ({ tamper, failing }) => {
+    const f = createCandidateRevisionFixture(), parentRun = f.db.prepare("SELECT * FROM collaboration_runs WHERE id=?").get(f.parentRunId);
+    const grant = authorizeCandidateRevisionLocally(f.db, f.input);
+    candidateRevisionTransaction(f.db, () => {
+      f.db.prepare("INSERT INTO collaboration_execution_dispatches VALUES(?,?,?,?,?,?)").run(f.workItemId, 1, 2, f.lease.ownerId, f.lease.fence, Date.now());
+      reserveCandidateRevision(f.db, { workItemId: f.workItemId, attempt: 2, maxAttempts: 3, lease: f.lease });
+    });
+    const agent = new FakeAgent(request => {
+      expect(request.sourceSha).toBe(f.parentSha); expect(request.instructions).toBe(f.input.instructions);
+      expect(request.allowedChanges).toEqual(grant.allowedChanges);
+      expect(request.assertAuthorityCurrent).toBeTypeOf("function"); request.assertAuthorityCurrent?.();
+      expect(git(request.cwd, ["rev-parse", "HEAD"])).toBe(f.parentSha);
+      writeFileSync(join(request.cwd, "app/release-board.tsx"), 'export default "verified functionality with optional initial state";\n');
+      writeFileSync(join(request.cwd, "tests/empty-state-render.test.mjs"), 'import assert from "node:assert/strict"; assert.ok(true);\n');
+      if (tamper) writeFileSync(join(request.cwd, "tests/existing.test.mjs"), "// deleted old assertions\n");
+      return { ...completed(request), lineage: { requestHash: "untrusted-model-lineage" } };
+    });
+    const runner = new FakeSandboxedCommandRunner(request => ({ ...sandboxedResult(request), exitCode: failing ? 1 : 0,
+      stdout: Buffer.from(failing ? "" : "passed"), stderr: Buffer.from(failing ? "test assertion failed" : "") }));
+    const executor = new CandidateExecutor(f.filePath, { agent, containment: new FakeContainment(), commandRunner: runner,
+      managedWorktreeRoot: join(f.root, "managed"), repositories: { [f.repository]: { baseSha: f.baseSha, targetCommands: { "test-target": targetCommand() } } },
+      scheduler: { ownerId: f.lease.ownerId, leaseTtlMs: 120000 }, limits: { maxAttempts: 3, agentTimeoutMs: 2000, maxAgentEventBytes: 16000, interruptGraceMs: 500 } });
+    try {
+      const result = await executor.executeCurrentPlan(f.workItemId, 2);
+      expect(result.baseSha).toBe(f.baseSha); expect(result.report.state).toBe(tamper ? "invalid" : failing ? "test_failed" : "target_tests_passed");
+      if (tamper) { expect(result.resultSha).toBeNull(); expect(result.report.reasons).toContain("candidate_revision_delta_invalid"); }
+      else {
+        expect(git(result.worktreePath, ["rev-parse", `${result.resultSha}^`])).toBe(f.parentSha);
+        expect(result.changedPaths).toEqual(["app/release-board.tsx", "tests/empty-state-render.test.mjs"]);
+        if (failing) {
+          expect(f.db.prepare("SELECT status,result_sha FROM collaboration_runs WHERE id=?").get(result.runId)).toEqual({ status: "failed", result_sha: result.resultSha });
+          expect(f.db.prepare("SELECT state,result_sha FROM collaboration_candidates WHERE run_id=?").get(result.runId)).toEqual({ state: "test_failed", result_sha: result.resultSha });
+        }
+      }
+      expect(f.db.prepare("SELECT * FROM collaboration_runs WHERE id=?").get(f.parentRunId)).toEqual(parentRun);
+      expect(readCandidateRevisionForAttempt(f.db, f.workItemId, 2)).toMatchObject({ stage: "started", sessionId: result.runId });
+      // SAFETY: the completed executor result above has persisted exactly one candidate with non-null quality_json.
+      const candidate = f.db.prepare("SELECT quality_json FROM collaboration_candidates WHERE run_id=?").get(result.runId) as { quality_json: string };
+      expect(JSON.parse(candidate.quality_json).lineage).toEqual({ version: 1, requestId: grant.requestId, requestHash: grant.requestHash,
+        parentRunId: f.parentRunId, parentSha: f.parentSha, baseSha: f.baseSha, buildParentSha: f.parentSha, candidateSha: result.resultSha });
+      expect(candidate.quality_json).not.toContain("untrusted-model-lineage");
+      expect(f.git("rev-parse", "HEAD")).toBe(f.baseSha);
+      expect(f.db.prepare("SELECT count(*) AS n FROM collaboration_execution_settlements WHERE session_id=?").get(result.runId)).toEqual({ n: 1 });
+      if (failing) {
+        const followup = authorizeCandidateRevisionLocally(f.db, { ...f.input, requestId: "explicit-followup-revision", now: Date.now() });
+        expect(followup).toMatchObject({ attempt: 3, parentRunId: f.parentRunId, parentSha: f.parentSha, baseSha: f.baseSha });
+        expect(f.db.prepare("SELECT count(*) AS n FROM collaboration_execution_dispatches WHERE attempt=3").get()).toEqual({ n: 0 });
+      }
+    } finally { executor.close(); f.close(); }
+  });
+  it("supplies the locked configured source SHA to ordinary providers instead of allowing HEAD inference", async () => {
+    let sourceSha: string | undefined;
+    const agent = new FakeAgent(async request => {
+      sourceSha = request.sourceSha;
+      writeFileSync(join(request.cwd, "src/value.txt"), "after\n");
+      return completed(request);
+    });
+    const h = setup({ agent });
+    try { await h.service.executeCurrentPlan(h.workItemId); expect(sourceSha).toBe(h.baseSha); }
+    finally { h.service.close(); }
+  });
+  it.each(["after-prepare", "provider-registration", "before-commit", "after-commit", "target-registration", "after-tests"] as const)("rejects stale revision authority at %s without leaving a usable candidate or running session", async moment => {
+    const f = createCandidateRevisionFixture(), parentRun = f.db.prepare("SELECT * FROM collaboration_runs WHERE id=?").get(f.parentRunId);
+    authorizeCandidateRevisionLocally(f.db, f.input);
+    candidateRevisionTransaction(f.db, () => {
+      f.db.prepare("INSERT INTO collaboration_execution_dispatches VALUES(?,?,?,?,?,?)").run(f.workItemId, 1, 2, f.lease.ownerId, f.lease.fence, Date.now());
+      reserveCandidateRevision(f.db, { workItemId: f.workItemId, attempt: 2, maxAttempts: 3, lease: f.lease });
+    });
+    const changeOwner = () => f.db.exec("UPDATE collaboration_owner_bindings SET generation=generation+1 WHERE active=1");
+    const operation = vi.fn((request: AgentRunRequest) => {
+      writeFileSync(join(request.cwd, "app/release-board.tsx"), 'export default "verified functionality with optional initial state";\n');
+      writeFileSync(join(request.cwd, "tests/empty-state-render.test.mjs"), 'import assert from "node:assert/strict"; assert.ok(true);\n');
+      if (moment === "before-commit") changeOwner();
+      return completed(request);
+    });
+    const targetOperation = vi.fn((request: SandboxedCommandRequest) => {
+      if (moment === "after-tests") changeOwner();
+      return sandboxedResult(request);
+    });
+    const runner = new FakeSandboxedCommandRunner(targetOperation);
+    const containment = new FakeContainment(), originalVerify = containment.verifyProof.bind(containment);
+    let revokedAtRegistration = false;
+    vi.spyOn(containment, "verifyProof").mockImplementation(async (proof, binding) => {
+      const verified = await originalVerify(proof, binding);
+      if (!revokedAtRegistration && ((moment === "provider-registration" && !binding.commandId) || (moment === "target-registration" && binding.commandId))) {
+        changeOwner(); revokedAtRegistration = true;
+      }
+      return verified;
+    });
+    const originalPrepare = WorktreeManager.prototype.prepare;
+    const prepare = moment === "after-prepare" ? vi.spyOn(WorktreeManager.prototype, "prepare").mockImplementation(async function (this: WorktreeManager, options) {
+      const worktree = await originalPrepare.call(this, options); changeOwner(); return worktree;
+    }) : undefined;
+    const originalCommit = WorktreeManager.prototype.commitCandidate;
+    const commit = moment === "after-commit" ? vi.spyOn(WorktreeManager.prototype, "commitCandidate").mockImplementation(async function (this: WorktreeManager, worktree, trace) {
+      const sha = await originalCommit.call(this, worktree, trace); changeOwner(); return sha;
+    }) : undefined;
+    const executor = new CandidateExecutor(f.filePath, { agent: new FakeAgent(operation), containment, commandRunner: runner,
+      managedWorktreeRoot: join(f.root, "managed"), repositories: { [f.repository]: { baseSha: f.baseSha, targetCommands: { "test-target": targetCommand() } } },
+      scheduler: { ownerId: f.lease.ownerId, leaseTtlMs: 120000 }, limits: { maxAttempts: 3, agentTimeoutMs: 2000, maxAgentEventBytes: 16000, interruptGraceMs: 500 } });
+    try {
+      if (moment === "after-prepare") {
+        await expect(executor.executeCurrentPlan(f.workItemId, 2)).rejects.toThrow(/candidate_revision/u);
+        expect(operation).not.toHaveBeenCalled();
+        expect(f.db.prepare("SELECT count(*) AS n FROM collaboration_runs WHERE attempt=2").get()).toEqual({ n: 0 });
+      } else {
+        const result = await executor.executeCurrentPlan(f.workItemId, 2);
+        expect(result.report.state).toBe("invalid"); expect(result.report.reasons).toContain("candidate_revision_authority_stale");
+        expect(result.resultSha).toBeNull();
+        expect(f.db.prepare("SELECT status,result_sha FROM collaboration_runs WHERE id=?").get(result.runId)).toEqual({ status: "invalid", result_sha: null });
+        expect(f.db.prepare("SELECT state,result_sha FROM collaboration_candidates WHERE run_id=?").get(result.runId)).toEqual({ state: "invalid", result_sha: null });
+        if (moment === "before-commit" || moment === "provider-registration") {
+          expect(git(result.worktreePath, ["rev-parse", "HEAD"])).toBe(f.parentSha); expect(runner.requests).toHaveLength(0);
+          if (moment === "provider-registration") expect(operation).not.toHaveBeenCalled();
+        }
+        else {
+          expect(runner.requests).toHaveLength(moment === "after-commit" ? 0 : 1);
+          expect(targetOperation).toHaveBeenCalledTimes(moment === "after-tests" ? 1 : 0);
+          // SAFETY: the successful finalization above inserted exactly this run's candidate row.
+          const candidate = f.db.prepare("SELECT quality_json FROM collaboration_candidates WHERE run_id=?").get(result.runId) as { quality_json: string };
+          expect(JSON.parse(candidate.quality_json)).toMatchObject({ lineage: { candidateSha: null }, rejectedCandidateSha: git(result.worktreePath, ["rev-parse", "HEAD"]) });
+        }
+      }
+      expect(f.db.prepare("SELECT * FROM collaboration_runs WHERE id=?").get(f.parentRunId)).toEqual(parentRun);
+      expect(f.db.prepare("SELECT count(*) AS n FROM collaboration_execution_sessions s JOIN collaboration_execution_settlements e ON e.session_id=s.id WHERE s.attempt=2").get()).toEqual({ n: 1 });
+      expect(f.db.prepare("SELECT count(*) AS n FROM collaboration_runs WHERE attempt=2 AND status='running'").get()).toEqual({ n: 0 });
+    } finally { prepare?.mockRestore(); commit?.mockRestore(); executor.close(); f.close(); }
+  });
   it.each([false, true])("runs committed discovered tests through the protected reporter and persists exact identity (failure=%s)", async failing => {
     const reporter = join(temp(), "reporter.mjs"); writeFileSync(reporter, NODE_TEST_REPORTER_SOURCE);
     // Real node:test execution behind the existing fake containment boundary; no Docker claim.

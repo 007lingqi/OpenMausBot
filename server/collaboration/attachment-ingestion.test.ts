@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { COLLABORATION_SCHEMA_VERSION } from "./migrations.ts";
 
 import { DingTalkAttachmentCapabilityVault } from "../integrations/dingtalk/attachment-capability-vault.ts";
@@ -47,6 +48,15 @@ afterEach(() => {
 
 function hash(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+function stripCandidateRevisionSchema(database: DatabaseSync): void {
+  const triggers = z.array(z.object({ name: z.string().regex(/^[a-z_]+$/u) })).parse(
+    database.prepare("SELECT name FROM sqlite_schema WHERE type='trigger' AND name LIKE 'candidate_revision_%'").all());
+  for (const { name } of triggers) {
+    database.exec(`DROP TRIGGER "${name}"`);
+  }
+  database.exec("DROP TABLE collaboration_candidate_revision_stages; DROP TABLE collaboration_candidate_revision_requests");
 }
 
 function context(resources: PublicAttachmentResource[]) {
@@ -304,6 +314,7 @@ describe("AttachmentIngestionCoordinator", () => {
     const db = new DatabaseSync(setup.databaseFile);
     const failures = db.prepare("SELECT * FROM collaboration_attachment_failures").all();
     const outbox = db.prepare("SELECT * FROM collaboration_outbox").all();
+    stripCandidateRevisionSchema(db);
     db.exec("DROP TABLE IF EXISTS collaboration_candidate_result_deliveries; DROP TABLE IF EXISTS collaboration_candidate_result_bindings; DROP TABLE IF EXISTS collaboration_candidate_recheck_attempts; DROP TABLE collaboration_approval_presentations; DROP TABLE collaboration_conversation_intents; DROP TABLE collaboration_online_read_recoveries; DROP TABLE collaboration_natural_material_recoveries; DROP VIEW collaboration_natural_all_jobs; DROP TABLE collaboration_natural_material_jobs; DROP TABLE collaboration_online_read_receipts; DROP TABLE collaboration_online_read_jobs; DROP TABLE collaboration_coordinator_proofs; DROP VIEW collaboration_mapping_all_results; DROP VIEW collaboration_mapping_all_attempts; DROP TABLE collaboration_mapping_recovery_results; DROP TABLE collaboration_mapping_recovery_attempts; DROP TABLE collaboration_verification_runtime_policies; DROP TABLE collaboration_delivery_queries; DROP TABLE collaboration_document_resources; DROP TABLE collaboration_natural_intake_recoveries; DROP TABLE collaboration_natural_intake_recovery_requests; DROP TABLE collaboration_attachment_recovery_requests; DROP TABLE collaboration_attachment_projection_recoveries; DROP TABLE collaboration_attachment_projection_failures; DELETE FROM collaboration_schema_migrations WHERE version>=23; PRAGMA user_version=22");
     db.close();
     const upgraded = openCollaborationLedger(join(setup.dataDirectory, "collaboration"));
@@ -318,6 +329,7 @@ describe("AttachmentIngestionCoordinator", () => {
   it("upgrades v23 preserving stopped projection receipts without inventing recovery authorization", async () => {
     const f = await recoveryFixture();
     const failures = f.db.prepare("SELECT * FROM collaboration_attachment_projection_failures").all();
+    stripCandidateRevisionSchema(f.db);
     f.db.exec("DROP TABLE IF EXISTS collaboration_candidate_result_deliveries; DROP TABLE IF EXISTS collaboration_candidate_result_bindings; DROP TABLE IF EXISTS collaboration_candidate_recheck_attempts; DROP TABLE collaboration_approval_presentations; DROP TABLE collaboration_conversation_intents; DROP TABLE collaboration_online_read_recoveries; DROP TABLE collaboration_natural_material_recoveries; DROP VIEW collaboration_natural_all_jobs; DROP TABLE collaboration_natural_material_jobs; DROP TABLE collaboration_online_read_receipts; DROP TABLE collaboration_online_read_jobs; DROP TABLE collaboration_coordinator_proofs; DROP VIEW collaboration_mapping_all_results; DROP VIEW collaboration_mapping_all_attempts; DROP TABLE collaboration_mapping_recovery_results; DROP TABLE collaboration_mapping_recovery_attempts; DROP TABLE collaboration_verification_runtime_policies; DROP TABLE collaboration_delivery_queries; DROP TABLE collaboration_document_resources; DROP TABLE collaboration_natural_intake_recoveries; DROP TABLE collaboration_natural_intake_recovery_requests; DROP TABLE collaboration_attachment_recovery_requests; DROP TABLE collaboration_attachment_projection_recoveries; DELETE FROM collaboration_schema_migrations WHERE version>=24; PRAGMA user_version=23");
     f.db.close();
     const upgraded = openCollaborationLedger(join(f.dataDirectory, "collaboration"));

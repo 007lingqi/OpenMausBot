@@ -35,6 +35,7 @@ import {
 import type { CandidateExecutorOptions, CandidateExecutionOutcome } from "../executor.ts";
 import { authorizedPreparationRetrySql, preparationDispatchAllowed, recordPreparationResult } from "../execution-preparation.ts";
 import { executionRecoveryCanDispatch, pendingExecutionRecoveryWorkItems, reserveExecutionRecovery } from "../execution-recovery-authorization.ts";
+import { candidateIsSupersededByRevision, pendingCandidateRevisionWorkItems, reserveCandidateRevision } from "../candidate-revision.ts";
 import { CommandCleanupError } from "../execution-limits.ts";
 import { hasUnsettledRepositoryActivity } from "../repository-occupancy.ts";
 import { recoverLifecycleSession, type LifecycleRecoveryOutcome } from "../lifecycle-recovery.ts";
@@ -1429,7 +1430,8 @@ export class CollaborationHeadlessRuntime {
       result_sha: string;
       verifier_contract_attempts: number;
     } | undefined;
-    if (!row || candidateHasPassedTechnicalReview(this.database, row.run_id, row.result_sha)) return null;
+    if (!row || candidateIsSupersededByRevision(this.database, row.run_id, row.result_sha, this.clock.now()) ||
+      candidateHasPassedTechnicalReview(this.database, row.run_id, row.result_sha)) return null;
     return {
       runId: row.run_id,
       worktreePath: row.worktree_path,
@@ -1497,6 +1499,7 @@ export class CollaborationHeadlessRuntime {
     }
     this.queuedVerifications.delete(workItemId);
     if (verificationOnly) return;
+    const revisionPending = pendingCandidateRevisionWorkItems(this.database, this.clock.now()).includes(workItemId);
     const ready = this.database
       .prepare(
         "SELECT w.current_plan_revision AS plan_revision,s.repository,max(COALESCE((" +
@@ -1510,14 +1513,14 @@ export class CollaborationHeadlessRuntime {
           currentExecutionSpecSql +
           "AND w.current_plan_revision IS NOT NULL AND NOT EXISTS (" +
           "SELECT 1 FROM collaboration_runs r WHERE r.work_item_id = w.id " +
-          "AND r.plan_revision = w.current_plan_revision AND r.status IN ('running', 'succeeded'))",
+          "AND r.plan_revision = w.current_plan_revision AND (r.status='running' OR (r.status='succeeded' AND ?=0)))",
       )
-      .get(workItemId) as { plan_revision: number; repository: string; previous_attempt: number } | undefined;
+      .get(workItemId, revisionPending ? 1 : 0) as { plan_revision: number; repository: string; previous_attempt: number } | undefined;
     if (!ready) {
       this.queuedWorkItems.delete(workItemId);
       return;
     }
-    if (!preparationDispatchAllowed(this.database, workItemId, ready.plan_revision)) {
+    if (!revisionPending && !preparationDispatchAllowed(this.database, workItemId, ready.plan_revision)) {
       this.queuedWorkItems.delete(workItemId);
       return;
     }
@@ -1543,6 +1546,10 @@ export class CollaborationHeadlessRuntime {
       // Reserve before worktree preparation: failures/crashes here must not reset the attempt budget.
       this.database.prepare("INSERT INTO collaboration_execution_dispatches (work_item_id,plan_revision,attempt,instance_owner,instance_fence,created_at) VALUES (?,?,?,?,?,?)")
         .run(workItemId, ready.plan_revision, attempt, this.lease.ownerId, this.lease.fence, this.clock.now());
+      if (revisionPending) {
+        // Same transaction: failed admission rolls back the dispatch; a committed reservation never refunds budget.
+        reserveCandidateRevision(this.database, { workItemId, attempt, maxAttempts, lease: this.lease, now: this.clock.now() });
+      }
       this.database.exec("COMMIT");
     } catch (error) { this.database.exec("ROLLBACK"); throw error; }
     this.activeRepositoryExecutions.add(repository);
@@ -1619,6 +1626,9 @@ export class CollaborationHeadlessRuntime {
     // Exhausted plans stay out of the ordinary queue. Only a fixed, unconsumed
     // local recovery grant may re-enter, with all checks repeated at reservation.
     for (const workItemId of pendingExecutionRecoveryWorkItems(this.database, this.clock.now())) {
+      if (!this.scheduledWorkItems.has(workItemId)) this.scheduleReadyExecution(workItemId);
+    }
+    for (const workItemId of pendingCandidateRevisionWorkItems(this.database, this.clock.now())) {
       if (!this.scheduledWorkItems.has(workItemId)) this.scheduleReadyExecution(workItemId);
     }
   }

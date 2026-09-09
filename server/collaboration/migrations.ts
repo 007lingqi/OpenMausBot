@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { OPENMAUSBOT_SOURCE_BASELINE } from "./config.ts";
 
-export const COLLABORATION_SCHEMA_VERSION = 39;
+export const COLLABORATION_SCHEMA_VERSION = 40;
 
 interface Migration {
   version: number;
@@ -1682,6 +1682,115 @@ const migrations: readonly Migration[] = [
         database.exec(`CREATE TRIGGER candidate_result_${table}_no_${operation.toLowerCase()} BEFORE ${operation} ON collaboration_candidate_result_${table}
           BEGIN SELECT RAISE(ABORT,'candidate result evidence is immutable'); END;`);
       }
+    },
+  },
+  {
+    version: 40, name: "bounded-candidate-revision", checksum: "v40:immutable-parent-bound-candidate-revision-and-supersession",
+    apply(database) {
+      const now = Date.now();
+      if (database.prepare("SELECT 1 FROM collaboration_instance_lease WHERE expires_at>? UNION ALL SELECT 1 FROM collaboration_work_nodes WHERE lease_expires_at>? UNION ALL SELECT 1 FROM collaboration_outbox WHERE claim_expires_at>? LIMIT 1").get(now, now, now) ||
+        database.prepare("SELECT 1 FROM collaboration_runs WHERE status='running' UNION ALL SELECT 1 FROM collaboration_execution_sessions s WHERE NOT EXISTS(SELECT 1 FROM collaboration_execution_settlements f WHERE f.session_id=s.id) UNION ALL SELECT 1 FROM collaboration_verification_sessions s WHERE NOT EXISTS(SELECT 1 FROM collaboration_verification_settlements f WHERE f.session_id=s.id) LIMIT 1").get() ||
+        database.prepare("SELECT 1 FROM collaboration_execution_dispatches d WHERE NOT EXISTS(SELECT 1 FROM collaboration_execution_sessions s WHERE s.work_item_id=d.work_item_id AND s.attempt=d.attempt) AND NOT EXISTS(SELECT 1 FROM collaboration_execution_preparation_results p WHERE p.work_item_id=d.work_item_id AND p.attempt=d.attempt AND p.state='failed' AND p.created_at<=?) LIMIT 1").get(now)) {
+        throw new Error("candidate_revision_migration_requires_quiescence");
+      }
+      database.exec(`
+        CREATE TABLE collaboration_candidate_revision_requests (
+          request_id TEXT PRIMARY KEY, request_hash TEXT NOT NULL CHECK(length(request_hash)=64),
+          work_item_id TEXT NOT NULL REFERENCES collaboration_work_items(id),
+          work_item_version INTEGER NOT NULL CHECK(work_item_version>0), plan_revision INTEGER NOT NULL CHECK(plan_revision>0),
+          snapshot_revision INTEGER NOT NULL CHECK(snapshot_revision>0), node_id TEXT NOT NULL,
+          parent_run_id TEXT NOT NULL REFERENCES collaboration_runs(id), parent_sha TEXT NOT NULL,
+          base_sha TEXT NOT NULL, build_parent_sha TEXT NOT NULL CHECK(build_parent_sha=parent_sha),
+          attempt INTEGER NOT NULL CHECK(attempt BETWEEN 1 AND 3), grant_json TEXT NOT NULL CHECK(json_valid(grant_json)),
+          issued_at INTEGER NOT NULL CHECK(issued_at>=0), expires_at INTEGER NOT NULL CHECK(expires_at=issued_at+900000),
+          UNIQUE(request_id,work_item_id,attempt),
+          FOREIGN KEY(work_item_id,plan_revision,node_id) REFERENCES collaboration_work_nodes(work_item_id,plan_revision,node_id),
+          FOREIGN KEY(work_item_id,snapshot_revision) REFERENCES collaboration_work_item_snapshots(work_item_id,revision),
+          CHECK(json_extract(grant_json,'$.requestId') IS request_id AND json_extract(grant_json,'$.requestHash') IS request_hash
+            AND json_extract(grant_json,'$.workItemId') IS work_item_id AND json_extract(grant_json,'$.workItemVersion') IS work_item_version
+            AND json_extract(grant_json,'$.planRevision') IS plan_revision AND json_extract(grant_json,'$.snapshotRevision') IS snapshot_revision
+            AND json_extract(grant_json,'$.nodeId') IS node_id AND json_extract(grant_json,'$.parentRunId') IS parent_run_id
+            AND json_extract(grant_json,'$.parentSha') IS parent_sha AND json_extract(grant_json,'$.baseSha') IS base_sha
+            AND json_extract(grant_json,'$.buildParentSha') IS build_parent_sha AND json_extract(grant_json,'$.attempt') IS attempt
+            AND json_extract(grant_json,'$.maxAttempts') IS 3 AND json_extract(grant_json,'$.issuedAt') IS issued_at
+            AND json_extract(grant_json,'$.expiresAt') IS expires_at)
+        ) STRICT;
+        CREATE INDEX candidate_revision_parent ON collaboration_candidate_revision_requests(parent_run_id,parent_sha);
+        CREATE TABLE collaboration_candidate_revision_stages (
+          request_id TEXT NOT NULL, stage TEXT NOT NULL CHECK(stage IN ('reserved','started')),
+          work_item_id TEXT NOT NULL, attempt INTEGER NOT NULL CHECK(attempt BETWEEN 1 AND 3),
+          instance_owner TEXT NOT NULL, instance_fence INTEGER NOT NULL CHECK(instance_fence>0),
+          session_id TEXT REFERENCES collaboration_execution_sessions(id), created_at INTEGER NOT NULL CHECK(created_at>=0),
+          PRIMARY KEY(request_id,stage), UNIQUE(work_item_id,attempt,stage), UNIQUE(session_id),
+          FOREIGN KEY(request_id,work_item_id,attempt) REFERENCES collaboration_candidate_revision_requests(request_id,work_item_id,attempt),
+          CHECK((stage='reserved' AND session_id IS NULL) OR (stage='started' AND session_id IS NOT NULL))
+        ) STRICT;
+        CREATE TRIGGER candidate_revision_parent_binding BEFORE INSERT ON collaboration_candidate_revision_requests
+          WHEN NOT EXISTS(SELECT 1 FROM collaboration_runs r JOIN collaboration_candidates c ON c.run_id=r.id
+            JOIN collaboration_work_items w ON w.id=r.work_item_id JOIN collaboration_plan_revisions p ON p.work_item_id=w.id AND p.revision=w.current_plan_revision
+            WHERE r.id=NEW.parent_run_id AND r.work_item_id=NEW.work_item_id AND r.plan_revision=NEW.plan_revision AND r.node_id=NEW.node_id
+              AND r.status='succeeded' AND r.result_sha=NEW.parent_sha AND r.base_sha=NEW.base_sha
+              AND c.state='target_tests_passed' AND c.result_sha=NEW.parent_sha AND c.base_sha=NEW.base_sha
+              AND w.version=NEW.work_item_version AND w.current_plan_revision=NEW.plan_revision
+              AND w.control_state='active' AND w.definition_status='ready_for_execution' AND w.status NOT IN ('accepted','cancelled')
+              AND p.status='published' AND p.snapshot_revision=NEW.snapshot_revision
+              AND r.attempt=(SELECT MAX(latest.attempt) FROM collaboration_runs latest JOIN collaboration_candidates candidate ON candidate.run_id=latest.id
+                WHERE latest.work_item_id=w.id AND latest.plan_revision=NEW.plan_revision AND latest.status='succeeded' AND candidate.state='target_tests_passed' AND candidate.result_sha IS NOT NULL)
+              AND NEW.attempt=1+max(COALESCE((SELECT MAX(x.attempt) FROM collaboration_runs x WHERE x.work_item_id=w.id),0),
+                COALESCE((SELECT MAX(x.attempt) FROM collaboration_execution_dispatches x WHERE x.work_item_id=w.id),0),
+                COALESCE((SELECT MAX(x.attempt) FROM collaboration_execution_sessions x WHERE x.work_item_id=w.id),0)))
+          BEGIN SELECT RAISE(ABORT,'candidate revision parent binding mismatch'); END;
+        CREATE TRIGGER candidate_revision_request_conflict BEFORE INSERT ON collaboration_candidate_revision_requests
+          WHEN EXISTS(SELECT 1 FROM collaboration_candidate_revision_requests q WHERE q.work_item_id=NEW.work_item_id
+            AND ((NOT EXISTS(SELECT 1 FROM collaboration_candidate_revision_stages s WHERE s.request_id=q.request_id) AND q.expires_at>NEW.issued_at)
+              OR (EXISTS(SELECT 1 FROM collaboration_candidate_revision_stages s WHERE s.request_id=q.request_id) AND NOT (
+                NOT EXISTS(SELECT 1 FROM collaboration_execution_sessions e WHERE e.work_item_id=q.work_item_id AND e.attempt=q.attempt
+                  AND NOT EXISTS(SELECT 1 FROM collaboration_execution_settlements f WHERE f.session_id=e.id AND f.created_at<=NEW.issued_at))
+                AND (EXISTS(SELECT 1 FROM collaboration_runs r JOIN collaboration_execution_sessions e ON e.id=r.id
+                    JOIN collaboration_execution_settlements f ON f.session_id=e.id LEFT JOIN collaboration_candidates c ON c.run_id=r.id
+                    WHERE r.work_item_id=q.work_item_id AND r.attempt=q.attempt AND f.created_at<=NEW.issued_at
+                      AND r.status IN ('failed','invalid','timed_out','needs_configuration') AND r.finished_at>=r.started_at AND r.finished_at<=NEW.issued_at
+                      AND ((r.result_sha IS NULL AND c.result_sha IS NULL) OR (r.result_sha IS NOT NULL AND c.result_sha=r.result_sha
+                        AND r.base_sha=q.base_sha AND c.base_sha=q.base_sha
+                        AND c.state IN ('test_failed','invalid','needs_configuration','not_verified')
+                        AND EXISTS(SELECT 1 FROM collaboration_candidate_revision_stages s WHERE s.request_id=q.request_id AND s.stage='started' AND s.session_id=r.id)
+                        AND json_type(c.quality_json,'$.lineage')='object' AND (SELECT count(*) FROM json_each(c.quality_json,'$.lineage'))=8
+                        AND json_extract(c.quality_json,'$.lineage.version')=1 AND json_extract(c.quality_json,'$.lineage.requestId')=q.request_id
+                        AND json_extract(c.quality_json,'$.lineage.requestHash')=q.request_hash AND json_extract(c.quality_json,'$.lineage.parentRunId')=q.parent_run_id
+                        AND json_extract(c.quality_json,'$.lineage.parentSha')=q.parent_sha AND json_extract(c.quality_json,'$.lineage.baseSha')=q.base_sha
+                        AND json_extract(c.quality_json,'$.lineage.buildParentSha')=q.build_parent_sha AND json_extract(c.quality_json,'$.lineage.candidateSha')=r.result_sha)))
+                  OR (NOT EXISTS(SELECT 1 FROM collaboration_runs r WHERE r.work_item_id=q.work_item_id AND r.attempt=q.attempt)
+                    AND EXISTS(SELECT 1 FROM collaboration_execution_preparation_results p WHERE p.work_item_id=q.work_item_id AND p.attempt=q.attempt AND p.state='failed' AND p.created_at<=NEW.issued_at)))))))
+          BEGIN SELECT RAISE(ABORT,'candidate revision request conflict'); END;
+        CREATE TRIGGER candidate_revision_stage_binding BEFORE INSERT ON collaboration_candidate_revision_stages
+          WHEN NOT EXISTS(SELECT 1 FROM collaboration_candidate_revision_requests q JOIN collaboration_execution_dispatches d
+              ON d.work_item_id=q.work_item_id AND d.attempt=q.attempt
+            WHERE q.request_id=NEW.request_id AND q.work_item_id=NEW.work_item_id AND q.attempt=NEW.attempt
+              AND q.issued_at<=NEW.created_at AND NEW.created_at<q.expires_at
+              AND d.plan_revision=q.plan_revision AND d.instance_owner=NEW.instance_owner AND d.instance_fence=NEW.instance_fence
+              AND d.created_at>=q.issued_at AND d.created_at<=NEW.created_at
+              AND (NEW.stage='reserved' OR EXISTS(SELECT 1 FROM collaboration_candidate_revision_stages previous
+                JOIN collaboration_execution_sessions e ON e.id=NEW.session_id
+                WHERE previous.request_id=NEW.request_id AND previous.stage='reserved'
+                  AND previous.instance_owner=NEW.instance_owner AND previous.instance_fence=NEW.instance_fence AND previous.created_at<=NEW.created_at
+                  AND e.work_item_id=q.work_item_id AND e.plan_revision=q.plan_revision AND e.attempt=q.attempt
+                  AND e.base_sha=q.base_sha AND e.repository_path=json_extract(q.grant_json,'$.repository')
+                  AND e.instance_owner=NEW.instance_owner AND e.instance_fence=NEW.instance_fence
+                  AND e.created_at>=previous.created_at AND e.created_at<=NEW.created_at)))
+          BEGIN SELECT RAISE(ABORT,'candidate revision stage binding mismatch'); END;
+      `);
+      for (const table of ["requests", "stages"]) for (const operation of ["UPDATE", "DELETE"]) database.exec(`
+        CREATE TRIGGER candidate_revision_${table}_no_${operation.toLowerCase()} BEFORE ${operation} ON collaboration_candidate_revision_${table}
+          BEGIN SELECT RAISE(ABORT,'candidate revision history is immutable'); END;`);
+      const blocking = "(q.issued_at<=CAST(unixepoch('subsec')*1000 AS INTEGER) AND q.expires_at>CAST(unixepoch('subsec')*1000 AS INTEGER) OR EXISTS(SELECT 1 FROM collaboration_candidate_revision_stages s WHERE s.request_id=q.request_id))";
+      for (const [table, column] of [["verification_sessions", "candidate_run_id"], ["candidate_reviews", "candidate_run_id"], ["candidate_recheck_attempts", "candidate_run_id"]]) database.exec(`
+        CREATE TRIGGER candidate_revision_blocks_${table} BEFORE INSERT ON collaboration_${table}
+          WHEN EXISTS(SELECT 1 FROM collaboration_candidate_revision_requests q WHERE q.parent_run_id=NEW.${column} AND ${blocking})
+          BEGIN SELECT RAISE(ABORT,'candidate superseded by revision'); END;`);
+      database.exec(`CREATE TRIGGER candidate_revision_blocks_accept BEFORE UPDATE OF accepted_candidate_sha,status,control_state ON collaboration_work_items
+        WHEN NEW.accepted_candidate_sha IS NOT NULL AND EXISTS(SELECT 1 FROM collaboration_candidate_revision_requests q
+          WHERE q.work_item_id=NEW.id AND q.parent_sha=NEW.accepted_candidate_sha AND ${blocking})
+        BEGIN SELECT RAISE(ABORT,'candidate superseded by revision'); END;`);
     },
   },
 ];

@@ -31,6 +31,7 @@ import { acceptanceEvidencePoliciesSchema, acceptanceEvidencePoliciesHash, accep
   assertionAcceptanceConditions, aggregateAcceptanceEvidence, readGitScopeEvidence, gitScopeEvidenceSchema,
   type AcceptanceEvidencePolicy, type GitScopeEvidence, type AcceptanceEvidenceAggregate } from "./acceptance-evidence.ts";
 import { readVerifiedCandidateResultReply } from "./candidate-result-evidence.ts";
+import { candidateIsSupersededByRevision, readCandidateRevisionForAttempt } from "./candidate-revision.ts";
 
 const VERIFIER_AGENT_ID = "deterministic-verifier-v1";
 const META_AGENT_ID = "meta-acceptance-gate-v1";
@@ -364,6 +365,29 @@ function hasCurrentContractSchema(review: StoredReview): boolean {
   return reviewVerdict(review)?.contractSchemaVersion === VERIFICATION_CONTRACT_SCHEMA_VERSION;
 }
 
+/** Host lineage is evidence of a fixed started grant, never authority on its own. */
+export function candidateRevisionLineageMatches(database: DatabaseSync, runId: string, candidateSha: string): boolean {
+  try {
+    const row = z.object({ id: z.string(), work_item_id: z.string(), plan_revision: z.number(), node_id: z.string(), attempt: z.number(),
+      repository_path: z.string(), run_base_sha: z.string(), run_result_sha: z.string().nullable(), base_sha: z.string(), result_sha: z.string().nullable(),
+      quality_json: z.string() }).optional().parse(database.prepare("SELECT r.id,r.work_item_id,r.plan_revision,r.node_id,r.attempt,r.repository_path," +
+        "r.base_sha AS run_base_sha,r.result_sha AS run_result_sha,c.base_sha,c.result_sha,c.quality_json " +
+        "FROM collaboration_runs r JOIN collaboration_candidates c ON c.run_id=r.id WHERE r.id=?").get(runId));
+    if (!row || row.result_sha !== candidateSha) return false;
+    const quality = z.record(z.string(), z.unknown()).parse(JSON.parse(row.quality_json));
+    const grant = readCandidateRevisionForAttempt(database, row.work_item_id, row.attempt);
+    if (!grant) return !Object.hasOwn(quality, "lineage");
+    const lineage = z.strictObject({ version: z.literal(1), requestId: z.string(), requestHash: z.string(), parentRunId: z.string(),
+      parentSha: z.string(), baseSha: z.string(), buildParentSha: z.string(), candidateSha: z.string() }).safeParse(quality.lineage);
+    return lineage.success && grant.stage === "started" && grant.sessionId === row.id && grant.attempt === row.attempt &&
+      grant.workItemId === row.work_item_id && grant.planRevision === row.plan_revision && grant.nodeId === row.node_id &&
+      grant.repository === row.repository_path && grant.baseSha === row.run_base_sha && grant.baseSha === row.base_sha &&
+      row.run_result_sha === candidateSha && lineage.data.requestId === grant.requestId && lineage.data.requestHash === grant.requestHash &&
+      lineage.data.parentRunId === grant.parentRunId && lineage.data.parentSha === grant.parentSha && lineage.data.baseSha === grant.baseSha &&
+      lineage.data.buildParentSha === grant.buildParentSha && lineage.data.candidateSha === candidateSha;
+  } catch { return false; }
+}
+
 function latestPassedReviewPair(
   database: DatabaseSync,
   row: VerificationRow,
@@ -371,6 +395,8 @@ function latestPassedReviewPair(
   phase: "technical" | "final" = "final",
 ): { verifier: StoredReview; meta: StoredReview } | null {
   try {
+  if (candidateIsSupersededByRevision(database, row.candidate_run_id, row.result_sha) ||
+    !candidateRevisionLineageMatches(database, row.candidate_run_id, row.result_sha)) return null;
   const verifier = latestReview(database, row.candidate_run_id, "verifier");
   const meta = latestReview(database, row.candidate_run_id, "meta");
   if (
@@ -568,6 +594,14 @@ export class CandidateVerificationCoordinator {
     return verificationContractHash(row, this.options.commands, this.options.acceptanceMapping?.policyId, this.options.acceptanceEvidencePolicies);
   }
 
+  private revisionOutcome(row: VerificationRow, specHash: string): CandidateVerificationOutcome | null {
+    const reason = candidateIsSupersededByRevision(this.database, row.candidate_run_id, row.result_sha, this.options.clock?.() ?? Date.now())
+      ? "candidate_superseded_by_revision"
+      : !candidateRevisionLineageMatches(this.database, row.candidate_run_id, row.result_sha) ? "candidate_revision_lineage_invalid" : null;
+    return reason ? { passed: false, status: "stale", reasons: [reason], specHash,
+      verifierAttempt: latestReview(this.database, row.candidate_run_id, "verifier")?.attempt ?? 0, metaAttempt: null } : null;
+  }
+
   private evidenceConfiguration(row: VerificationRow) {
     const policies = this.options.acceptanceEvidencePolicies ?? [];
     if (!policies.length) return {};
@@ -580,7 +614,7 @@ export class CandidateVerificationCoordinator {
   isCurrentNotification(candidateRunId: string, outcome: CandidateVerificationOutcome): boolean {
     if (outcome.passed || outcome.status === "stale") return false;
     const row = readRow(this.database, candidateRunId);
-    if (!row || this.contractHash(row) !== outcome.specHash) return false;
+    if (!row || this.contractHash(row) !== outcome.specHash || this.revisionOutcome(row, outcome.specHash)) return false;
     const verifier = latestReview(this.database, candidateRunId, "verifier");
     const budget = readCandidateRecheckBudget(this.database, candidateRunId, outcome.specHash);
     const exhausted = outcome.reasons.length === 1 && outcome.reasons[0] === "verification_attempt_limit_exhausted" && outcome.metaAttempt === null &&
@@ -626,25 +660,43 @@ export class CandidateVerificationCoordinator {
     const initial = readRow(this.database, input.candidateRunId);
     if (!initial) throw new Error("candidate_verification_target_unavailable");
     const initialContractHash = this.contractHash(initial);
-    const sessionId = reserveVerification(this.database, input.candidateRunId, input.instance, now());
+    const blocked = this.revisionOutcome(initial, initialContractHash);
+    if (blocked) return blocked;
+    let sessionId: string;
+    try { sessionId = reserveVerification(this.database, input.candidateRunId, input.instance, now()); }
+    catch (error) {
+      const blocked = this.revisionOutcome(initial, initialContractHash);
+      if (blocked) return blocked;
+      throw error;
+    }
     let ordinal = 0;
     let cleanupUnknown = false;
     const runner: SandboxedCommandRunner = { run: async request => {
       input.signal?.throwIfAborted();
+      const blocked = this.revisionOutcome(initial, initialContractHash);
+      if (blocked) throw new Error(blocked.reasons[0]);
       const command = ++ordinal;
       recordVerificationCommand(this.database, sessionId, command, request.containmentBinding, input.instance, now());
       return this.options.commandRunner.run({ ...request, registerContainment: async proof => {
         await request.registerContainment(proof);
         recordVerificationProof(this.database, sessionId, command, proof, input.instance, now());
         input.signal?.throwIfAborted();
+        const blocked = this.revisionOutcome(initial, initialContractHash);
+        if (blocked) throw new Error(blocked.reasons[0]);
         const current = readRow(this.database, input.candidateRunId);
         if (!current || current.result_sha !== initial.result_sha || this.contractHash(current) !== initialContractHash)
           throw new Error("verification_target_changed_before_start");
       } });
     } };
+    let outcome: CandidateVerificationOutcome;
     try {
-      return await this.verifyOnce(input, this.options.commandRunner ? runner : this.options.commandRunner,sessionId);
-    } catch (error) { cleanupUnknown = error instanceof CommandCleanupError; throw error; }
+      outcome = await this.verifyOnce(input, this.options.commandRunner ? runner : this.options.commandRunner,sessionId);
+    } catch (error) {
+      cleanupUnknown = error instanceof CommandCleanupError;
+      const blocked = this.revisionOutcome(initial, initialContractHash);
+      if (cleanupUnknown || !blocked) throw error;
+      outcome = blocked;
+    }
     finally {
       let settled = false;
       if (!cleanupUnknown) {
@@ -653,6 +705,7 @@ export class CandidateVerificationCoordinator {
       }
       if (!settled) throw new CommandCleanupError(new Error("verification_session_unsettled"));
     }
+    return this.revisionOutcome(initial, initialContractHash) ?? outcome;
   }
 
   private async verifyOnce(input: {
@@ -741,6 +794,8 @@ export class CandidateVerificationCoordinator {
         const request = collectAcceptanceMappingRequest({ worktree: worktreePath, candidateSha: row.result_sha, specHash: currentSpecHash,
           conditions: assertionConditions, commandIds: mappingCommandIds, commands, readScope, denyScope });
         const result = await new AcceptanceMappingCoordinator(this.database, this.options.acceptanceMapping).map(request, input.now, input.signal);
+        const blocked = this.revisionOutcome(row, currentSpecHash);
+        if (blocked) return blocked;
         if (result.status === "pending") return { passed: false, status: "needs_configuration", reasons: ["acceptance_mapping_pending"],
           specHash: currentSpecHash, verifierAttempt: previous?.attempt ?? 0, metaAttempt: null };
         if (result.status !== "approved" || !result.contracts) {
@@ -782,6 +837,8 @@ export class CandidateVerificationCoordinator {
           const self=await runTargetTests({worktree:paths.self,environment:isolatedExecutionEnvironment(process.env,home),commandIds,commands,runner,signal:input.signal,
             deniedPaths:[realpathSync(row.repository_path),realpathSync(join(this.options.dataDirectory,"collaboration")),worktreePath,paths.verifier],containment:this.options.containment,
             containmentContext:{runId:`${input.candidateRunId}:verifier:${attempt}:self-recheck`,canonicalWorktreePath:paths.self,instanceOwner:input.instance.ownerId,instanceFence:input.instance.fence}});
+          const blocked = this.revisionOutcome(row, currentSpecHash);
+          if (blocked) return blocked;
           supplementalEvidence=self.evidence;
           if(self.configurationProblems.length || self.evidence.length!==commandIds.length || self.evidence.some(item=>item.state!=="target_passed")) reasons.push("supplemental_self_test_failed");
           const current=readRow(this.database,row.candidate_run_id),selfState=gitState(paths.self),verifyState=gitState(paths.verifier);
@@ -808,6 +865,8 @@ export class CandidateVerificationCoordinator {
         },
       });
       input.signal?.throwIfAborted();
+      const blocked = this.revisionOutcome(row, currentSpecHash);
+      if (blocked) return blocked;
       evidence = verification.evidence;
       reasons.push(...verification.configurationProblems);
       if (evidence.length !== commandIds.length || evidence.some((item) => item.state !== "target_passed")) {
@@ -840,6 +899,8 @@ export class CandidateVerificationCoordinator {
     this.database.exec("BEGIN IMMEDIATE");
     try {
       assertCurrentInstanceLease(this.database, input.instance, this.options.clock?.() ?? Date.now());
+      const blocked = this.revisionOutcome(row, currentSpecHash);
+      if (blocked) { this.database.exec("COMMIT"); return blocked; }
       insertReview(this.database, {
         row,
         stage: "verifier",
@@ -970,6 +1031,8 @@ export class CandidateVerificationCoordinator {
     this.database.exec("BEGIN IMMEDIATE");
     try {
       assertCurrentInstanceLease(this.database, instance, this.options.clock?.() ?? Date.now());
+      const blocked = this.revisionOutcome(row, currentSpecHash);
+      if (blocked) { this.database.exec("COMMIT"); return blocked; }
       insertReview(this.database, {
         row,
         stage: "meta",
@@ -1029,6 +1092,8 @@ export class CandidateVerificationCoordinator {
     this.database.exec("BEGIN IMMEDIATE");
     try {
       assertCurrentInstanceLease(this.database, instance, this.options.clock?.() ?? Date.now());
+      const blocked = this.revisionOutcome(row, currentSpecHash);
+      if (blocked) { this.database.exec("COMMIT"); return blocked; }
       insertReview(this.database, {
         row,
         stage: "verifier",

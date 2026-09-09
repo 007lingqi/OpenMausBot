@@ -17,11 +17,20 @@ import { renderDingTalkSessionMessage } from '../integrations/dingtalk/session-m
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+function stripCandidateRevisionSchema(db: DatabaseSync): void {
+  for (const row of db.prepare("SELECT name FROM sqlite_schema WHERE type='trigger' AND name LIKE 'candidate_revision_%'").all()) {
+    const name = String(row.name);
+    if (!/^candidate_revision_[a-z_]+$/u.test(name)) throw new Error("invalid candidate revision fixture trigger");
+    db.exec(`DROP TRIGGER "${name}"`);
+  }
+  db.exec("DROP TABLE collaboration_candidate_revision_stages; DROP TABLE collaboration_candidate_revision_requests");
+}
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'online-owner-recovery-')); roots.push(root);
   const initial = startCollaborationService({ dataDirectory: root }); initial.close();
   const file = join(root, 'collaboration/collaboration.sqlite'), db = new DatabaseSync(file); db.exec('PRAGMA foreign_keys=ON');
-  const now = Date.now(), lease = new InstanceLeaseCoordinator(db, 'reader').acquire(now, 120000)!;
+  const now = Date.now(), leases = new InstanceLeaseCoordinator(db, 'reader');
+  let lease = leases.acquire(now, 120000)!;
   const registry = new LocalOwnerRegistry(file); registry.bootstrap({ senderCorpId: 'corp', senderStaffId: 'owner', now }); registry.close();
   const node = 'https://alidocs.dingtalk.com/i/nodes/fixture';
   let authorized = false, failure: 'none' | 'known' | 'unknown' = 'none', reads = 0;
@@ -42,6 +51,8 @@ function fixture() {
   const id = service.ingestDingTalkMessage(message).workItemId!;
   const request = { ...message, sourceEventId: 'recover', transportMessageId: 'recover', text: '继续整理需求', replyToSourceEventId: 'source' };
   return { db, service, options, reader, now, id, request, reads: () => reads, authorize: () => { authorized = true; }, fail: (mode: typeof failure) => { failure = mode; },
+    releaseLease: () => leases.release(lease, Date.now()),
+    reacquireLease: () => { const priorFence = lease.fence; lease = leases.acquire(Date.now(), 120000)!; expect(lease.fence).toBeGreaterThan(priorFence); },
     recover: (input = request) => recoverNaturalIntake(db, input, now, () => {}, reader), close: () => { service.close(); db.close(); } };
 }
 it('restores after configured authorization is repaired, only once, preserving the original failed budget', async () => {
@@ -119,6 +130,8 @@ it('preserves all schema34 failed-read fields and requires fresh Owner recovery 
   try {
     const { recovery_generation: generation, ...original } = h.db.prepare('SELECT * FROM collaboration_online_read_jobs').get()!;
     expect(generation).toBe(0);
+    h.releaseLease();
+    stripCandidateRevisionSchema(h.db);
     h.db.exec(`DROP TABLE IF EXISTS collaboration_candidate_result_deliveries; DROP TABLE IF EXISTS collaboration_candidate_result_bindings; DROP TABLE IF EXISTS collaboration_candidate_recheck_attempts; DROP TABLE collaboration_approval_presentations; DROP TABLE collaboration_conversation_intents; DROP TABLE collaboration_online_read_recoveries; DROP TRIGGER online_read_jobs_binding;
       ALTER TABLE collaboration_online_read_jobs DROP COLUMN recovery_generation;
       CREATE TRIGGER online_read_jobs_binding BEFORE UPDATE ON collaboration_online_read_jobs
@@ -129,6 +142,7 @@ it('preserves all schema34 failed-read fields and requires fresh Owner recovery 
       DELETE FROM collaboration_schema_migrations WHERE version>=35; PRAGMA user_version=34`);
     const upgraded = startCollaborationService(h.options);
     try {
+      h.reacquireLease();
       expect(h.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: COLLABORATION_SCHEMA_VERSION });
       expect(h.db.prepare('SELECT * FROM collaboration_online_read_jobs').get()).toEqual({ ...original, recovery_generation: 0 });
       h.authorize(); await upgraded.processOnlineDocuments(h.now); expect(h.reads()).toBe(0);

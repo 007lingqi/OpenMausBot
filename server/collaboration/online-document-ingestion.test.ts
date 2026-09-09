@@ -15,6 +15,14 @@ import { CollaborationHeadlessRuntime } from "./operations/runtime.ts";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+function stripCandidateRevisionSchema(db: DatabaseSync): void {
+  for (const row of db.prepare("SELECT name FROM sqlite_schema WHERE type='trigger' AND name LIKE 'candidate_revision_%'").all()) {
+    const name = String(row.name);
+    if (!/^candidate_revision_[a-z_]+$/u.test(name)) throw new Error("invalid candidate revision fixture trigger");
+    db.exec(`DROP TRIGGER "${name}"`);
+  }
+  db.exec("DROP TABLE collaboration_candidate_revision_stages; DROP TABLE collaboration_candidate_revision_requests");
+}
 const node = "https://alidocs.dingtalk.com/i/nodes/fixture";
 const body = "登录失败时显示具体原因；不得清空已填写的用户名。";
 function response(content = body) { return { exitCode: 0, stdout: Buffer.from(JSON.stringify({ contractVersion: "doc.content.v1",
@@ -41,6 +49,8 @@ function setup(port?: DwsReadCommandPort, natural = false, initialOnline = true)
     text: `请修复文档描述的问题 ${node}`, sender: { senderCorpId: "corp", senderStaffId: "user", senderId: "user", displayName: "测试同事" }, receivedAt: now };
   const id = service.ingestDingTalkMessage(message).workItemId!;
   return { db, service, options, message, id, captured, reads: () => reads, now: () => now,
+    releaseLease: () => leases.release(lease, Date.now()),
+    reacquireLease: () => { const priorFence = lease.fence; now = Date.now(); lease = leases.acquire(now, 120000)!; expect(lease.fence).toBeGreaterThan(priorFence); },
     advance() { now += 130_000; lease = leases.acquire(now, 120_000)!; } };
 }
 describe("durable online document ingestion", () => {
@@ -56,9 +66,12 @@ describe("durable online document ingestion", () => {
       expect(readLatestWorkItemSnapshot(h.db, h.id)!.acceptanceConditions).toEqual([]);
       h.service.close();
       // Reconstruct v32 without touching the original successful input or its Spec.
+      h.releaseLease();
+      stripCandidateRevisionSchema(h.db);
       h.db.exec("DROP TABLE IF EXISTS collaboration_candidate_result_deliveries; DROP TABLE IF EXISTS collaboration_candidate_result_bindings; DROP TABLE IF EXISTS collaboration_candidate_recheck_attempts; DROP TABLE collaboration_approval_presentations; DROP TABLE collaboration_conversation_intents; DROP TABLE collaboration_online_read_recoveries; DROP TRIGGER online_read_jobs_binding; ALTER TABLE collaboration_online_read_jobs DROP COLUMN recovery_generation; CREATE TRIGGER online_read_jobs_binding BEFORE UPDATE ON collaboration_online_read_jobs WHEN NEW.id<>OLD.id OR NEW.work_item_id<>OLD.work_item_id OR NEW.source_event_id<>OLD.source_event_id OR NEW.normalized_hash<>OLD.normalized_hash OR NEW.reference_hash<>OLD.reference_hash OR NEW.grant_fingerprint<>OLD.grant_fingerprint OR NEW.attempts<OLD.attempts OR NEW.projection_attempts<OLD.projection_attempts BEGIN SELECT RAISE(ABORT,'online source and budget are immutable'); END; DROP TABLE collaboration_natural_material_recoveries; DROP VIEW collaboration_natural_all_jobs; DROP TABLE collaboration_natural_material_jobs; DELETE FROM collaboration_schema_migrations WHERE version>=33; PRAGMA user_version=32");
       const restarted = startCollaborationService(h.options);
       try {
+        h.reacquireLease();
         expect(h.db.prepare("PRAGMA user_version").get()).toEqual({ user_version: COLLABORATION_SCHEMA_VERSION });
         expect(h.db.prepare("SELECT * FROM collaboration_natural_intake_jobs WHERE source_event_id='source'").get()).toEqual(original);
         expect(await restarted.processOnlineDocuments(h.now())).toBe(h.id);

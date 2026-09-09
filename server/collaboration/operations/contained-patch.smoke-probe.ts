@@ -20,6 +20,7 @@ for (const mode of ["success", "provider-failure", "register-failure", "cancel-r
   writeFileSync(join(cwd, ".env"), "SYNTHETIC_FIXTURE_ONLY=not-a-real-secret\n");
   const git = (...args: string[]) => execFileSync("git", ["-C", cwd, "-c", "core.hooksPath=/dev/null", "-c", "user.name=Smoke", "-c", "user.email=smoke@example.invalid", ...args], { stdio: "ignore" });
   git("init", "-q"); git("add", "."); git("commit", "-qm", "synthetic fixture");
+  const sourceSha = execFileSync("git", ["-C", cwd, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
   let id: string | undefined, control = "", observation: { uid?: number; readOnly?: boolean; privateDenied?: boolean; detachedPid?: number } | undefined;
   const controller = new AbortController();
   const docker: DockerCommandPort = { async run(args, options) {
@@ -37,7 +38,8 @@ for (const mode of ["success", "provider-failure", "register-failure", "cancel-r
   const agent = new DockerContainedPatchAgent({ docker, containment, image, exchangeRoot: exchange, modelSocketDirectory: channel, relayUid: 501, relayGid: 1000, timeoutMs: 20000 });
   const binding = { runId, canonicalWorktreePath: cwd, instanceOwner: "synthetic-controller", instanceFence: 1, nonce: randomBytes(32).toString("hex") };
   let registered = false;
-  const request = { runId, cwd, threadId: runId, turnId: runId, nodeId: "modify", workItemId: "WI-SYNTHETIC", planRevision: 1,
+  // SAFETY: all AgentRunRequest fields are constructed here for the isolated fixture; sourceSha is the fixture's committed HEAD.
+  const request = { runId, cwd, sourceSha, threadId: runId, turnId: runId, nodeId: "modify", workItemId: "WI-SYNTHETIC", planRevision: 1,
     objective: mode, instructions: "Synthetic fixture only", inputEvidence: [], readScope: ["src/**"], writeScope: ["src/**"], denyScope: [".env*"],
     completionDefinition: "P2", expectedArtifacts: ["src/main.ts"], environment: {},
     capabilities: { network: false, dependencyInstallation: false, arbitraryCommands: false, gitCommit: false },

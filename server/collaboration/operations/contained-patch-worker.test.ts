@@ -7,6 +7,7 @@ import { runContainedPatchWorker, superviseContainedProposal } from "./contained
 import { ProviderFailure } from "./provider-failure.ts";
 import { CodexReadOnlyPatchProvider } from "./docker-patch-agent.ts";
 import { renderDingTalkSessionMessage } from "../../integrations/dingtalk/session-message.ts";
+import { gitBlobSha } from "../worktree-manager.ts";
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "contained-worker-")), control = join(root, "control"), candidate = join(root, "candidate");
@@ -25,6 +26,37 @@ function fixture() {
     run: () => runContainedPatchWorker({ controlDirectory: control, candidateRoot: candidate, propose, signal: controller.signal, pollMs: 5, heartbeatTimeoutMs: 200 }) };
 }
 describe("trusted contained worker gates", () => {
+  it("rejects content outside the host-pinned revision result before opening the applier", async () => {
+    const f = fixture(), sourceSha = "a".repeat(40);
+    f.write("request.json", { request: { ...f.request, sourceSha,
+      allowedChanges: [{ path: "src/main.ts", operation: "modify", parentBlobSha: gitBlobSha("old", sourceSha), resultBlobSha: gitBlobSha("authorized", sourceSha) }] },
+      files: [{ path: "src/main.ts", blobSha: gitBlobSha("old", sourceSha), automaticReplacementAllowed: true, contentHash: createHash("sha256").update("old").digest("hex") }] });
+    f.write("proposal.start", { start: true });
+    try {
+      await f.run();
+      expect(JSON.parse(readFileSync(join(f.control, "proposal.json"), "utf8"))).toMatchObject({ status: "failed", changes: [] });
+      expect(readFileSync(join(f.candidate, "src/main.ts"), "utf8")).toBe("old");
+      expect(existsSync(join(f.control, "applied.json"))).toBe(false);
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
+  });
+
+  it("applies an exact pinned revision only after both gates with actual old bytes checked", async () => {
+    const f = fixture(), sourceSha = "a".repeat(40);
+    f.write("request.json", { request: { ...f.request, sourceSha,
+      allowedChanges: [{ path: "src/main.ts", operation: "modify", parentBlobSha: gitBlobSha("old", sourceSha), resultBlobSha: gitBlobSha("new", sourceSha) }] },
+      files: [{ path: "src/main.ts", blobSha: gitBlobSha("old", sourceSha), automaticReplacementAllowed: true, contentHash: createHash("sha256").update("old").digest("hex") }] });
+    f.write("proposal.start", { start: true });
+    const pending = f.run();
+    try {
+      await vi.waitFor(() => expect(existsSync(join(f.control, "proposal.json"))).toBe(true));
+      expect(f.propose).toHaveBeenCalledWith(expect.objectContaining({ sourceSha,
+        allowedChanges: [{ path: "src/main.ts", operation: "modify", parentBlobSha: gitBlobSha("old", sourceSha), resultBlobSha: gitBlobSha("new", sourceSha) }] }));
+      expect(readFileSync(join(f.candidate, "src/main.ts"), "utf8")).toBe("old");
+      f.write("apply.json", { changes: [{ path: "src/main.ts", contents: "new" }] }); f.write("apply.start", { start: true });
+      await pending;
+      expect(readFileSync(join(f.candidate, "src/main.ts"), "utf8")).toBe("new");
+    } finally { f.controller.abort(); await pending.catch(() => {}); rmSync(f.root, { recursive: true, force: true }); }
+  });
   it.each([
     { exit: 0, expected: "模型临时状态清理未完成，本次改动建议未采用，项目尚未修改。" },
     { exit: 7, expected: "模型执行程序异常结束，项目尚未修改。模型临时状态清理未完成。" },

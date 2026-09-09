@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AgentRunRequest } from "../provider-runner.ts";
 import { containedProviderRequest, validateContainedProposal } from "./contained-patch-protocol.ts";
+import { gitBlobSha } from "../worktree-manager.ts";
 
 const request = {
   runId: "run-1", threadId: "thread-1", turnId: "turn-1", workItemId: "WI-1", nodeId: "modify", planRevision: 1,
@@ -15,8 +16,26 @@ const files = [{ path: "src/main.ts", automaticReplacementAllowed: true }, { pat
 const proposal = { status: "completed", summary: "default updated", changes: [{ path: "src/main.ts", contents: "P2\n" }] };
 
 describe("contained patch protocol", () => {
+  it("retains host-pinned source and enforces the exact revision operations before accepting model content", () => {
+    const sourceSha = "a".repeat(40), parentBlobSha = gitBlobSha("P1\n", sourceSha), resultBlobSha = gitBlobSha("P2\n", sourceSha);
+    const revision = { ...request, sourceSha, allowedChanges: [
+      { path: "src/main.ts", operation: "modify" as const, parentBlobSha, resultBlobSha },
+      { path: "src/added.ts", operation: "add" as const, parentBlobSha: null },
+    ] };
+    const view = [{ ...files[0], blobSha: parentBlobSha }];
+    const proposed = { ...proposal, changes: [...proposal.changes, { path: "src/added.ts", contents: "new" }] };
+    expect(validateContainedProposal(revision, proposed, view)).toEqual(proposed);
+    expect(containedProviderRequest(revision)).toMatchObject({ sourceSha, allowedChanges: revision.allowedChanges });
+    for (const changed of [proposal, { ...proposed, changes: [{ ...proposed.changes[0], contents: "wrong" }, proposed.changes[1]] },
+      { ...proposed, changes: [...proposed.changes, { path: "src/other.ts", contents: "extra" }] }]) {
+      expect(() => validateContainedProposal(revision, changed, view)).toThrow();
+    }
+    expect(() => validateContainedProposal(revision, proposed, [{ ...view[0], blobSha: "0".repeat(40) }])).toThrow();
+    expect(() => validateContainedProposal(revision, proposed, [...view, { path: "src/added.ts", blobSha: "b".repeat(40), automaticReplacementAllowed: true }])).toThrow();
+  });
   it("passes only bounded task data and fixed capabilities to the isolated view", () => {
-    const safe = containedProviderRequest(request);
+    const safe = containedProviderRequest({ ...request, assertAuthorityCurrent: () => { throw Error("host-only-authority"); } });
+    expect(Object.hasOwn(safe, "assertAuthorityCurrent")).toBe(false);
     expect(safe.cwd).toBe("/workspace/view");
     expect(safe.environment).toEqual({});
     expect(JSON.stringify(safe)).not.toContain("/real/candidate");

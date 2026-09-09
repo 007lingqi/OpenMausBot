@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { startCollaborationService } from "./service.ts";
 import { policy, validProposal } from "./planner.test-fixtures.ts";
 import { InstanceLeaseCoordinator } from "./leases.ts";
@@ -17,6 +18,12 @@ import { registerCoordinator, type CoordinatorAuthority } from "./coordinator-li
 import type { UnactivatedLaunchRecoveryPort } from "./unactivated-launch-recovery.ts";
 
 const roots: string[] = [];
+function stripCandidateRevisionSchema(database: DatabaseSync): void {
+  const triggers = z.array(z.object({ name: z.string().regex(/^[a-z_]+$/u) })).parse(
+    database.prepare("SELECT name FROM sqlite_schema WHERE type='trigger' AND name LIKE 'candidate_revision_%'").all());
+  for (const { name } of triggers) database.exec(`DROP TRIGGER "${name}"`);
+  database.exec("DROP TABLE collaboration_candidate_revision_stages; DROP TABLE collaboration_candidate_revision_requests");
+}
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
 function fixture(withCoordinator = false) {
@@ -270,21 +277,45 @@ describe("passive lifecycle recovery", () => {
     } finally { f.db.close(); }
   });
 
-  it("upgrades v20 without fabricating finalization evidence or losing process reservations", async () => {
+  it("preserves v20 recovery evidence at v39 and refuses v40 while process reservations remain unsettled", async () => {
     const f = fixture();
     try {
       f.session.command(1, f.binding); f.session.proof(1, f.proof);
       const before = ["sessions", "commands", "proofs"].map(table => f.db.prepare(`SELECT * FROM collaboration_execution_${table}`).all());
+      stripCandidateRevisionSchema(f.db);
       for (const kind of ["execution", "verification"]) {
         for (const table of ["commands", "proofs"]) f.db.exec(`DROP TRIGGER ${kind}_${table}_finalizing`);
         f.db.exec(`DROP TABLE collaboration_${kind}_finalization_intents`);
       }
       f.db.exec("DROP TABLE IF EXISTS collaboration_candidate_result_deliveries; DROP TABLE IF EXISTS collaboration_candidate_result_bindings; DROP TABLE IF EXISTS collaboration_candidate_recheck_attempts; DROP TABLE collaboration_approval_presentations; DROP TABLE collaboration_conversation_intents; DROP TABLE collaboration_online_read_recoveries; DROP TABLE collaboration_natural_material_recoveries; DROP VIEW collaboration_natural_all_jobs; DROP TABLE collaboration_natural_material_jobs; DROP TABLE collaboration_online_read_receipts; DROP TABLE collaboration_online_read_jobs; DROP TABLE collaboration_coordinator_proofs; DROP VIEW collaboration_mapping_all_results; DROP VIEW collaboration_mapping_all_attempts; DROP TABLE collaboration_mapping_recovery_results; DROP TABLE collaboration_mapping_recovery_attempts; DROP TABLE collaboration_verification_runtime_policies; DROP TABLE collaboration_delivery_queries; DROP TABLE collaboration_document_resources; DROP TABLE collaboration_natural_intake_recoveries; DROP TABLE collaboration_natural_intake_recovery_requests; DROP TABLE collaboration_attachment_recovery_requests; DROP TABLE collaboration_attachment_projection_recoveries; DROP TABLE collaboration_attachment_projection_failures; DROP TABLE collaboration_attachment_failures; DELETE FROM collaboration_schema_migrations WHERE version>=21; PRAGMA user_version=20");
-      expect(applyCollaborationMigrations(f.db)).toEqual({ schemaVersion: COLLABORATION_SCHEMA_VERSION, appliedMigrations: COLLABORATION_SCHEMA_VERSION });
+      expect(() => applyCollaborationMigrations(f.db)).toThrow("candidate_revision_migration_requires_quiescence");
+      expect(f.db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 39 });
+      expect(f.db.prepare("SELECT count(*) AS n FROM collaboration_schema_migrations").get()).toEqual({ n: 39 });
+      expect(f.db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name LIKE 'collaboration_candidate_revision_%'").all()).toEqual([]);
       expect(["sessions", "commands", "proofs"].map(table => f.db.prepare(`SELECT * FROM collaboration_execution_${table}`).all())).toEqual(before);
       expect(f.db.prepare("SELECT count(*) AS n FROM collaboration_execution_finalization_intents").get()).toEqual({ n: 0 });
       f.empty();
       expect((await recoverLifecycleSession(f.db, { kind: "execution", sessionId: f.session.id, instance: f.takeover(), now: Date.now, containment: f.containment })).state).toBe("blocked");
+      expect(f.db.prepare("SELECT * FROM collaboration_execution_settlements").all()).toEqual([]);
+      expect(() => applyCollaborationMigrations(f.db)).toThrow("candidate_revision_migration_requires_quiescence");
+    } finally { f.db.close(); }
+  });
+
+  it("upgrades a quiescent v39 only after actual lifecycle settlement and instance release", async () => {
+    const f = fixture();
+    try {
+      stripCandidateRevisionSchema(f.db);
+      f.db.exec("DELETE FROM collaboration_schema_migrations WHERE version=40; PRAGMA user_version=39");
+      expect(await f.session.settle(f.containment)).toBe(true);
+      const releasedAt = Date.now();
+      new InstanceLeaseCoordinator(f.db, f.lease.ownerId).release(f.lease, releasedAt);
+      expect(f.db.prepare("SELECT 1 FROM collaboration_instance_lease WHERE expires_at>?").get(releasedAt)).toBeUndefined();
+      const tables = ["sessions", "commands", "proofs", "settlements", "finalization_intents"];
+      const before = tables.map(table => f.db.prepare(`SELECT * FROM collaboration_execution_${table}`).all());
+      expect(applyCollaborationMigrations(f.db)).toEqual({ schemaVersion: COLLABORATION_SCHEMA_VERSION, appliedMigrations: COLLABORATION_SCHEMA_VERSION });
+      expect(tables.map(table => f.db.prepare(`SELECT * FROM collaboration_execution_${table}`).all())).toEqual(before);
+      expect(f.db.prepare("SELECT * FROM collaboration_candidate_revision_requests").all()).toEqual([]);
+      expect(f.db.prepare("SELECT * FROM collaboration_candidate_revision_stages").all()).toEqual([]);
     } finally { f.db.close(); }
   });
 

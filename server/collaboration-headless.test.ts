@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { openCollaborationLedger } from "./collaboration/db.ts";
 import { enqueueInboundCard } from "./collaboration/outbox.ts";
 import { LocalOwnerRegistry } from "./collaboration/owner.ts";
+import { createCandidateRevisionFixture } from "./collaboration/candidate-revision.test-fixtures.ts";
 import {
   parseHeadlessArguments,
   readDingTalkAllowedConversationIds,
@@ -59,6 +60,63 @@ function signalIo(): { io: HeadlessIo; signal(name: NodeJS.Signals): void } {
 }
 
 describe("secure collaboration headless CLI", () => {
+  it("registers a fixed revision once without starting a scheduler or changing the Spec or Owner", async () => {
+    const fixture = createCandidateRevisionFixture();
+    const requestPath = join(fixture.root, "revision.json"), output = io();
+    writeFileSync(requestPath, JSON.stringify(fixture.request), { mode: 0o600 });
+    const owner = fixture.db.prepare("SELECT * FROM collaboration_owner_bindings").all();
+    const snapshots = fixture.db.prepare("SELECT * FROM collaboration_work_item_snapshots").all();
+    let runtimeCreated = false;
+    try {
+      for (let index = 0; index < 2; index++) await runCollaborationHeadless(
+        ["--data-dir", fixture.root, "--authorize-candidate-revision", requestPath], {},
+        { io: output.io, createRuntime() { runtimeCreated = true; throw new Error("unexpected_runtime_creation"); } },
+      );
+      expect(runtimeCreated).toBe(false);
+      expect(output.stdout.map(line => JSON.parse(line))).toEqual([
+        expect.objectContaining({ status: "candidate_revision_authorized", workItemId: fixture.workItemId, attempt: 2, duplicate: false }),
+        expect.objectContaining({ status: "candidate_revision_authorized", workItemId: fixture.workItemId, attempt: 2, duplicate: true }),
+      ]);
+      expect(output.stdout.join(" ")).not.toContain(fixture.input.instructions);
+      expect(fixture.db.prepare("SELECT * FROM collaboration_owner_bindings").all()).toEqual(owner);
+      expect(fixture.db.prepare("SELECT * FROM collaboration_work_item_snapshots").all()).toEqual(snapshots);
+      expect(fixture.db.prepare("SELECT count(*) AS n FROM collaboration_execution_dispatches").get()).toMatchObject({ n: 1 });
+    } finally { fixture.close(); }
+  });
+  it("parses local candidate revision independently from recovery and runtime startup", () => {
+    expect(parseHeadlessArguments(["--authorize-candidate-revision", "/tmp/revision.json"], {}))
+      .toMatchObject({ candidateRevisionFile: "/tmp/revision.json", recoverOwner: false, healthOnly: false });
+  });
+  it.each([
+    ["--authorize-candidate-revision"],
+    ["--authorize-candidate-revision", "relative.json"],
+    ["--authorize-candidate-revision", "/tmp/revision.json", "--health"],
+    ["--authorize-candidate-revision", "/tmp/revision.json", "--help"],
+    ["--authorize-candidate-revision", "/tmp/revision.json", "--authorize-execution-recovery", "/tmp/recovery.json"],
+    ["--authorize-candidate-revision", "/tmp/revision.json", "--authorize-candidate-revision", "/tmp/other.json"],
+    ["--authorize-candidate-revision", "/tmp/revision.json", "--recover-owner", "--expected-generation", "1", "--identity-stdin"],
+  ])("rejects mixed candidate revision arguments %j", (...args) => {
+    expect(() => parseHeadlessArguments(args, {})).toThrow("candidate_revision_arguments_invalid");
+  });
+  it.each(["invalid-json", "{}", JSON.stringify({ unexpected: "sensitive-fixture-value" })])(
+    "rejects malformed candidate revision without starting or disclosing its data", async raw => {
+      const directory = temporaryDirectory(), request = join(directory, "revision.json"), output = io();
+      writeFileSync(request, raw, { mode: 0o600 });
+      let created = false;
+      await expect(runCollaborationHeadless(["--data-dir", directory, "--authorize-candidate-revision", request], {}, {
+        io: output.io, createRuntime() { created = true; throw new Error("unexpected_runtime_creation"); },
+      })).rejects.toThrow("candidate_revision_request_invalid");
+      expect(created).toBe(false);
+      expect(output.stdout.join("") + output.stderr.join("")).not.toContain(raw);
+    },
+  );
+  it("rejects a public candidate revision file without opening a runtime", async () => {
+    const directory = temporaryDirectory(), request = join(directory, "revision.json");
+    writeFileSync(request, "{}", { mode: 0o600 }); chmodSync(request, 0o644);
+    await expect(runCollaborationHeadless(["--data-dir", directory, "--authorize-candidate-revision", request], {}, {
+      io: io().io, createRuntime() { throw new Error("unexpected_runtime_creation"); },
+    })).rejects.toThrow("credential_file_permissions_must_be_0600");
+  });
   it("parses a dedicated local execution recovery request without enabling Owner identity recovery", () => {
     expect(parseHeadlessArguments(["--authorize-execution-recovery", "/tmp/recovery.json"], {}))
       .toMatchObject({ executionRecoveryFile: "/tmp/recovery.json", recoverOwner: false, healthOnly: false });
