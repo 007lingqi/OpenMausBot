@@ -1,5 +1,14 @@
 # Meta 协作实施进度
 
+## 当前补验：真实 Linux 并发与服务崩溃恢复通过（2026-09-09）
+
+- 本轮为 progress，不是整个产品完成。新建独占测试 volume/仓库/账本，在当前 c7839032…镜像内运行当前产品 runtime、Docker supervisor 与真实 Git；没有模型调用、钉钉外发、原库写入、业务第五次尝试或重新发布。
+- 3a7e98：三个仓库的 Docker 任务及真实 Git index 锁同时活动；同仓库第二任务无提前 dispatch/session/run，独立 SQLite 连接的实际 reserve 被拒绝；首项结清后第二项才开始。四个合成任务均生成并核对候选提交，原仓库/默认分支未变，12 个自建任务容器已停止并由 runner 清理。
+- 398622：真实 runtime 持久化在途 proof 后，runner 精确中断自建 controller，确认子任务仍活跃后再停止它；新 runtime 依据真实 Docker 退出证据结算一次、通俗恢复通知本地投递一次，释放仓库供另一合成 lifecycle 执行。第三个 runtime 启动后无重复执行/通知。不是自动终止未知旧任务、自动重跑原模型任务、真实群送达或在途 VM reboot。
+- 新 runner 经非作者复核，补齐失败逐项停止/保留证据、真实挂载和身份校验、语义结果门槛及正常清理后才报告通过。19 合同测试、既有仓库调度28项及类型检查通过；中间编辑期类型错误与新文件 lint 问题有记录。产品模块未变，未重复既有完整回归或发布。
+- 6b8a7e/011496：真实服务仍原27cefe76…/StartedAt02:20:25.294Z/restarts0；原事项仍仅4次、resultSha均空、无review，15events/66outbox（48sent/18superseded）/唯一Owner、quick_check/外键正常。ce923b 另行列举确认本轮测试容器与volume已清理，无本轮在运行的测试。
+- 原事项恢复决定及真实 C1–C6/多人/平台入口/Owner最终验收仍缺；上一轮一次性第四次授权不重用。本轮仅增加可靠性证据，不把旧失败清零或让自动Goal续跑触发第五次。详情与命令：[运行可靠性证据](docs/pilot/evidence/conversation-runtime-reliability-20260909.json)。用户 outputs/ 保留。
+
 ## 当前修复：主服务与任务执行器版本错位已修复并部署（2026-09-09）
 
 - 569490/0da080确认：服务64c2e203已更新，但真实第四次任务86baba5e仍使用9月7日a4cab8c旧provider镜像，其中relay仍为60秒硬期限，worker无新失败分类。发布只更新image/coordinator pin，遗漏独立的provider pin；不是Docker缓存。第四次具体请求日志已丢失，不能据此重建其最终异常。

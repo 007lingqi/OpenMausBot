@@ -1,5 +1,14 @@
 # Meta 协作验证记录
 
+## 2026-09-09 Linux 运行时并发及崩溃恢复补验
+
+- 398622/session29172终态0：真实 runtime 在途持久化后自建controller被SIGKILL；runner确认并停止仍活跃的精确子任务，新runtime用真实Docker退出证据结算、恢复通知本地投递，独立lifecycle继续，第三次runtime去重。两阶段退出0、故障阶段137是预期；不是自动重跑原业务、真实群送达或在途VM重启。
+- 3a7e98/session52487终态0：三仓库/三Docker任务/三真实Git index锁并发，同仓库第二项严格等首项settlement；独立SQLite reserve拒绝占用冲突。四候选提交内容/父提交/干净工作树及原仓库未变均校验，12子容器停止。两probe的私有容器/volume正常清理，ce923b再次列表为空。
+- 合同测试19项4e72db/9d0abe通过；8aedb1确认类型检查+19项+diff链终态0。非作者安全复核无剩余阻塞；既有runtime-repository-serialization回归由并发worker完成28/28。中间dd1d73为并行编辑期类型错误，363a45为新文件静态规则问题，已修正。恢复probe最终只改类型/注释，bundle SHA仍1de8a2a…；并发bundle1a0ec6f8…。
+- Runner执行后仅收尾字符串/路径断言及finally外汇总错误；f55454确认19项、runner lint/语法终态0。产品运行模块未变，无发布；复用cbd362既有完整产品回归，不为文档/独立probe重复全套。
+- aded86/session77312最终四新增文件定向lint、类型及diff检查终态0；c6cd63主线程重建两probe均与实际执行bundle逐字节SHA匹配，JSON有效；非作者终稿文档复核无遗漏或虚增验收。
+- 6b8a7e/011496真实服务未重启，原事项仍四次终态且无resultSha/review，事件15、Outbox48sent/18superseded、Owner1、完整性及外键正常。本轮没有原业务第五次、模型或群发送。精确对象、命令与边界：[结构化证据](docs/pilot/evidence/conversation-runtime-reliability-20260909.json)。
+
 ## 2026-09-09 执行器旧镜像及失败保留修复
 
 - f3922a8固定源码后，a21680构建c7839032镜像，六bundle及UID501/10001可读检查通过。a670d7在同固定源码下独立重新build，六文件逐字节与镜像构建输入相同；冻结tested-bundles.json，11292f以实际新镜像UID10001逐项验证。activation在停机前执行同一清单门禁，不能仅靠服务镜像标签宣称任务执行器受测。

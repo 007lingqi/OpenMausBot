@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "date": "2026-09-09",
+  "classification": "progress",
+  "goalStatus": "active_not_complete",
+  "scope": "Isolated Linux/Docker reliability; no business execution, model call or group send",
+  "sourceBase": "6fec25b6cfe55432b8cb56a2c72961898f08531f",
+  "deployedProductRevision": "f3922a8b31b93b8d3664c413c7e4a73bde145dd4",
+  "image": "sha256:c783903244aba45df38fa116de36afb6b3b85b11a68e599f19c0f27ba6ceb5c3",
+  "context": "colima-openmausbot-pilot",
+  "implementation": {
+    "runner": "scripts/smoke-docker-runtime-reliability.mjs",
+    "contractTests": "scripts/collaboration-pilot/runtime-reliability-contract.test.mjs",
+    "concurrencyProbe": "server/collaboration/operations/repository-concurrency.smoke-probe.ts",
+    "recoveryProbe": "server/collaboration/operations/runtime-crash-recovery.smoke-probe.ts",
+    "productModulesChanged": false,
+    "newDeployment": false,
+    "executedRunnerSha256": "e456bd8a167a9a89c1388ee906f75399ef747b3ce61edc6d79aa7ba7bc88ae54",
+    "postRunChanges": "Runner string/path assertions and moving cleanup-error aggregation outside finally; recovery probe comments/types only. Product modules and Linux probe bundle bytes unchanged. Final contract/type/lint checks in VERIFY."
+  },
+  "commands": {
+    "prefix": "OMB_CONTAINMENT_SMOKE_CONTEXT=colima-openmausbot-pilot OMB_CONTAINMENT_SMOKE_IMAGE=sha256:c783903244aba45df38fa116de36afb6b3b85b11a68e599f19c0f27ba6ceb5c3",
+    "concurrency": "node scripts/smoke-docker-runtime-reliability.mjs concurrency",
+    "recovery": "node scripts/smoke-docker-runtime-reliability.mjs recovery"
+  },
+  "concurrency": {
+    "receipt": "3a7e98", "session": 52487, "exitCode": 0, "trials": 1,
+    "run": "omb-runtime-concurrency-92fdeffd-94a7-49a9-a755-1f9d0842f2e9",
+    "controllerId": "5a4ab93bfb2e69b9351898f8b1c066bd85f334494e26d6febf9eebf2517816a4",
+    "bundleSha256": "1a0ec6f87003cf85499893f4ceb11d1ea21fee81faa4458ceec86c513bb02005",
+    "cases": ["same_repository_serialized", "different_repositories_concurrent", "durable_repository_reservation_rejects_contender", "real_git_index_writers_overlap", "original_repositories_unchanged"],
+    "simultaneouslyActiveRepositories": 3,
+    "simultaneouslyActiveDockerTasks": 3,
+    "simultaneouslyHeldRealGitIndexLocks": 3,
+    "sameRepositorySecondTaskNoEarlyDispatchOrSessionOrRun": true,
+    "separateSQLiteConnectionReservationRejected": true,
+    "firstSettledAt": 1788921946618, "secondReservedAt": 1788921946906,
+    "executionSessionsSettled": 4,
+    "candidateCommits": ["8290cd62dd01d80e96d8cc222905302d7b40e24d", "847a63e1f68d29313579f46b2616ddfa36cd1384", "41ed10dd81199396e0cc25a95906a893829c7ba8", "6b5ac129768e128744e36fffec7cbc4bbb93cb23"],
+    "taskContainersStoppedByProbe": 12, "cleanupConfirmedByRunner": true,
+    "boundaries": [
+      "Actual product runtime scheduling, durable occupancy, worktrees, Git, Docker supervisor and sandboxed command runner",
+      "Candidate contents supplied by a trusted synthetic fixture after a real Docker barrier; no model-generated code",
+      "Delivery disabled; no DingTalk, credentials or real business Ledger mounted",
+      "One finite trial, not a performance or universal race-freedom proof"
+    ]
+  },
+  "recovery": {
+    "receipt": "398622", "session": 29172, "exitCode": 0, "trials": 1,
+    "run": "omb-runtime-recovery-75fdaebc-81d6-469d-be31-6370be26da96",
+    "bundleSha256": "1de8a2a8096e03ccdc1315b5b8b9c19edc7a256afdb7d28426db0397d6c1e412",
+    "producerId": "4d3ec528141ca9d67da1b8f3c067f0dde2ab6ddca9ac41116fd1110f2beea0ab",
+    "interruptedTaskId": "aeacee5e9f621f28cdf019c9040a082027d78984210d22031c2cd4d8a24b2ed6",
+    "recoveryControllerId": "1f4e247e5b66a02cf573ea7c63217620b280e80a3f95dfe344318f4fa958791a",
+    "replayControllerId": "afe8e13af56ea31cec51e709ead18fde2f3081024921fba651155ca059ac4000",
+    "phaseExitCodes": { "produce": 137, "recover": 0, "replay": 0 },
+    "faultBoundary": "Real runtime started; active task proof durably recorded; no finalization intent. Runner SIGKILLed exact owned controller, observed task still running, then stopped and confirmed exit of that exact task before starting recovery.",
+    "realRuntimeStartupRecovery": true, "realCoordinatorEpochAndTaskExitProof": true,
+    "oldSessionRecoveredSettlements": 1, "localRecoveryNotices": 1,
+    "originalSyntheticAttempts": 1, "repositoryReleased": true,
+    "distinctContinuationCompleted": true, "continuationDispatch": "direct_probe_lifecycle",
+    "replayNoDuplicateExecutionOrNotice": true, "cleanupConfirmedByRunner": true,
+    "boundaries": [
+      "Actual runtime.start, SQLite, coordinator authority, Docker containment and DingTalk message serialization",
+      "Synthetic planner and local idempotent delivery sink; no platform business response or real group send",
+      "Runner stopped the old task; not autonomous cancellation or automatic model task retry",
+      "Distinct follow-up directly exercised lifecycle reserve, Docker write/assertion and settlement; not scheduled end-to-end model delivery",
+      "Same Linux boot; not an in-flight VM reboot test"
+    ]
+  },
+  "verification": {
+    "independentReview": "reliability_safety_review: no remaining blocker or Critical/High finding; did not independently rerun Docker faults",
+    "addressedReviewIssues": ["Per-container cleanup errors cannot skip other owned containers", "Failure retains stopped containers and volume", "Exact image/identity/labels/normalized mount and privilege checks", "Semantic result and cleanup required before success", "Actual command mount/name contracts tested", "Other containers read only for mount fields, not Config.Env"],
+    "contractTests": { "passed": 19, "receipt": "9d0abe", "terminal": "f55454" },
+    "existingRuntimeRepositoryRegression": { "passed": 28, "executor": "concurrency_probe" },
+    "typecheck": { "exitCode": 0, "receipt": "8aedb1" },
+    "finalFocusedLintTypecheckAndDiff": { "exitCode": 0, "receipt": "aded86", "session": 77312 },
+    "finalBothProbeBundleByteMatch": { "receipt": "c6cd63", "matchedExecuted": true },
+    "intermediateChecks": ["dd1d73: transient SQL value type error during concurrent editing, fixed before Linux run", "363a45: focused lint found assertion/type-comment issues, corrected without product behavior change"]
+  },
+  "unchangedBusinessState": {
+    "receipt": "011496", "serviceReceipt": "6b8a7e",
+    "containerId": "27cefe76864c80ec2fdcd4741633b1e29df7302b270457da6373eb59b4441b5b",
+    "startedAt": "2026-09-09T02:20:25.294432257Z", "restartCount": 0, "status": "running",
+    "workItemId": "WI-5C68D17B361E",
+    "attemptStates": ["needs_configuration", "needs_configuration", "failed", "failed"],
+    "allResultShaNull": true, "candidateReviewCount": 0, "unsettledOriginalExecutionSessions": 0,
+    "events": 15, "outbox": { "sent": 48, "superseded": 18 }, "ownerCount": 1,
+    "quickCheck": "ok", "foreignKeyViolations": 0, "fifthAttemptStarted": false,
+    "cleanupReadReceipt": "ce923b", "remainingProbeContainersAndVolumes": 0
+  },
+  "remaining": ["Original business code delivery and development/Verifier/Meta evidence", "Complete real DingTalk C2-C6 with distinct participants", "Real @/non-@/quoted-reply reachability and platform replay/ACK", "Automatic interrupted real-model-task continuation is not covered", "Owner final personal acceptance"]
+}
