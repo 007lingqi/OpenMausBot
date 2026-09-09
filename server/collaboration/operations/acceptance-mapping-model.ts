@@ -25,11 +25,11 @@ export function configuredAcceptanceMapping(environment: NodeJS.ProcessEnv, depe
     return {model,endpoint,file:resolve(file),transport:"responses" as const};
   });
   const contexts=settings.map(setting => new ResponsesNaturalIntakeModel({model:setting.model,endpoint:setting.endpoint,
-    transport:setting.transport,reasoningEffort:setting.reasoningEffort,
+    transport:setting.transport,reasoningEffort:setting.reasoningEffort,timeoutMs:300_000,
     allowInsecureLoopback, fetch:dependencies.fetch, credential:setting.file === undefined ? undefined : () => {
       const raw=readSecureCredentialFile(setting.file!);
       try { return raw.toString("utf8").trim(); } finally { raw.fill(0); }
     } }));
   const policyId=`mapping-v1:${createHash("sha256").update(JSON.stringify({revision,settings,allowInsecureLoopback,protocol:1})).digest("hex")}`;
-  return {proposer:contexts[0],verifier:contexts[1],policyId};
+  return {proposer:contexts[0],verifier:contexts[1],policyId,timeoutMs:600_000};
 }

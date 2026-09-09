@@ -27,6 +27,69 @@ it("constructs independent stateless contexts without reading credentials", () =
   const config = configuredAcceptanceMapping(environment())!;
   expect(config.proposer).not.toBe(config.verifier);
   expect(config.policyId).toMatch(/^mapping-v1:[a-f0-9]{64}$/);
+  expect(config.policyId).toBe("mapping-v1:d6e222e468315e519c88a028491e4cf2eac5cfaf2187f32ba17e2e4182356f21");
+});
+it.each(["responses", "opencodex_local"] as const)("gives only the configured %s mapping contexts 300-second calls and a 600-second total", async transport => {
+  const root = mkdtempSync(join(tmpdir(), "omb-mapping-timeout-")); scratch.push(root);
+  const file = join(root, "credential"); writeFileSync(file, "fixture-key", { mode: 0o600 });
+  const env: NodeJS.ProcessEnv = environment(file);
+  if (transport === "opencodex_local") for (const role of ["PROPOSER", "VERIFIER"]) {
+    env[`OMB_ACCEPTANCE_MAPPING_${role}_TRANSPORT`] = transport;
+    env[`OMB_ACCEPTANCE_MAPPING_${role}_ENDPOINT`] = "http://127.0.0.1:10100/v1/responses";
+    env[`OMB_ACCEPTANCE_MAPPING_${role}_CREDENTIAL_FILE`] = "";
+  }
+  vi.useFakeTimers();
+  const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(delay => {
+    const controller = new AbortController(); setTimeout(() => controller.abort(), delay); return controller.signal;
+  });
+  const controller = new AbortController(), fetcher = vi.fn<typeof fetch>(() => new Promise(() => {}));
+  try {
+    const config = configuredAcceptanceMapping(env, { fetch: fetcher })!;
+    const pending = Promise.all([config.proposer, config.verifier].map(model => model.complete({ ...input, signal: controller.signal })
+      .then(value => ({ value }), error => ({ error }))));
+    await vi.advanceTimersByTimeAsync(299_999);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    for (const [, init] of fetcher.mock.calls) expect(init?.signal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await pending).toEqual([{ error: new Error("natural_model_transport_unavailable") }, { error: new Error("natural_model_transport_unavailable") }]);
+    expect(timeout.mock.calls).toEqual([[300_000], [300_000]]);
+    expect(config.timeoutMs).toBe(600_000);
+  } finally { controller.abort(); timeout.mockRestore(); vi.clearAllTimers(); vi.useRealTimers(); }
+});
+
+it.each([55_000, 250_000])("completes two %i ms phases through the configured mapping adapter without local budget conflicts", async stageMs => {
+  const root = mkdtempSync(join(tmpdir(), "omb-mapping-two-phase-budget-")); scratch.push(root);
+  const file = join(root, "credential"); writeFileSync(file, "fixture-key", { mode: 0o600 });
+  const store = openCollaborationLedger(root); store.close(); const db = new DatabaseSync(store.filePath);
+  const condition = { description: "保存成功", observation: "保存后显示 after" };
+  const request: MappingRequest = { candidateSha: "a".repeat(40), specHash: "b".repeat(64), conditions: [condition],
+    sources: [{ commandId: "cases", file: "case.test.mjs", blobSha: "c".repeat(40), text: "test('保存',()=>{assert.equal(save(),'after');});" }] };
+  const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
+    const body = JSON.parse(String(init?.body)), supplied = JSON.parse(body.input[0].content[0].text);
+    await new Promise(resolve => setTimeout(resolve, stageMs));
+    const output = supplied.proposal
+      ? { version: 1, requestHash: supplied.requestHash, proposalHash: supplied.proposalHash,
+        findings: [{ conditionHash: acceptanceConditionHash(condition), state: "covered", reason: "合成复核仅验证预算与原文传递" }] }
+      : { version: 2, requestHash: supplied.requestHash, bindings: [{ conditionHash: acceptanceConditionHash(condition),
+        commandId: "cases", file: "case.test.mjs", testName: "保存", startLine: 1, endLine: 1, rationale: "核对保存后的实际值" }] };
+    return new Response(JSON.stringify({ status: "completed", output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify(output) }] }] }));
+  });
+  vi.useFakeTimers();
+  const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(delay => {
+    const controller = new AbortController(); setTimeout(() => controller.abort(), delay); return controller.signal;
+  });
+  try {
+    const config = configuredAcceptanceMapping(environment(file), { fetch: fetcher })!;
+    const pending = new AcceptanceMappingCoordinator(db, config).map(request, 1000);
+    await vi.advanceTimersByTimeAsync(stageMs * 2);
+    const result = await pending;
+    expect(result.status).toBe("approved");
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(timeout.mock.calls).toEqual([[300_000], [300_000]]);
+    expect(config.timeoutMs).toBe(600_000);
+    expect(readApprovedAcceptanceMapping(db, { requestHash: result.requestHash, policyId: config.policyId,
+      candidateSha: request.candidateSha, specHash: request.specHash, conditions: request.conditions })).toEqual(result.contracts);
+  } finally { timeout.mockRestore(); vi.clearAllTimers(); vi.useRealTimers(); db.close(); }
 });
 it("invalidates policy identity when either model endpoint, name, credential reference or revision changes", () => {
   const env = environment(); const base = configuredAcceptanceMapping(env)!.policyId;

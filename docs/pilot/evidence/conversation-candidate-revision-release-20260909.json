@@ -1,0 +1,118 @@
+{
+  "status": "local_service_and_page_live_business_verification_timeout",
+  "sourceRevision": "7f63c845aec7e399501a8801efcc8074e03d851f",
+  "serviceImage": "sha256:4e202887c7def7aafed0d2de3196bb88fe263a5844cc01788c952bee615c7b02",
+  "commandImage": "sha256:e61663413bc8df5820dbc76f4d4b8f079e58ed6d20638fc54a938f0c9084648b",
+  "containerId": "0142c193716c802118231c6c5bcff843764adc0b3f667f27084bcff4b377157b",
+  "startedAt": "2026-09-09T09:32:06.610655833Z",
+  "model": { "provider": "host_OpenCodex", "model": "gpt-6-astra", "reasoning": "medium", "newCredentials": false },
+  "regression": {
+    "session": 20930,
+    "exitCode": 0,
+    "mainPassed": 4506,
+    "mainSkipped": 18,
+    "brokerPassed": 7,
+    "nodeSuitesPackagedHeadlessAndTypecheckPassed": true,
+    "changedLineLintDiagnostics": 0,
+    "existingLintDiagnostics": 305,
+    "initialFailedSession": { "id": 44851, "exitCode": 1, "failed": 8, "passed": 4497, "cause": "historical_schema_downgrade_fixtures_not_adapted_to_schema40_quiescence" }
+  },
+  "build": { "receipt": "58457c", "sixBundlesMatched": true, "readableUids": [501, 10001], "healthSchema": 40 },
+  "independentReview": {
+    "sourcePassed": [113, 46, 3],
+    "initialReleaseContractPassed": 34,
+    "dispatchProofFollowupPassed": 17,
+    "historicalFixtureOracleChangesReviewed": true,
+    "futureScriptSuggestion": "A hypothetical pre-existing offline-after-migration directory is not explicitly rejected before cp. Current activation was a first run, whole database cmp and all prior row fingerprints matched. Do not rerun the successful one-shot script; add an absent-directory guard in any future release kit."
+  },
+  "dockerPreflight": {
+    "receipt": "ce9189",
+    "freshWorktrees": 2,
+    "independentCommandContainers": 2,
+    "proofs": 2,
+    "emptySettlements": 2,
+    "ignoredOutputIsolated": true,
+    "cleanupConfirmed": true,
+    "syntheticLedgerAndMapping": true,
+    "realModelCalls": 0,
+    "realGroupMessages": 0
+  },
+  "privateRehearsal": {
+    "receipts": ["e71d6f", "875b32", "0fcede", "bdd3fe"],
+    "fromSchema": 39,
+    "toSchema": 40,
+    "oldTables": 78,
+    "oldBuildRejectedSchema40": true,
+    "requestDuplicateIdempotent": true,
+    "originalHistoryAndDispatchRowsUnchanged": true,
+    "liveDatabaseChanged": false,
+    "initialSetupFailures": "Uploaded private program/receipt artifacts retained uid501, inaccessible to cap-dropped root; exact transferred artifact ownership corrected to uid0 without changing credential files. Successful migration stages were not replayed; explicit resume-request checked their existing proofs."
+  },
+  "activation": {
+    "receipt": "e5d538",
+    "exitCode": 0,
+    "activationScriptSha256": "8d2d24f4af5e3ae6c0330ae918b93b826c29a1b6e287e781f45ca5f2a6ca4622",
+    "doubleIdleGate": true,
+    "oldWritersStoppedBeforeMigration": true,
+    "freshOfflineBackup": true,
+    "oldTables": 78,
+    "oldRows": 481,
+    "oldRowsAndSchemaPreserved": true,
+    "registeredRevisionBeforeRuntimeStart": true,
+    "onlyFourImagePinsChanged": true,
+    "schema": 40,
+    "systemdActiveAndEnabled": true,
+    "health": "healthy",
+    "restarts": 0,
+    "rollbackOrOldCleanupRun": false
+  },
+  "businessRevision": {
+    "workItemId": "WI-5C68D17B361E",
+    "workItemVersion": 3,
+    "snapshotRevision": 4,
+    "planRevision": 2,
+    "parentRunId": "c5501166-0cf8-4374-a992-308cc51b4b2f",
+    "parentSha": "c31eb8f811acc600ab8ba63b544bcddbc138fd83",
+    "baseSha": "0837a3fc6f02be0c6b067f63749f19d8d7104154",
+    "requestId": "local-empty-render-20260909",
+    "requestBytes": 5679,
+    "attempt": 2,
+    "runId": "dcf95421-10c2-4d49-b32d-60fd4ad764fd",
+    "stateAt091036Z": "running",
+    "candidateSha": "33421b672608dc8e47be4d6b833c98f3c37543c6",
+    "currentState": "succeeded",
+    "selfTest": { "commandId": "pilot", "exitCode": 0, "assertionsPassed": 13 },
+    "verifier": [
+      { "attempt": 1, "status": "failed", "reason": "acceptance_git_scope_incomplete", "failureNotice": "sent" },
+      { "attempt": 2, "status": "failed", "reason": "acceptance_mapping_timeout", "stage": "review_call", "failureNotice": "sent" }
+    ],
+    "completed": false
+  },
+  "policyCorrection": {
+    "receipt": "75dbee", "exitCode": 0, "testsPassed": 24,
+    "onlyAddedPath": "tests/empty-render.test.mjs",
+    "specUnchanged": true, "executionAttemptsUnchanged": true,
+    "policyRuntimeAndVerificationContractHashesChanged": true,
+    "historicalRecordsPreserved": true,
+    "releaseDirectory": "/var/lib/openmausbot-collaboration-pilot/releases/candidate-revision-policy-20260909"
+  },
+  "localPage": {
+    "url": "http://127.0.0.1:3100", "candidateSha": "33421b672608dc8e47be4d6b833c98f3c37543c6",
+    "sourceFilesVerifiedBeforeAndAfter": 37, "sourceAndSsrTests": 13, "buildExitCode": 0, "renderedArtifactTests": 2,
+    "defaultSsrHtmlSha256": "34710155aa2b220ec24058b0361c26f25b98df9c85f4f71f26ba6939c0f19603",
+    "dependencyCopyFilesMatched": 20939, "dependenciesDownloaded": false,
+    "activationReceipt": "1fcedc", "httpStatus": 200,
+    "browserChecks": ["default_six_rows", "P0_three_rows", "ready_and_P0_one_row", "search_no_match_message", "restore_six_rows"],
+    "initialBootstrapExitCode": 5,
+    "bootstrapRecovery": "After checking the old label and listener were absent, bootstrap alone succeeded; no repeated bootout or unknown process kill."
+  },
+  "deadlineDiagnostic": {
+    "session": 31283, "receipt": "e8f0a0", "diagnosticOnly": true,
+    "originalLedgerUnchanged": true, "businessAttemptWritten": false, "groupMessageSent": false,
+    "originalMappingElapsedMs": 89453,
+    "diagnosticProposalElapsedMs": 59637, "diagnosticError": "natural_model_transport_unavailable",
+    "limitsObservedMs": { "adapterCall": 60000, "mappingTotal": 90000, "mappingClaim": 120000, "gatewayIdle": 60000, "gatewayTotal": 900000 },
+    "specificNetworkRootCauseKnown": false
+  },
+  "scope": "Only current local Colima/Linux non-production service and local preview. No push, default-branch merge, public production deployment, Owner/credential changes, other containers or user outputs deletion. Real multi-person scenarios and final personal Owner acceptance remain unverified."
+}

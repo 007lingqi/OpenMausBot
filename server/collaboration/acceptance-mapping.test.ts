@@ -37,6 +37,126 @@ function models(options: { reject?: boolean; malformed?: boolean } = {}) {
 function ledger() { const root = mkdtempSync(join(tmpdir(), "omb-mapping-")); roots.push(root); const store = openCollaborationLedger(root); store.close(); const database = new DatabaseSync(store.filePath); database.exec("PRAGMA foreign_keys=ON"); resources.push(database); return { database, filePath: store.filePath }; }
 
 describe("source-grounded acceptance mapping", () => {
+  it.each([55_000, 250_000])("lets two %i ms mapping stages finish within a trusted 600-second total budget", async stageMs => {
+    const store = ledger(), original = models();
+    const model = { ...original, timeoutMs: 600_000 };
+    for (const role of ["proposer", "verifier"] as const) {
+      const complete = model[role].complete.bind(model[role]);
+      model[role].complete = async input => {
+        await new Promise(resolve => setTimeout(resolve, stageMs));
+        return complete(input);
+      };
+    }
+    vi.useFakeTimers();
+    try {
+      const pending = new AcceptanceMappingCoordinator(store.database, model).map(request, 1000);
+      const settled = vi.fn(); void pending.then(settled, settled);
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect(settled).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(stageMs * 2 - 90_000);
+      const result = await pending;
+      expect(result.status).toBe("approved");
+      expect(model.calls).toHaveLength(2);
+      expect(store.database.prepare("SELECT count(*) AS n FROM collaboration_mapping_all_results").get()).toEqual({ n: 1 });
+      const saved = z.object({ request_json: z.string() }).parse(store.database.prepare("SELECT request_json FROM collaboration_mapping_all_attempts").get());
+      expect(JSON.parse(saved.request_json)).toEqual({ policyId: model.policyId, request });
+      expect(result.requestHash).toBe(mappingRequestHash(request));
+    } finally { vi.clearAllTimers(); vi.useRealTimers(); }
+  });
+
+  it.each(["proposer", "verifier"] as const)("aborts a hanging %s exactly at the trusted 600-second total deadline", async role => {
+    const store = ledger(), model = { ...models(), timeoutMs: 600_000 };
+    let captured: AbortSignal | undefined;
+    model[role].complete = input => { captured = input.signal; return new Promise(() => {}); };
+    vi.useFakeTimers(); vi.setSystemTime(1000);
+    try {
+      const pending = new AcceptanceMappingCoordinator(store.database, model).map(request, 1000);
+      const settled = vi.fn(); void pending.then(settled, settled);
+      await vi.advanceTimersByTimeAsync(599_999);
+      expect(settled).not.toHaveBeenCalled();
+      expect(captured?.aborted).toBe(false);
+      expect(store.database.prepare("SELECT count(*) AS n FROM collaboration_mapping_all_results").get()).toEqual({ n: 0 });
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await pending).toMatchObject({ status: "failed", failureReason: "timeout",
+        failureStage: role === "proposer" ? "proposal_call" : "review_call" });
+      expect(captured?.aborted).toBe(true);
+      expect(store.database.prepare("SELECT attempt,created_at FROM collaboration_mapping_all_results").all()).toEqual([{ attempt: 1, created_at: 601_000 }]);
+    } finally { vi.clearAllTimers(); vi.useRealTimers(); }
+  });
+
+  it("keeps the claim pending through 629999 ms and fences the old result after a claim at 630000 ms", async () => {
+    const store = ledger(), old = { ...models(), timeoutMs: 600_000 }, fresh = { ...models(), timeoutMs: 600_000 };
+    let release!: () => void;
+    old.proposer.complete = () => new Promise(resolve => { release = () => resolve(proposal()); });
+    const controller = new AbortController();
+    const first = new AcceptanceMappingCoordinator(store.database, old).map(request, 1000, controller.signal);
+    const outcome = first.catch(() => undefined);
+    try {
+      expect((await new AcceptanceMappingCoordinator(store.database, fresh).map(request, 630_999)).status).toBe("pending");
+      expect(fresh.calls).toHaveLength(0);
+      expect(store.database.prepare("SELECT count(*) AS n FROM collaboration_mapping_all_attempts").get()).toEqual({ n: 1 });
+      expect((await new AcceptanceMappingCoordinator(store.database, fresh).map(request, 631_000)).status).toBe("approved");
+      release();
+      expect((await first).status).toBe("pending");
+      expect(store.database.prepare("SELECT attempt FROM collaboration_mapping_all_attempts ORDER BY attempt").all()).toEqual([{ attempt: 1 }, { attempt: 2 }]);
+      expect(store.database.prepare("SELECT attempt FROM collaboration_mapping_all_results").all()).toEqual([{ attempt: 2 }]);
+    } finally { controller.abort(); release(); await outcome; }
+  });
+
+  it.each([
+    { timeoutMs: undefined, elapsed: 119_999, status: "approved" },
+    { timeoutMs: undefined, elapsed: 120_000, status: "pending" },
+    { timeoutMs: undefined, elapsed: 120_001, status: "pending" },
+    { timeoutMs: 600_000, elapsed: 629_999, status: "approved" },
+    { timeoutMs: 600_000, elapsed: 630_000, status: "pending" },
+    { timeoutMs: 600_000, elapsed: 630_001, status: "pending" },
+  ])("fences a delayed event-loop result at elapsed $elapsed with trusted timeout $timeoutMs", async ({ timeoutMs, elapsed, status }) => {
+    const store = ledger(), model = { ...models(), timeoutMs };
+    const complete = model.verifier.complete.bind(model.verifier);
+    let release!: () => void;
+    model.verifier.complete = async input => {
+      const reviewed = await complete(input);
+      return new Promise(resolve => { release = () => resolve(reviewed); });
+    };
+    vi.useFakeTimers(); vi.setSystemTime(1000);
+    try {
+      const pending = new AcceptanceMappingCoordinator(store.database, model).map(request, 1000);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(release).toBeTypeOf("function");
+      // Simulate suspension: wall time advances before either queued result/timeout callback runs.
+      vi.setSystemTime(1000 + elapsed);
+      release();
+      expect((await pending).status).toBe(status);
+      expect(store.database.prepare("SELECT count(*) AS n FROM collaboration_mapping_all_results").get()).toEqual({ n: status === "approved" ? 1 : 0 });
+      expect(store.database.prepare("SELECT count(*) AS n FROM collaboration_mapping_all_attempts").get()).toEqual({ n: 1 });
+    } finally { vi.clearAllTimers(); vi.useRealTimers(); }
+  });
+
+  it.each([0, -1, 0.5, Number.NaN, Number.POSITIVE_INFINITY, 600_001, Number.MAX_SAFE_INTEGER + 1, "600000", null])(
+    "rejects an invalid trusted mapping budget before reserving an attempt: %s", timeoutMs => {
+      // SAFETY: Malformed test-only budgets bypass TypeScript to exercise runtime rejection before durable writes.
+      const store = ledger(), model = { ...models(), timeoutMs: timeoutMs as number };
+      expect(() => new AcceptanceMappingCoordinator(store.database, model)).toThrow("acceptance_mapping_timeout_invalid");
+      expect(model.calls).toHaveLength(0);
+      expect(store.database.prepare("SELECT count(*) AS n FROM collaboration_mapping_all_attempts").get()).toEqual({ n: 0 });
+    });
+
+  it("accepts the minimum 1 ms trusted budget but never a timeout field inside request data", async () => {
+    const store = ledger(), model = { ...models(), timeoutMs: 1 };
+    const coordinator = new AcceptanceMappingCoordinator(store.database, model);
+    const untrusted = { ...request, timeoutMs: 600_000 };
+    await expect(coordinator.map(untrusted, 1000)).rejects.toThrow();
+    expect(model.calls).toHaveLength(0);
+    model.proposer.complete = () => new Promise(() => {});
+    vi.useFakeTimers();
+    try {
+      const pending = coordinator.map(request, 1000);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await pending).toMatchObject({ status: "failed", failureReason: "timeout", failureStage: "proposal_call" });
+      expect(store.database.prepare("SELECT count(*) AS n FROM collaboration_mapping_all_attempts").get()).toEqual({ n: 1 });
+    } finally { vi.clearAllTimers(); vi.useRealTimers(); }
+  });
+
   it("constructs exact multiline quotes from an explicit selector and trusted numbered sanitized sources before independent review", async () => {
     const sourceLines = ['const password = "fixture-value";', "test('保存', () => {", "  const actual = save();", "", "  assert.equal(actual, 'after');", "});", ""];
     const input = { ...request, sources: [{ ...request.sources[0], text: sourceLines.join("\n") }] };
@@ -168,13 +288,16 @@ describe("source-grounded acceptance mapping", () => {
     const store = ledger(), original = models();
     const result = await new AcceptanceMappingCoordinator(store.database, original).map(request, 1000);
     expect(result.status).toBe("approved");
+    const history = () => store.database.prepare("SELECT a.*,r.receipt_json FROM collaboration_mapping_all_attempts a LEFT JOIN collaboration_mapping_all_results r USING(request_key,attempt)").all();
+    const before = history();
     const complete = vi.fn<NaturalIntakeModelPort["complete"]>(async () => { throw new Error("must_not_call_model"); });
     const validateInput = vi.fn(() => { throw new Error("natural_model_input_limit"); });
-    const current = { ...original, proposer: { complete, validateInput } };
+    const current = { ...original, timeoutMs: 600_000, proposer: { complete, validateInput } };
     expect(await new AcceptanceMappingCoordinator(store.database, current).map(request, 2000)).toEqual(result);
     expect(validateInput).not.toHaveBeenCalled();
     expect(complete).not.toHaveBeenCalled();
     expect(store.database.prepare("SELECT count(*) AS n FROM collaboration_mapping_all_attempts").get()).toEqual({ n: 1 });
+    expect(history()).toEqual(before);
     expect(readApprovedAcceptanceMapping(store.database, { requestHash: result.requestHash, policyId: current.policyId,
       candidateSha: request.candidateSha, specHash: request.specHash, conditions: request.conditions })).toEqual(result.contracts);
   });
@@ -371,8 +494,10 @@ describe("source-grounded acceptance mapping", () => {
       candidateSha: input.candidateSha, specHash: input.specHash, conditions: input.conditions })).toEqual(result.contracts);
   });
 
-  it.each(["proposer", "verifier"] as const)("cancels a waiting %s without writing a late receipt or starting another model", async stage => {
-    const store = ledger(); const model = models(); const controller = new AbortController();
+  it.each([
+    ["proposer", undefined], ["verifier", undefined], ["proposer", 600_000], ["verifier", 600_000],
+  ] as const)("cancels a waiting %s with trusted budget %s without writing a late receipt or starting another model", async (stage, timeoutMs) => {
+    const store = ledger(); const model = { ...models(), timeoutMs }; const controller = new AbortController();
     let release!: (value: unknown) => void;
     let captured: AbortSignal | undefined;
     const original = model[stage].complete.bind(model[stage]);
@@ -457,6 +582,15 @@ describe("source-grounded acceptance mapping", () => {
     for (let i = 0; i < 3; i++) await new AcceptanceMappingCoordinator(store.database, models({ malformed: true })).map(request, 1000 + i * 200000);
     return store;
   }
+  it("does not refund exhausted legacy attempts or change their receipts when only the trusted budget grows", async () => {
+    const store = await exhausted(), model = { ...models(), timeoutMs: 600_000 };
+    const history = () => store.database.prepare("SELECT a.*,r.receipt_json FROM collaboration_mapping_all_attempts a LEFT JOIN collaboration_mapping_all_results r USING(request_key,attempt) ORDER BY a.attempt").all();
+    const before = history();
+    expect(await new AcceptanceMappingCoordinator(store.database, model).map(request, 700_000)).toMatchObject({ status: "limit", failureReason: "proposal_schema" });
+    expect(model.calls).toHaveLength(0);
+    expect(history()).toEqual(before);
+    expect(before).toHaveLength(3);
+  });
   it("records a trusted one-time fourth-attempt authorization before I/O without changing historical receipts", async () => {
     const store = await exhausted(), model = models();
     const history = () => store.database.prepare("SELECT a.*,r.receipt_json FROM collaboration_acceptance_mapping_attempts a LEFT JOIN collaboration_acceptance_mapping_results r USING(request_key,attempt) WHERE a.attempt<=3 ORDER BY a.attempt").all();

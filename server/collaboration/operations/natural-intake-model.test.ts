@@ -10,6 +10,78 @@ function completed(value: unknown) { return new Response(JSON.stringify({ status
 ] }), { status: 200 }); }
 
 describe("tool-free Responses natural intake adapter", () => {
+  it.each([
+    { timeoutMs: undefined, deadline: 60_000 },
+    { timeoutMs: 1, deadline: 1 },
+    { timeoutMs: 300_000, deadline: 300_000 },
+  ])("bounds a hanging transport at the trusted constructor deadline $deadline, not message fields", async ({ timeoutMs, deadline }) => {
+    vi.useFakeTimers();
+    // Native AbortSignal.timeout uses an internal clock; replace only that clock for deterministic boundary checks.
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(delay => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), delay);
+      return controller.signal;
+    });
+    const controller = new AbortController();
+    const fetcher = vi.fn<typeof fetch>(() => new Promise(() => {}));
+    const options = { endpoint: "https://model.example.invalid/v1/responses", model: "fixed",
+      credential: () => "fixture-key", fetch: fetcher, timeoutMs };
+    try {
+      const model = new ResponsesNaturalIntakeModel(options);
+      const supplied = { ...input(), signal: controller.signal, timeoutMs: 9_000_000,
+        user: JSON.stringify({ text: "等待结果", timeoutMs: 9_000_000 }) };
+      const pending = model.complete(supplied);
+      const settled = vi.fn();
+      void pending.then(settled, settled);
+      const outcome = pending.then(value => ({ value }), error => ({ error }));
+      await vi.advanceTimersByTimeAsync(deadline - 1);
+      expect(settled).not.toHaveBeenCalled();
+      expect(fetcher.mock.calls[0][1]?.signal?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(fetcher.mock.calls[0][1]?.signal?.aborted).toBe(true);
+      expect(await outcome).toEqual({ error: new Error("natural_model_transport_unavailable") });
+      expect(timeout).toHaveBeenCalledWith(deadline);
+      expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body))).not.toHaveProperty("timeoutMs");
+    } finally { controller.abort(); timeout.mockRestore(); vi.clearAllTimers(); vi.useRealTimers(); }
+  });
+
+  it.each([0, -1, 0.5, Number.NaN, Number.POSITIVE_INFINITY, 300_001, Number.MAX_SAFE_INTEGER + 1, "300000", null])(
+    "rejects an invalid trusted transport timeout before credentials or I/O: %s", timeoutMs => {
+      const credential = vi.fn(() => "fixture-key"), fetcher = vi.fn<typeof fetch>();
+      // SAFETY: These malformed test-only options bypass TypeScript to prove rejection before credentials or I/O.
+      const options = { endpoint: "https://model.example.invalid/v1/responses", model: "fixed", credential, fetch: fetcher,
+        timeoutMs: timeoutMs as number };
+      expect(() => new ResponsesNaturalIntakeModel(options)).toThrow("natural_model_timeout_invalid");
+      expect(credential).not.toHaveBeenCalled();
+      expect(fetcher).not.toHaveBeenCalled();
+    });
+
+  it("keeps configured ordinary chat at 60 seconds despite timeout-like environment and message data", async () => {
+    vi.useFakeTimers();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(delay => {
+      const controller = new AbortController(); setTimeout(() => controller.abort(), delay); return controller.signal;
+    });
+    const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(() => new Promise(() => {}));
+    const controller = new AbortController();
+    try {
+      const interpreter = configuredNaturalIntake({ OMB_NATURAL_INTAKE_ENABLED: "1", OMB_NATURAL_INTAKE_MODEL: "fixed",
+        OMB_NATURAL_INTAKE_ENDPOINT: "http://127.0.0.1:10100/v1/responses", OMB_NATURAL_INTAKE_TRANSPORT: "opencodex_local",
+        OMB_NATURAL_INTAKE_TIMEOUT_MS: "300000", OMB_ACCEPTANCE_MAPPING_TIMEOUT_MS: "600000" })!;
+      const pending = interpreter.interpret({
+        event: { sourceEventId: "fixture-event", principalId: "fixture-person", text: "请把 timeoutMs 改为 9000000" },
+        snapshot: { workItemId: "WI-fixture", revision: 1, sourceWorkItemVersion: 1, goal: null, goalConfirmed: false,
+          repository: null, assumptions: [], acceptanceConditions: [], blockingAmbiguities: [], createdAt: 1000 },
+        history: [], questions: [], contextTruncated: false,
+      }, controller.signal).then(value => ({ value }), error => ({ error }));
+      await vi.advanceTimersByTimeAsync(59_999);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(fetcher.mock.calls[0][1]?.signal?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await pending).toEqual({ error: new Error("natural_model_transport_unavailable") });
+      expect(timeout.mock.calls).toEqual([[60_000]]);
+    } finally { controller.abort(); fetcher.mockRestore(); timeout.mockRestore(); vi.clearAllTimers(); vi.useRealTimers(); }
+  });
+
   it("preflights the exact serialized 128 KiB envelope without credentials or I/O and shares that boundary with complete", async () => {
     const credential = vi.fn(() => "fixture-key");
     const wire: string[] = [];

@@ -57,7 +57,9 @@ interface StoredProposal { proposal: unknown; selector?: unknown }
 function rejectedReviewDetails(review: Review): FailureDetails {
   return { failureReason: review.findings.some(f => f.state === "missing") ? "review_missing" : "review_uncertain", failureStage: "review_validation" };
 }
-export interface AcceptanceMappingModels { proposer: NaturalIntakeModelPort; verifier: NaturalIntakeModelPort; policyId: string }
+export interface AcceptanceMappingModels { proposer: NaturalIntakeModelPort; verifier: NaturalIntakeModelPort; policyId: string;
+  /** Trusted host budget; not part of a mapping request, policy identity, or receipt. */
+  timeoutMs?: number }
 const recoverySchema = z.object({ requestHash: digest, policyId: z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/u),
   afterAttempt: z.literal(3), referenceHash: digest }).strict();
 /** Trusted host/operator input, never a model/chat field or environment switch.
@@ -179,9 +181,14 @@ export function readApprovedAcceptanceMapping(db: DatabaseSync, expected: {
 export class AcceptanceMappingCoordinator {
   private readonly db: DatabaseSync;
   private readonly models: AcceptanceMappingModels;
+  private readonly timeoutMs: number;
+  private readonly claimMs: number;
   constructor(db: DatabaseSync, models: AcceptanceMappingModels) {
     this.db = db;
     this.models = models;
+    this.timeoutMs = models.timeoutMs === undefined ? 90_000 : models.timeoutMs;
+    if (!Number.isSafeInteger(this.timeoutMs) || this.timeoutMs <= 0 || this.timeoutMs > 600_000) throw new Error("acceptance_mapping_timeout_invalid");
+    this.claimMs = this.timeoutMs + 30_000;
     if (models.proposer === models.verifier) throw new Error("acceptance_mapping_independent_context_required");
     if (!/^[A-Za-z0-9._:-]{1,128}$/u.test(models.policyId)) throw new Error("acceptance_mapping_policy_id_required");
   }
@@ -221,7 +228,7 @@ export class AcceptanceMappingCoordinator {
         if (diagnostic.success) latestFailure = { failureReason: diagnostic.data.failureReason, failureStage: diagnostic.data.failureStage };
       }
     }
-    if (latest && !latest.receipt_json && latest.created_at + 120000 > now) return { status: "pending", requestHash };
+    if (latest && !latest.receipt_json && latest.created_at + this.claimMs > now) return { status: "pending", requestHash };
     if ((latest?.attempt ?? 0) >= 3 && !(recovery && latest?.attempt === 3)) return { status: "limit", requestHash, ...latestFailure };
     assertNotCancelled();
     // Only the selecting role needs numbering; omit duplicate source.text and preserve every original line.
@@ -263,7 +270,7 @@ export class AcceptanceMappingCoordinator {
         failureStage = "review_validation";
         const review = validateReview(reviewed, request, proposal);
         return { ...validated, review };
-      })(), cancelled, new Promise<never>((_, reject) => { timer = setTimeout(() => { timedOut = true; controller.abort(); reject(new Error("timeout")); }, 90000); })]);
+      })(), cancelled, new Promise<never>((_, reject) => { timer = setTimeout(() => { timedOut = true; controller.abort(); reject(new Error("timeout")); }, this.timeoutMs); })]);
       status = receipt.review!.findings.every(f => f.state === "covered") ? "approved" : "rejected";
       if (status === "rejected") receipt = { ...receipt, ...rejectedReviewDetails(receipt.review!) };
     } catch (error) {
@@ -274,7 +281,7 @@ export class AcceptanceMappingCoordinator {
     assertNotCancelled();
     assertLedgerArmed(this.db);
     const current = this.db.prepare("SELECT max(attempt) AS attempt FROM collaboration_mapping_all_attempts WHERE request_key=?").get(key) as {attempt: number};
-    if (current.attempt !== attempt || now + Date.now()-started >= now + 120000) return { status: "pending", requestHash };
+    if (current.attempt !== attempt || now + Date.now()-started >= now + this.claimMs) return { status: "pending", requestHash };
     this.db.prepare(`INSERT INTO ${attempt === 4 ? "collaboration_mapping_recovery_results" : "collaboration_acceptance_mapping_results"}(request_key,attempt,receipt_json,created_at) VALUES(?,?,?,?)`)
       .run(key, attempt, JSON.stringify(receipt), now + Date.now()-started);
     const result: MappingResult = { status, requestHash };

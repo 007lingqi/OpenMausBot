@@ -12,6 +12,8 @@ interface Options {
   reasoningEffort?: string;
   fetch?: typeof globalThis.fetch;
   allowInsecureLoopback?: boolean;
+  /** Trusted host budget, never read from a message or model input. */
+  timeoutMs?: number;
 }
 
 function endpoint(value: string, allowInsecureLoopback = false): string {
@@ -55,7 +57,10 @@ export class ResponsesNaturalIntakeModel implements NaturalIntakeModelPort {
   private readonly streaming: boolean;
   private readonly effort: string;
   private readonly fetcher: typeof globalThis.fetch;
+  private readonly timeoutMs: number;
   constructor(options: Options) {
+    this.timeoutMs = options.timeoutMs === undefined ? 60_000 : options.timeoutMs;
+    if (!Number.isSafeInteger(this.timeoutMs) || this.timeoutMs <= 0 || this.timeoutMs > 300_000) throw new Error("natural_model_timeout_invalid");
     if (options.transport && !["responses", "opencodex_local"].includes(options.transport)) throw new Error("natural_model_configuration_required");
     this.streaming = options.transport === "opencodex_local";
     this.effort = options.reasoningEffort ?? "medium";
@@ -94,7 +99,7 @@ export class ResponsesNaturalIntakeModel implements NaturalIntakeModelPort {
       if (!key || key.length > 16_384 || /[^\x21-\x7e]/u.test(key)) throw new Error("natural_model_credentials_unavailable");
       headers.Authorization = `Bearer ${key}`;
     }
-    const signal = AbortSignal.any([input.signal, AbortSignal.timeout(60_000)]);
+    const signal = AbortSignal.any([input.signal, AbortSignal.timeout(this.timeoutMs)]);
     let response: Response;
     try {
       response = await abortable(this.fetcher(this.url, { method: "POST", redirect: "error", headers, body, signal }), signal,

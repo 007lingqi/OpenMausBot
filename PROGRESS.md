@@ -1,5 +1,21 @@
 # Meta 协作实施进度
 
+## 当前现场：新版页面已本机上线，自动复核时限修复中（2026-09-09）
+
+- 时限修复六文件冻结，作者与非作者各165项通过；首轮整库唯一env-path初探失败后，未修改其源码/测试，专项及等价诊断通过。第二次完整发布链46620/d16b8d已终态0，含主集、broker、Node、打包/headless、typecheck/diff；下一步固定本地提交并构建/启用受测镜像。首次失败保留，不宣称已查明其原因。
+- 原事项 attempt2 已成功生成固定候选33421b672608dc8e47be4d6b833c98f3c37543c6，13项自测通过；原Spec4/plan2与0837完整基线、c31构建父保持。没有再次开发、清理历史或重发需求。
+- Verifier1因精确范围政策遗漏新增tests/empty-render.test.mjs拒绝，原条件与授权范围支持该文件；只追加这一精确路径，24项正负例通过，75dbee配置切换成功。服务当前0142c193…/4e202887…，09:32:06Z启动，schema40、healthy、零重启；配置切换改变policy/runtime/verification contract hash，旧结果与全run尝试编号保留，不声称有效分桶预算完全不变。
+- Verifier2在review_call被mapper共享90秒截止取消，失败通知已sent，无在途。只读诊断31283/e8f0a0另见proposal59.6秒transport_unavailable；真库不变、无业务attempt或群发。证据支持本地60/90秒预算冲突；新探针具体网络层原因未确定，不把扩大时限宣称网络已修好。正在单独修复mapping专用时限，保留普通聊天60秒、网关空闲限制、次数、身份和证据门禁。
+- 本机页面已切换到33421b6固定release，37源码文件前后哈希保持，13源码/SSR、构建、2产物渲染全部通过；独立依赖副本无下载。launchd切换首个bootstrap碰到旧服务退出窗口返回5，确认旧label和3100监听均已消失后只重做bootstrap成功，HTTP200。CUA刷新新页面后确认P0筛选、就绪交集、无匹配提示及恢复六项列表。仅本机页面上线，不倒填业务Meta完成。
+- 当前后续：完成时限修复的定向/独立/完整回归→新固定镜像受控切换→观察同一候选正常独立验证与实际结果送达。未完成真实多人等平台场景与Owner本人最终验收，Goal仍active。
+
+## 历史时点：补测修订版上线后原事项正在执行（2026-09-09）
+
+- 已提交7f63c845并完整回归；新镜像4e202887已实际上线，容器cb730bd3、09:05:54Z启动，schema40、healthy、systemd active/enabled、restarts0。服务/coordinator/provider同pin，command固定e616；宿主OpenCodex/gpt-6-astra/medium不变。本机页面3100仍c31，保持可访问。
+- e5d538：停旧写入者、双空闲检查、新停机备份、39→40副本和原库迁移通过，78旧表481行保留，完整性/FK通过。先登记原WI version3/Spec4/plan2固定revision再启动；原成功run和旧失败复核未改。
+- 正常attempt2 dcf95421已预留/启动，09:10:36Z仍running、未产出SHA；尚不能说自测/独立复核/结果送达完成。已成功activation不得重跑，CURRENT不恢复旧库，不清预算、不重发需求。后续只观察当前执行，有结果后按真实证据更新页面与交付。
+- 精确证据见docs/pilot/evidence/conversation-candidate-revision-release-20260909.json。全Goal仍缺真实多人等平台场景及Owner本人最终验收；不代签。下节为发布前经过。
+
 ## 正在推进：补测修订的执行入口与离线渲染可行性（2026-09-09）
 
 - 最终冻结回归20930已退出0（8e113d）：主4506通过/18跳过、broker7、Node各套、打包/headless烟测、typecheck/diff全通过；39个涉及文件新增行lint0，既有305条诊断未清理。七历史升级fixture非作者确认原证据/语义断言保持，未settled拒40与正规settle/release后升级均明确覆盖。开始固定commit和镜像，不再重复未变化测试。

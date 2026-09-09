@@ -1,5 +1,21 @@
 # Meta 协作验证记录
 
+## 2026-09-09 验收专用时限回归
+
+- 最终发布链46620/d16b8d终态exit0，完整pnpm test、pnpm typecheck、git diff --check均通过；env-path原失败用例此次1540ms通过，未改其实现、夹具或等待上限。broker7、Node各套、打包与headless启动检查全部执行，不以专项补跑代替本次完整链。
+- 六文件冻结快照27a5de6e84abcbb2f287dcf3a2dd69801552f979c38509f0dce5536ce601e2e8。作者165项定向与typecheck通过；非作者冻结后同4文件165项一次通过。新增行lint0，六文件原有30项诊断保留。默认预算、受信预算验证、两阶段55/250秒、600秒正常取消、630秒claim与晚结果、缓存/次数/取消均覆盖。
+- 首轮完整回归80485/d2c0eb：4546通过/18跳过/1失败，失败是未修改的server/env-path.test.ts初始异步shell探测在6秒内未返回rcOnlyBin；不能计整库通过。后续broker/Node/打包/typecheck由单独链继续，失败项正在独立定位，未发布本批。
+- 38134/8274e5后半完整链exit0：broker7、Node15+5+2+10、打包脱离node_modules/9代理路径、headless/模型通道合成启动及typecheck通过。原env-path文件38771单独13通过/7平台跳过；等价私有fixture65590初探1751ms/第二探1211ms均exit0且rescan同步保留缓存。原回归未保存进程错误/时序，本次未复现，不能确定归因为抖动或逻辑缺陷；没有修改env-path实现、测试或setup。第二次完整链46620进行中，不以专项替代发布回归。
+- 发布kit34项离线合同通过；启动后工作项仅观察、不审批，避免正常完成导致旧tuple误停。旧容器/空闲/三pin/备份/历史/一次性守卫保持；尚未构建或执行此kit。
+
+## 2026-09-09 真实候选、范围政策与本机页面切换
+
+- 真实execution attempt2 succeeded，新SHA33421b672608dc8e47be4d6b833c98f3c37543c6、自测pilot exit0/13passed。首次独立复核git_scope缺新增测试路径，24项配置正负例验证后仅加tests/empty-render.test.mjs；75dbee配置发布exit0，同源同镜像，历史保持、systemd active/enabled。
+- 新policy下Verifier2实际失败timeout/review_call、outbox sent；8f13dc只读观察确认technical/meta/completedMeta均false、unsettled空。当前容器0142c193716c802118231c6c5bcff843764adc0b3f667f27084bcff4b377157b，4e202887…镜像，09:32:06.610655833Z启动、RestartCount0。
+- 31283/e8f0a0只读内存Ledger诊断：原记录89453ms，诊断proposal59637ms报natural_model_transport_unavailable，尚未进review。原业务行指纹不变；不当作真实复核、业务尝试或网络根因确定证据。静态与非作者审查确认adapter单次60s、mapper两次共90s、claim120s、宿主网关idle60s/total15m；没有其他verification固定总期限。
+- 本机33421b6 release：37源文件Git blob与SHA前后相同，13源码/SSR＋构建＋2产物渲染通过；20,939依赖文件逐项匹配，独立副本。默认SSR HTML hash34710155aa2b220ec24058b0361c26f25b98df9c85f4f71f26ba6939c0f19603。首轮ESM临时目录问题仅修独占测试环境，源码未改。
+- 52a28b plist格式通过但bootstrap exit5；只读确认旧服务已退出且端口无监听后，1fcedc bootstrap成功、HTTP200。LaunchAgent只改两个固定release路径，仍127.0.0.1:3100。实际浏览器刷新后P0三项、就绪交集一项、搜索无匹配提示、清空筛选恢复六项均确认，未修改数据或形成业务批准。
+
 ## 2026-09-09 有界候选修订（最终回归进行中）
 
 - 最终全套20930退出0：主4506通过/18跳过，broker7通过，Node/打包/headless/模型通道合成冒烟及typecheck/diff均通过（终态8e113d）。全部39涉及文件新增行lint0，既有305条保留；首轮44851失败不覆盖。七fixture非作者只读复核确认旧语义断言保留、合法release/reacquire，未结清迁移拒绝和静止成功均覆盖。
