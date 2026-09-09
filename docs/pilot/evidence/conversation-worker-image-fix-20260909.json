@@ -177,7 +177,7 @@
     "runCount": 4,
     "dispatchCount": 4,
     "allAttemptsSettled": true,
-    "allRunsFailed": true,
+    "runStatuses": ["needs_configuration", "needs_configuration", "failed", "failed"],
     "allResultShasNull": true,
     "reviewsEmpty": true,
     "candidateStatus": "invalid",
