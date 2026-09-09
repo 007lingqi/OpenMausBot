@@ -6,7 +6,9 @@
 - 方案咨询冻结后作者 190 项及 typecheck 通过；独立最终四文件 176 项、diff 检查通过，三个 Medium 反例关闭。评估脚本区分 silent_preparation/replied:false，不把允许不发过程消息说成已送达。
 - `node scripts/collaboration-pilot/conversation-eval.ts --live --scenario advice-options-without-execution`：73895/e3af47 退出 0，两次 gpt-6-astra/medium 调用、两轮 offer_advice、每轮一条回复，来源指纹 d6406d1a84130efaa9adf96dad68c3c44b3dd95c7ee303f2cc749ba8ee5aedce 不变。人工读完整真实序列化结果：围绕后台建设给出三个方案，下一轮继续按轻量/标准运营/流程协作比较，没有固定回执、代码或完成宣称；0 Work Item、0 run、需求指纹不变、重复投递幂等。临时报告 omb-conversation-eval-vWzNdS/report.json；无钉钉 transport，不算真实群送达。
 - 首次尝试 tsx 入口因未安装而未启动评估；改用已有 Node 原生 TypeScript 支持，不安装依赖。完整回归 24996 因当前沙箱禁止 loopback listen 而有失败/跳过，5cb5c5 独立探针确认 EPERM；8b0ac8 主动中止 130，不计通过。已授权宿主权限重跑相同 `pnpm test && pnpm typecheck && git diff --check` 完整链 55729/7b7044 退出 0：主集 331 文件通过/1 跳过、4625 项通过/18 跳过，broker 7、Node 15/5/2/10、打包/headless 烟测及 typecheck/diff 全通过。未修改测试迁就限制，后续只有文档收尾不重复完整回归。
-- 本次专用发布 kit 47 项离线合同验证通过，尚未真实构建、激活或送达。保留新目录、一次性 guard、双 UID bundle 核对、停机完整备份、独立 WAL 副本 gate 和历史指纹约束；不迁移、不清历史、不重试业务。
+- 本次专用发布 kit 47 项离线合同验证通过。df171e82f6be9dcdef73e2bd0e39a88e6ba821ee 实际构建 46895/75dbec 退出 0，镜像 536e911bd165fa084885a2dfff02b2a435d448bb8a107a0d16054869c60e9c4c，六 bundle 在 UID501/10001 全部字节匹配，独立无网络/无业务数据挂载 health 通过。545ae3 发布配置只变三个镜像 pin，环境原样保留。
+- 64998/35c2d3 实际单次激活退出 0，包含 exact 旧身份/双空闲/排他门、完整停机备份与独立 WAL 副本校验、固定新镜像/源码/healthy/零重启、systemd active/enabled 和启动后原历史保持检查。schema40、不迁移/清理/业务重试。第一次启动工具请求自动审批超时，未创建进程；获准重试才执行。成功收据保留于 VM 新发布目录 activation-success.json。
+- 激活后的额外独立只读复查连续两次工具自动审批超时，均未执行；不将其列为通过，也不再重复。上述健康及历史结论来自成功激活脚本内的真实检查，不依赖该额外复查。新版本尚无本轮观察到的真实钉钉送达/平台业务响应或多人验收，不冒充完成。
 
 ## 2026-09-09 验收专用时限回归
 

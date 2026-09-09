@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "date": "2026-09-09",
+  "status": "implemented_verified_and_activated_locally",
+  "scope": {
+    "change": "Result-first natural conversation replies and read-only advice",
+    "localNonProductionOnly": true,
+    "productionDeployment": false,
+    "defaultBranchMerge": false,
+    "otherContainersChanged": false,
+    "ownerOrCredentialsChanged": false,
+    "businessRetry": false,
+    "wholeProductAcceptance": "not_evaluated"
+  },
+  "sourceRevision": "df171e82f6be9dcdef73e2bd0e39a88e6ba821ee",
+  "sourceFingerprint": "d6406d1a84130efaa9adf96dad68c3c44b3dd95c7ee303f2cc749ba8ee5aedce",
+  "behavior": {
+    "routineNaturalReceipts": "persisted_but_not_sent",
+    "planningAndReadyNotifications": "silent_for_verified_natural_origin",
+    "necessaryQuestionsFailuresApprovalsResults": "preserved",
+    "attemptedOrSentOutboxRows": "not_rewritten",
+    "advice": "source_bound_read_only_no_work_item_or_execution",
+    "numberedOptionSelection": "not_implemented_as_authorization"
+  },
+  "regression": {
+    "command": "pnpm test && pnpm typecheck && git diff --check",
+    "session": 55729,
+    "completionReceipt": "7b7044",
+    "exitCode": 0,
+    "mainPassed": 4625,
+    "mainSkipped": 18,
+    "brokerPassed": 7,
+    "nodeSuitesPassed": [15, 5, 2, 10],
+    "packagedAndHeadlessSmoke": "passed",
+    "typecheck": "passed",
+    "independentFocusedReviewPassed": 176,
+    "releaseKitContractsPassed": 47,
+    "earlierSandboxRun": {
+      "session": 24996,
+      "exitCode": 130,
+      "status": "interrupted_not_passed",
+      "reason": "Loopback listen denied with EPERM; host-permission rerun used unchanged tests"
+    }
+  },
+  "realModel": {
+    "model": "gpt-6-astra",
+    "reasoningEffort": "medium",
+    "transport": "opencodex_local",
+    "scenario": "advice-options-without-execution",
+    "session": 73895,
+    "completionReceipt": "e3af47",
+    "status": "checks_passed",
+    "calls": 2,
+    "sourceUnchanged": true,
+    "ledger": "isolated_synthetic",
+    "realDingTalk": false,
+    "newWorkItems": 0,
+    "runs": 0,
+    "requirementsUnchanged": true,
+    "replayIdempotent": true,
+    "actualSerializerUsed": true,
+    "turns": [
+      { "input": "我想增加一个后台管理，应该如何", "action": "offer_advice", "replyCount": 1 },
+      { "input": "你帮我思考下给我几个版本，我选择下", "action": "offer_advice", "replyCount": 1 }
+    ],
+    "naturalnessReview": "Read complete replies: relevant backend options and continued three-version comparison, concise tradeoffs, no fixed processing receipt or implementation claim"
+  },
+  "deployment": {
+    "dockerContext": "colima-openmausbot-pilot",
+    "service": "openmausbot-collaboration-pilot",
+    "previousImage": "sha256:a6ded47f6d17905b9da88cba004c3e10c7a30f2c655c565ab9c3d877134d353f",
+    "image": "sha256:536e911bd165fa084885a2dfff02b2a435d448bb8a107a0d16054869c60e9c4c",
+    "releaseDirectory": "/var/lib/openmausbot-collaboration-pilot/releases/conversation-result-first-20260909",
+    "buildReceipt": "75dbec",
+    "sixBundleByteChecks": "passed_for_uid_501_and_10001",
+    "isolatedImageHealth": "passed",
+    "configurationReceipt": "545ae3",
+    "configurationChange": "only_service_coordinator_provider_image_pins",
+    "activationSession": 64998,
+    "activationReceipt": "35c2d3",
+    "activationExitCode": 0,
+    "actualActivationAttempts": 1,
+    "schema": 40,
+    "migration": false,
+    "fullOfflineBackup": "preserved",
+    "priorHistoryPreserved": true,
+    "systemd": "active_enabled",
+    "healthAndExactNewIdentityChecksInsideActivation": "passed",
+    "restartCountInsideActivation": 0,
+    "additionalPostActivationRead": "not_executed_automatic_approval_review_timed_out_twice",
+    "newVersionRealGroupDelivery": "not_observed_in_this_change"
+  }
+}
