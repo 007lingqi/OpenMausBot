@@ -42,6 +42,8 @@ Docker daemon/cgroup v2 提供独立于候选进程的运行状态。可信 head
 
 headless现已支持显式`OMB_DOCKER_PROVIDER_ISOLATION=task_container`。它要求`OMB_DOCKER_PROVIDER_IMAGE`固定sha256、`OMB_PROVIDER_MODEL_SOCKET_DIRECTORY`为controller与daemon共同可见的原生绝对目录、既有relay UID/GID，以及Astra/medium和Provider UID10001；不接受自定义CLI/launcher或其他endpoint，不因配置失败回退。独立任务镜像不改既有`OMB_DOCKER_COMMAND_IMAGE`。
 
+发布时不能只更新服务镜像及`OMB_DOCKER_COORDINATOR_IMAGE`：任务镜像只取`OMB_DOCKER_PROVIDER_IMAGE`。使用`scripts/collaboration-pilot/release-image-contract.ts`的`pinReleaseImageContract`显式绑定三个预期digest，再以`assertReleaseImageContract`核对解析后的配置；provider可采用独立构建，不要求与服务全局相同。实际provider镜像内的worker/channel产物哈希也必须与本次受测产物一致。启用后核对运行服务的两项环境pin；验证真实任务时核对任务容器的Image，而不只看主服务健康。切provider前须确认没有旧未激活/未结算launch，不改写旧镜像绑定或签名。2026-09-09发现的漏更provider事故及验证边界见`docs/pilot/evidence/conversation-worker-image-fix-20260909.json`。
+
 `docker/compose.contained-provider.yaml`仅作为base+OpenCodex之后的显式overlay；实际Compose合并已确认保留原环境/挂载，仅为同一授权socket目录补充同路径只读别名。尚未在运行服务启用，不能将配置文件当作部署或恢复验收。
 
 必须先完成：固定任务镜像/entrypoint及headless装配；Provider只能读视图、无法读写真实候选/他人任务/凭据；模型前凭据入账；正常和失败建议；源漂移和脱敏文件写入拒绝；setsid/双重fork后代停止；控制进程强杀后独立核验与恢复；同仓库串行/不同仓库并发；真实Astra/medium建议→代码→双阶段测试→Meta→钉钉业务回复。维持真实材料来源、唯一Owner和失败预算。

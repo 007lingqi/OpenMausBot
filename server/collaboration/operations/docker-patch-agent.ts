@@ -450,9 +450,12 @@ export class CodexReadOnlyPatchProvider implements ReadOnlyPatchProvider {
         "-c", 'web_search="disabled"',
       ] : []),
     ];
+    let proposalFailure: ProviderFailure | CommandCleanupError | undefined;
     try {
       await this.runProcess(request.runId, args, prompt, request.signal, localCodexHome);
-      const raw = readFileSync(output);
+      let raw: Buffer;
+      try { raw = readFileSync(output); }
+      catch { throw new ProviderFailure("provider_output_invalid", "provider_patch_output_unreadable"); }
       if (raw.length < 2 || raw.length > 2 * 1024 * 1024) throw new ProviderFailure("provider_output_invalid", "provider_patch_output_size_invalid");
       let parsed: PatchProposal;
       try { parsed = JSON.parse(raw.toString("utf8")) as PatchProposal; }
@@ -461,19 +464,32 @@ export class CodexReadOnlyPatchProvider implements ReadOnlyPatchProvider {
         throw new ProviderFailure("provider_output_invalid", "provider_patch_output_invalid");
       }
       return { ...parsed, readOnlyEnforced: true };
+    } catch (error) {
+      if (error instanceof ProviderFailure || error instanceof CommandCleanupError) proposalFailure = error;
+      throw error;
     } finally {
       // Never remove state while a process may still be using it. Retain it for
       // independent recovery if cancellation failed or exit is unconfirmed.
+      if (proposalFailure instanceof CommandCleanupError) throw proposalFailure;
       if(this.active.has(request.runId))throw new CommandCleanupError(new Error('provider_exit_unconfirmed'));
-      if (localCodexHome && this.providerUid !== undefined && this.providerGid !== undefined) {
-        await clearProviderOwnedHome({ home: localCodexHome, uid: this.providerUid, gid: this.providerGid,
-          ...(this.launcher ? { launcher: this.launcher } : {}) });
-        // Its supervisor-owned parent is not group-writable, so the provider
-        // cannot replace this entry. Reclaim only the emptied root for removal.
-        chownSync(localCodexHome, typeof process.getuid === "function" ? process.getuid() : 0,
-          typeof process.getgid === "function" ? process.getgid() : 0);
+      try {
+        if (localCodexHome && this.providerUid !== undefined && this.providerGid !== undefined) {
+          await clearProviderOwnedHome({ home: localCodexHome, uid: this.providerUid, gid: this.providerGid,
+            ...(this.launcher ? { launcher: this.launcher } : {}) });
+          // Its supervisor-owned parent is not group-writable, so the provider
+          // cannot replace this entry. Reclaim only the emptied root for removal.
+          chownSync(localCodexHome, typeof process.getuid === "function" ? process.getuid() : 0,
+            typeof process.getgid === "function" ? process.getgid() : 0);
+        }
+        rmSync(directory, { recursive: true, force: true });
+      } catch {
+        // Cleanup may reject a proposal, but must not erase a classified
+        // execution failure or leak raw helper stderr / filesystem paths.
+        if (proposalFailure instanceof ProviderFailure) {
+          throw new ProviderFailure(proposalFailure.diagnosticCode, proposalFailure.diagnosticCode, 'provider_cleanup_failed');
+        }
+        throw new ProviderFailure('provider_cleanup_failed');
       }
-      rmSync(directory, { recursive: true, force: true });
     }
   }
 

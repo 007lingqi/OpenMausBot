@@ -1,13 +1,24 @@
 # Meta 协作验证记录
 
-## 2026-09-09 原事项一次性本机恢复
+## 2026-09-09 执行器旧镜像及失败保留修复
+
+- 569490实际provider pin/任务Image仍a4cab8c；0da080直接读取其relay bundle确认默认60000ms硬截止，无idle进展控制。与service64c2e203不一致；旧worker缺少新失败分类。发布缺陷已定位，第四次请求级根因仍不能回溯。
+- 清理异常保留主/次分类：3组合先红后绿；输出读取ENOENT先红后绿。实际假CLI→provider→supervisor→worker→钉钉序列化覆盖成功/失败清理异常、不写候选、不泄露原stderr/路径；50项及typecheck通过。主线程cbd362确认完整session39151终态0，含打包及headless烟测。
+- 55726d真实Linux/setpriv/UID10001合成清理通过；fixture曾因自身exec挂载缺失失败并保留，不计产品失败。167d93固定原输入只读模型诊断5请求全部完成、178秒长响应/4文件校验通过、未应用；ce9d2a确认退出/PID0。
+- d1d54a发布配置6负向、失败回滚13、真实JS live镜像pin及快照24项通过。新增helper在默认发现路径24项通过（368e51及主线程662142），含CJS实际bundle/require、显式独立provider/旧provider拒绝、其他配置和输入不变；项目及独立严格类型检查通过。16个既有anti-slop lint错误仍在，HEAD对照0新增error/3新增预期finally警告，不宣称lint全绿。详见conversation-worker-image-fix-20260909.json。
+
+## 2026-09-09 原事项一次性本机恢复、固定发布与真实终态
 
 - 新增安全文件 CLI：参数回归 ef748f 红后 3f5b60 绿（5项）；非法请求误启动 runtime 的明确红灯 aabdeb，100037 绿（9项）。CLI 成功及同文件重放在真实临时账本集成测试验证，不启动第二 runtime、不伪造群 Owner 事件。
 - 团队记录授权后重启不能启动原事项的真实集成红灯；最终 28 项调度测试通过，含三次真实失败/结清、未授权禁止4、授权重启仅一次4、4失败后无5、成功候选真实Git和两次Node断言、独立Verifier/Meta、实际回复序列化。containment和平台网络为替身，不冒充真实Docker/群验收。
 - 授权模块56项通过，定向lint及diff检查通过。独立审查 fd63ba 找到 validate 命令未绑定，修复后 60449f 在dispatch/start双阶段均拒绝变更；另补全局请求ID冲突检查。完整节点静态配置、Spec/计划/Owner/基线/失败run均绑定；audit应用追加但无数据库防改触发器，一次性同时依赖事务和既有dispatch/session唯一锚。
 - d0d085早期联合4文件78项/typecheck通过；最终源冻结后完整发布回归 session2005 已终态0（e34a9a），`pnpm test && pnpm typecheck && git diff --check`全部通过，包含主测试门槛、broker/Node、打包启动及headless烟测。此次未改maxAttempts=3、不改旧任务版本或数据、不自动push。
-- fe8ed3现场原服务仍running/healthy、其他容器均退出；079b64确认当前无主动群路由、maxAttempts3，59439d确认原事项仅一个既有群alias。尚未新发布或执行第四次。新发布脚本独立fixture/语法518115通过，主线程8788ae核对仅四个新旧身份常量变更，不重跑旧成功守卫。
-- 同群主动路由依据：[官方Stream接收示例](https://open.dingtalk.com/document/dingstart/robot-receive-message.md)直接将conversationId赋值给openConversationId，root342c79与独立文档核对一致；[发送接口](https://open.dingtalk.com/document/development/the-robot-sends-a-group-message.md)要求该会话ID。不根据消息正文或cid前缀猜目标。只准备原唯一白名单群的显式本机配置；发送权限和业务成功仍需实际回执证明。
+- 发布前fe8ed3确认原服务running/healthy、其他容器均退出；079b64当时无主动群路由、maxAttempts3，59439d确认原事项仅一个既有群alias。该观察时点尚未发布或执行第四次。新发布脚本独立fixture/语法518115通过，主线程8788ae核对仅四个新旧身份常量变更，不重跑旧成功守卫。
+- 同群主动路由依据：[官方Stream接收示例](https://open.dingtalk.com/document/dingstart/robot-receive-message.md)直接将conversationId赋值给openConversationId，root342c79与独立文档核对一致；[发送接口](https://open.dingtalk.com/document/development/the-robot-sends-a-group-message.md)要求该会话ID。不根据消息正文或cid前缀猜目标。准备核对1187e7后只为原唯一白名单群启用显式路由，未改凭据、身份或群范围；实际失败通知确认见本节终态，不外推其他发送结果。
+- af649c构建失败是旧Docker builder不支持COPY --chmod，尚未切换服务；改用COPY及显式RUN chmod 0444后64e7b0构建终态0。固定镜像64c2e203…绑定源码3d5599f，六bundle一致、UID501/10001可读及隔离健康schema37通过，失败守卫保留。
+- d8ab1a配置仅改服务镜像、coordinator镜像及原授权群主动路由；5b5430首启、d2093d正式systemd交接终态0。当前容器a837d796…、StartedAt2026-09-09T01:32:40.179Z、fence65、active/enabled、unless-stopped；两阶段各自新离线备份及空闲检查通过，15条历史事件/65条历史Outbox/1名Owner保留，未用备份覆盖CURRENT数据或操作其他既有容器。
+- ae99a6本机授权由正常服务消费，原事项79716076…的attempt4于1788917613563开始，1788918055218失败，耗时441655ms。707a38只读watcher session64171终态0：resultSha为空、candidate invalid、无Verifier/Meta、session settled、没有第五次；前三次和原version3/Spec4/plan2保留。quality原因仅“模型未能完成本次修改建议。”，具体根因未知，不按耗时判为超时或沿用旧故障结论。
+- 同一失败Outbox先dead_letter/proactive_delivery_unconfirmed，5秒内由持久回执对账确认sent，last_error为空、sent_at1788918056501；不编造具体发送/查询次数，不手工重发。该真实回执确认失败通知送达，不证明C1代码交付、C2–C6、真实多人/在途恢复或Owner本人验收通过。原生Goal仍active且未完成；精确值与证据边界见[本轮记录](docs/pilot/evidence/conversation-execution-recovery-20260909.json)。
 
 ## 2026-09-08 恢复授权阻塞审计
 

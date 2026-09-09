@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { ContainmentProof } from "../containment.ts";
 import type { AgentRunRequest } from "../provider-runner.ts";
+import { ProviderFailure, providerFailureSummary } from "./provider-failure.ts";
 import {
   CodexReadOnlyPatchProvider,
   DockerPatchApplier,
@@ -60,6 +61,39 @@ const proof: ContainmentProof = {
 
 describe("Docker patch Agent", () => {
   it.each([
+    { status: "completed", output: JSON.stringify({ status: "completed", summary: "untrusted successful proposal", changes: [{ path: "src/output.txt", contents: "new" }] }), exit: 0, primary: "provider_cleanup_failed", secondary: undefined },
+    { status: "process failed", output: "{}", exit: 7, primary: "provider_process_failed", secondary: "provider_cleanup_failed" },
+    { status: "invalid output", output: "not JSON", exit: 0, primary: "provider_output_invalid", secondary: "provider_cleanup_failed" },
+  ])("fails closed after cleanup failure while retaining the $status primary classification", async ({ output, exit, primary, secondary }) => {
+    const root = mkdtempSync(join(tmpdir(), "provider-cleanup-outcome-"));
+    const launcher = join(root, "launcher.mjs"), invoked = join(root, "invocations");
+    // The launcher is an external-process fixture, not a mock of the provider
+    // or cleanup implementation. It rejects only the actual cleanup invocation.
+    writeFileSync(launcher, `import {appendFileSync,writeFileSync} from 'node:fs';
+      const args=process.argv.slice(3);
+      if(args.includes('--eval')){appendFileSync(${JSON.stringify(invoked)},'cleanup\\n');process.stderr.write('secret=private-cleanup-detail /private/fixture-path');process.exit(1);}
+      for await(const chunk of process.stdin){};
+      appendFileSync(${JSON.stringify(invoked)},'provider\\n');
+      writeFileSync(args[args.indexOf('--output-last-message')+1],${JSON.stringify(output)});
+      process.stderr.write('secret=private-provider-detail');process.exit(${exit});`, { mode: 0o600 });
+    const provider = new CodexReadOnlyPatchProvider({ executable: "fixture-codex", exchangeRoot: join(root, "exchange"),
+      model: "test-model", openCodexEndpoint: "http://127.0.0.1:18100/v1/responses",
+      providerUid: process.getuid!(), providerGid: process.getgid!(), providerHome: root,
+      launcher: { executable: process.execPath, args: [launcher] } });
+    try {
+      const outcome = await provider.propose(request()).then(value => ({ value, error: undefined }), error => ({ value: undefined, error }));
+      expect(outcome.value).toBeUndefined();
+      expect(outcome.error).toBeInstanceOf(ProviderFailure);
+      expect(outcome.error).toHaveProperty("diagnosticCode", primary);
+      expect(outcome.error.secondaryDiagnosticCode).toBe(secondary);
+      expect(providerFailureSummary(outcome.error)).toContain("模型临时状态清理未完成");
+      expect(`${String(outcome.error)} ${JSON.stringify(outcome.error)} ${providerFailureSummary(outcome.error)}`).not.toMatch(/private-cleanup-detail|private-provider-detail|fixture-path|untrusted successful/u);
+      expect(readFileSync(invoked, "utf8")).toBe("provider\ncleanup\n");
+      expect(existsSync(join(root, "exchange", "omb-run-1-provider", "output.json"))).toBe(true);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it.each([
     { output: '{invalid private-upstream-detail', exit: 0, code: 'provider_output_invalid' },
     { output: '', exit: 0, code: 'provider_output_invalid' },
     { output: '{}', exit: 0, code: 'provider_output_invalid' },
@@ -86,6 +120,21 @@ describe("Docker patch Agent", () => {
     const error=await provider.propose(request()).then(()=>null,e=>e);
     expect(error).toHaveProperty('diagnosticCode','provider_launch_failed');
     expect(String(error)).not.toContain('private-upstream-detail');
+  });
+
+  it("classifies an unreadable output file without exposing its private filesystem path", async () => {
+    const root = mkdtempSync(join(tmpdir(), "provider-private-output-")), executable = join(root, "cli.mjs");
+    writeFileSync(executable, `#!/usr/bin/env node\nimport{unlinkSync}from'node:fs';
+      for await(const chunk of process.stdin){};
+      const args=process.argv.slice(2);unlinkSync(args[args.indexOf('--output-last-message')+1]);`, { mode: 0o700 });
+    const provider = new CodexReadOnlyPatchProvider({ executable, exchangeRoot: join(root, "exchange") });
+    try {
+      const error = await provider.propose(request()).then(() => undefined, error => error);
+      expect(error).toBeInstanceOf(ProviderFailure);
+      expect(error).toHaveProperty("diagnosticCode", "provider_output_invalid");
+      expect(String(error)).not.toMatch(/ENOENT|provider-private-output|output.json/u);
+      expect(existsSync(join(root, "exchange", "omb-run-1-provider"))).toBe(false);
+    } finally { rmSync(root, { recursive: true, force: true }); }
   });
 
   it("does not launch a provider for an already cancelled request", async () => {

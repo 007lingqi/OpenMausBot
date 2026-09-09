@@ -1,10 +1,11 @@
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { runContainedPatchWorker, superviseContainedProposal } from "./contained-patch-worker-core.ts";
 import { ProviderFailure } from "./provider-failure.ts";
+import { CodexReadOnlyPatchProvider } from "./docker-patch-agent.ts";
 import { renderDingTalkSessionMessage } from "../../integrations/dingtalk/session-message.ts";
 
 function fixture() {
@@ -13,7 +14,9 @@ function fixture() {
   writeFileSync(join(candidate, "src/main.ts"), "old");
   const write = (name: string, value: unknown) => writeFileSync(join(control, name), JSON.stringify(value), { mode: 0o600 });
   write("heartbeat.json", 1);
-  const request = { runId: "run", cwd: "/workspace/view", environment: {}, capabilities: { network: false, dependencyInstallation: false, arbitraryCommands: false, gitCommit: false },
+  const request = { runId: "run", threadId: "thread", turnId: "turn", workItemId: "WI-test", nodeId: "modify", planRevision: 1,
+    objective: "Change main", instructions: "Change only src/main.ts", inputEvidence: ["request"], expectedArtifacts: ["src/main.ts"], completionDefinition: "Main changed",
+    cwd: "/workspace/view", environment: {}, capabilities: { network: false, dependencyInstallation: false, arbitraryCommands: false, gitCommit: false },
     sandbox: { filesystemRoot: "/workspace/view", readOnlyPaths: [], denyGitMetadata: true, network: "deny" }, writeScope: ["src/**"], denyScope: [], readScope: ["src/**"] };
   write("request.json", { request, files: [{ path: "src/main.ts", automaticReplacementAllowed: true, contentHash: createHash("sha256").update("old").digest("hex") }] });
   const propose = vi.fn(async (): Promise<unknown> => ({ status: "completed", summary: "updated", changes: [{ path: "src/main.ts", contents: "new" }] }));
@@ -22,6 +25,43 @@ function fixture() {
     run: () => runContainedPatchWorker({ controlDirectory: control, candidateRoot: candidate, propose, signal: controller.signal, pollMs: 5, heartbeatTimeoutMs: 200 }) };
 }
 describe("trusted contained worker gates", () => {
+  it.each([
+    { exit: 0, expected: "模型临时状态清理未完成，本次改动建议未采用，项目尚未修改。" },
+    { exit: 7, expected: "模型执行程序异常结束，项目尚未修改。模型临时状态清理未完成。" },
+  ])("carries real provider cleanup failure through supervision, worker and actual reply serialization (CLI exit $exit)", async ({ exit, expected }) => {
+    const f = fixture(), launcher = join(f.root, "launcher.mjs"), invoked = join(f.root, "invocations");
+    writeFileSync(launcher, `import {appendFileSync,writeFileSync} from 'node:fs';
+      const args=process.argv.slice(3);
+      if(args.includes('--eval')){appendFileSync(${JSON.stringify(invoked)},'cleanup\\n');process.stderr.write('token=private-cleanup-detail /private/fixture-path');process.exit(1);}
+      for await(const chunk of process.stdin){};
+      appendFileSync(${JSON.stringify(invoked)},'provider\\n');
+      writeFileSync(args[args.indexOf('--output-last-message')+1],JSON.stringify({status:'completed',summary:'untrusted successful proposal',changes:[{path:'src/main.ts',contents:'new'}]}));
+      process.stderr.write('token=private-provider-detail');process.exit(${exit});`, { mode: 0o600 });
+    const provider = new CodexReadOnlyPatchProvider({ executable: "fixture-codex", exchangeRoot: join(f.root, "exchange"),
+      model: "test-model", openCodexEndpoint: "http://127.0.0.1:18100/v1/responses",
+      providerUid: process.getuid!(), providerGid: process.getgid!(), providerHome: f.root,
+      launcher: { executable: process.execPath, args: [launcher] } });
+    let sequence = 1; const pulse = setInterval(() => f.write("heartbeat.json", ++sequence), 50);
+    try {
+      f.write("proposal.start", { start: true });
+      await runContainedPatchWorker({ controlDirectory: f.control, candidateRoot: f.candidate, signal: f.controller.signal,
+        pollMs: 5, heartbeatTimeoutMs: 2000, propose: request => {
+          let stop!: () => void; const exited = new Promise<number>(resolve => { stop = () => resolve(0); });
+          return superviseContainedProposal({ signal: request.signal,
+            startRelay: () => ({ ready: Promise.resolve(), exited, stop }),
+            propose: () => provider.propose(request), interrupt: () => provider.interrupt(request.runId) });
+        } });
+      const receipt = JSON.parse(readFileSync(join(f.control, "proposal.json"), "utf8"));
+      expect(receipt).toEqual({ status: "failed", summary: expected, changes: [] });
+      const serialized = JSON.stringify(renderDingTalkSessionMessage({ type: "plan_status_card", status: "execution_failed", failures: [receipt.summary] }));
+      expect(serialized).toContain(expected);
+      expect(serialized).not.toMatch(/private-cleanup-detail|private-provider-detail|fixture-path|untrusted successful|provider_|模型未能完成本次修改建议|修改完成/u);
+      expect(readFileSync(invoked, "utf8")).toBe("provider\ncleanup\n");
+      expect(readFileSync(join(f.candidate, "src/main.ts"), "utf8")).toBe("old");
+      expect(existsSync(join(f.control, "applied.json"))).toBe(false);
+    } finally { clearInterval(pulse); rmSync(f.root, { recursive: true, force: true }); }
+  });
+
   it.each([
     ['provider_timeout', '模型调用超时'],
     ['provider_launch_failed', '模型执行程序未能启动'],
