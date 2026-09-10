@@ -32,6 +32,54 @@ function harness(interpreter: NaturalIntakeInterpreter) {
 }
 
 describe("durable source-bound natural requirement intake", () => {
+  it.each([false, true])("shows current follow-up questions before retained older gaps (reuse IDs: %s)", async reuseIds => {
+    const question = (id: string, question: string) => ({ id, question, reason: "需要明确首期范围", role: "product", respondent: null });
+    const old = [question("admin-scope", "对首期管理的对象，后台必须支持哪些操作？"),
+      question("admin-access", "首期后台的使用者需要怎样的权限划分？"),
+      question("admin-object", "精简版先管理哪类业务对象，对你们最有价值？")];
+    const current = [question(reuseIds ? "admin-access" : "menu-config", "按菜单配置，是指配置管理员能访问的菜单，还是配置菜单里的业务内容？"),
+      question("business-coverage", "当前所有业务内容具体包含哪些业务模块？"),
+      question(reuseIds ? "admin-scope" : "required-actions", "这些业务内容在首期分别需要支持哪些管理操作？")];
+    const text = "对首期管理的对象，后台必须支持管理员，能根据菜单来配置 精简版先管理 当前所有业务内容";
+    const h = harness({ async interpret(request) {
+      return request.event.sourceEventId === "admin-start"
+        ? { ...proposal(request), goal: { text: request.event.text, confirmed: true, quote: request.event.text }, questions: old }
+        : { ...proposal(request), answers: [{ questionId: "natural-admin-object", quote: "精简版先管理 当前所有业务内容" }],
+          acceptance: [{ description: "管理当前所有业务内容", observation: "现有业务均纳入管理范围", quote: "当前所有业务内容" }], questions: current };
+    } });
+    try {
+      const first = h.service.ingestDingTalkMessage(message("admin-start", "做一个精简管理后台"));
+      await h.service.processNaturalIntake();
+      const followup = message("admin-followup", text, "admin-start");
+      expect(h.service.ingestDingTalkMessage(followup).workItemId).toBe(first.workItemId);
+      await h.service.processNaturalIntake();
+      const snapshot = readLatestWorkItemSnapshot(h.db, first.workItemId!)!;
+      const cards = h.service.pendingOutbox().map(row => row.card);
+      const card = cards.findLast(card => card.type === "clarification_card");
+      expect(card).toMatchObject({ questions: current.map(q => expect.objectContaining({ id: `natural-${q.id}`, question: q.question })) });
+      const outbound = renderDingTalkSessionMessage(card) as { markdown: { text: string } };
+      for (const q of current) expect(outbound.markdown.text).toContain(q.question);
+      for (const q of old) expect(outbound.markdown.text).not.toContain(q.question);
+      expect(outbound.markdown.text).not.toMatch(/WI-|我先看一下|修改完成/);
+      expect(snapshot.blockingAmbiguities.map(q => q.id)).not.toContain("natural-admin-object");
+      expect(snapshot.blockingAmbiguities).toHaveLength(reuseIds ? 3 : 5);
+      // Priority is not resolution: unresolved older gaps survive in the Spec.
+      if (!reuseIds) expect(snapshot.blockingAmbiguities.map(q => q.question)).toEqual(expect.arrayContaining(old.slice(0, 2).map(q => q.question)));
+      expect(h.service.ownerBinding()).toBeNull();
+      expect(h.db.prepare("SELECT definition_status FROM collaboration_work_items WHERE id=?").get(first.workItemId)).toEqual({ definition_status: "waiting_clarification" });
+      const counts = () => h.db.prepare("SELECT (SELECT count(*) FROM collaboration_external_events) events, (SELECT count(*) FROM collaboration_outbox) outbox, (SELECT count(*) FROM collaboration_work_items) items").get();
+      const before = counts();
+      h.service.close();
+      const resumed = startCollaborationService(h.options);
+      try {
+        expect(resumed.ingestDingTalkMessage(followup).workItemId).toBe(first.workItemId);
+        expect(await resumed.processNaturalIntake()).toBeNull();
+        expect(counts()).toEqual(before);
+        expect(readLatestWorkItemSnapshot(h.db, first.workItemId!)).toEqual(snapshot);
+      } finally { resumed.close(); }
+    } finally { h.service.close(); h.db.close(); }
+  });
+
   it("asks for concise independent decisions without truncating questions or changing the grounded-source contract", async () => {
     let envelope!: { system: string; responseSchema: unknown; user: string };
     const interpreter = new ModelNaturalIntakeInterpreter({ async complete(input) { envelope = input; return {}; } });
@@ -42,6 +90,9 @@ describe("durable source-bound natural requirement intake", () => {
     expect(envelope.system).toContain("不能为缩短而省略关键条件");
     expect(envelope.system).toContain("不要加‘为了避免返工’");
     expect(envelope.system).toContain("已回答的问题不要重问");
+    expect(envelope.system).toContain("复用原问题去掉 natural- 前缀的 id");
+    expect(envelope.system).toContain("完全回答才放入 answers");
+    expect(envelope.system).toContain("其他未解决问题仍然保留");
     expect(envelope.responseSchema).toMatchObject({ properties: { questions: { maxItems: 3,
       items: { properties: { question: { maxLength: 500 } } } } } });
     expect(JSON.parse(envelope.user)).toEqual(request);

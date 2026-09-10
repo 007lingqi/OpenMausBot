@@ -1,5 +1,13 @@
 # Meta 协作验证记录
 
+## 2026-09-10 当前追问优先展示
+
+- 本地提交的两次自动审核均超时未执行，未build/activate；客户端访问因锁屏前置未满足被拒，未绕过。运行服务身份与健康只读5f33bc保持。全部验证范围和停止入口见[本轮证据](docs/pilot/evidence/conversation-followup-20260910.json)，通过仅支持本地修复，不支持已上线或客户端可见。
+- 真实只读487087：管理员/菜单补充的proposal已生成具体问题，Spec12仍把三条旧问题排在前面；与实际Outbox旧追问一致，支持排序缺陷。原两条消息发送延迟约82秒/50秒，不等于未入站；首次失败原因未知，客户端因锁屏未核对。
+- 红灯1e64d8：新增两项真实service/SQLite/Spec/Outbox/钉钉序列化测试均因旧顺序失败。绿灯8744d6：五文件161项、pnpm typecheck、git diff --check通过。非作者独立38项及系统/依赖门禁、重放探针通过。
+- 真实模型69004/6362f6：两轮四次Astra/medium调用、单事项续聊、实际序列化、无执行和重放检查通过。第二轮复用core-workflow，已答target-users不再展示；不是实际群发或性能保证。完整安全报告在本机临时目录omb-conversation-eval-xritKp/report.json。
+- 发布kit99588/cbb4d7：48项离线合同通过。首轮完整回归72271因本机端口EPERM中止130，不计通过；自动审核超时未启动任何进程，获准一次重试后完整回归7577/ce24d0终态0：主集4627通过/18跳过、broker7、Node15/5/2/10、打包/headless、pnpm typecheck、git diff --check均通过。
+
 ## 2026-09-09 固定回执与只读方案咨询
 
 - 固定回执通过实际 service→Outbox→钉钉序列化复现，3633ba 为原句 RED；6141a4 为用户新通知策略的六项 RED。修复后通知/入站/投递四文件 111 项通过（f085cd）。实际材料读取失败误静默另有 RED→GREEN，最终仅压制精确 definition placeholder。

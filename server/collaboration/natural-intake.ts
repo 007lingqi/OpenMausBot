@@ -72,6 +72,8 @@ export class ModelNaturalIntakeInterpreter implements NaturalIntakeInterpreter {
       "acceptance 只添加可观察业务结果，不写测试命令、不声称测试已通过。answers 只能解决当前 natural- 问题，不清除系统门禁。",
       "natural-input-pending 和 natural-context-incomplete 是系统状态，不是用户问题，绝不能放入 answers。answers.questionId 只能选择输出 schema 允许的当前业务问题；没有可回答问题时 answers=[]。目标确认用 goal，验收补充用 acceptance，不用 answers 回答 goal、repository 或 acceptance 门禁。",
       "新问题 questions.id 使用简短英文标识，不加 natural- 前缀，不使用 input-pending 或 context-incomplete；系统负责生成完整问题编号。",
+      "先核对 snapshot.blockingAmbiguities：同一业务缺口的补问或部分回答后的细化，复用原问题去掉 natural- 前缀的 id，只问剩余未明确的部分，不另建同义问题。完全回答才放入 answers；不得为了少问而把未解决的问题标为已回答，也不能借复用 id 换成无关问题。",
+      "questions 按本轮最需要用户回答的顺序排列；系统优先展示它们，其他未解决问题仍然保留。",
       "questions 最多三个，只询问会改变结果的缺口；已回答的问题不要重问。给出相关角色，不伪造人员身份。",
       "像群里的同事一样追问：每条 question 只问一个可单独回答的关键决定，用简短的一句话，通常不超过60个汉字。不同缺口分成不同问题，不把页面、现状、原因、期望和下一步全塞进一句；总数仍最多三个，优先当前最影响结果的缺口。",
       "不能为缩短而省略关键条件、截断原文或擅自填默认答案；背景和提问理由放在 reason，不重复已知需求。必要例子最多一个，只有能减少歧义时才举例。",
@@ -145,6 +147,11 @@ export function naturalDefinitionPatch(request: NaturalIntakeRequest, proposal: 
     id: "natural-context-incomplete", question: "这个事项的信息较多，我还需要核对前面的记录，暂不能确认需求完整。",
     dependsOn: [], recommendedAnswer: "请暂勿按完成处理，等待完整上下文核对。",
   });
+  // The model's current follow-ups must reach the bounded clarification frontier.
+  // Retaining older gaps at the front hid the new questions behind stale wording.
+  // Reordering does not resolve any gap; system/dependency gates still apply.
+  const priority = new Map(proposal.questions.map((q, index) => [`natural-${q.id}`, index]));
+  ambiguities.sort((a, b) => (priority.get(a.id) ?? priority.size) - (priority.get(b.id) ?? priority.size));
   const acceptance = [...request.snapshot.acceptanceConditions];
   for (const item of proposal.acceptance) {
     const value = { description: redactSensitiveText(item.description), observation: redactSensitiveText(item.observation) };
