@@ -1,4 +1,5 @@
 type RecordValue = Record<string, unknown>;
+export const DINGTALK_CONVERSATION_TEXT_LIMIT = 1_000;
 
 function record(value: unknown): RecordValue | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as RecordValue) : null;
@@ -282,7 +283,7 @@ export function renderDingTalkSessionMessage(payload: unknown): Record<string, u
   return {
     msgtype: "markdown",
     markdown: { title: headline, text: type === "plan_status_card" && status === "verified_result" ? text(card?.summary,"修改结果正在核对。",600) : type === "command_status_card" && card?.command === "conversation" && card?.presentation === "business"
-      ? text(card.summary, "任务状态已更新。", 1_000) : lines.join("\n") },
+      ? text(card.summary, "任务状态已更新。", DINGTALK_CONVERSATION_TEXT_LIMIT) : lines.join("\n") },
     ...(atUserIds.length ? { at: { atUserIds, isAtAll: false } } : {}),
   };
 }

@@ -9,7 +9,7 @@ import { enqueueInboundCard } from "./outbox.ts";
 import { renderConversationReplyCard, renderPrimaryStatusCard } from "./message-renderer.ts";
 
 type Classifier = NonNullable<NaturalIntakeInterpreter["classifyConversation"]>;
-const actions = new Set(["create_work", "contribute", "read_status", "explain_reply", "offer_advice", "acknowledge", "ask_context", "control_requires_authorization"]);
+const actions = new Set(["create_work", "contribute", "read_status", "explain_reply", "offer_advice", "select_option", "acknowledge", "ask_context", "control_requires_authorization"]);
 
 /** Neither a model result nor a plugin implementation is a ledger authority. */
 function validateResult(request: ConversationIntentRequest, result: ConversationIntentDecision): ConversationIntentDecision {
@@ -74,6 +74,11 @@ export class ConversationIngressCoordinator {
           "WHERE j.event_id=? AND j.status='running' AND j.claim_token=? AND j.lease_until>? AND e.conversation_id=? AND e.principal_id=? " +
           "AND e.work_item_id IS NULL AND e.association_state='ambiguous'").get(job.id, token, now + Math.max(0, Date.now() - started), job.conversation_id, job.principal_id) as { normalized_json: string } | undefined;
         if (!current || conversationSourceHash(current.normalized_json) !== job.source_hash) throw new Error("conversation_claim_stale");
+        if (result.action === "select_option") {
+          const fresh = readConversationContext(this.db, job);
+          validateResult(fresh, result);
+          if (JSON.stringify(fresh.discussionOptions) !== JSON.stringify(request.discussionOptions)) throw new Error("conversation_selection_stale");
+        }
         if (result.action === "offer_advice") {
           // The suggestion may have used earlier messages or delivered replies.
           // Recheck those exact sources under the same transaction as publication.

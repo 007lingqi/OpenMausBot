@@ -25,6 +25,27 @@ function adviceProposal(input = request) {
 }
 
 describe("conversation intent before task mutation", () => {
+  it.each(["选第一个和第二个", "不要第二个", "不是第二个", "按这个来"])("keeps ambiguous or negative choices unresolved: %s", async text => {
+    const options = [{ title: "轻量版", description: "核心功能。", tradeoff: "范围较小。" },
+      { title: "标准版", description: "权限与记录。", tradeoff: "投入较高。" }];
+    const input: ConversationIntentRequest = { ...request, text, candidates: [],
+      history: [{ sourceEventId: "offer", role: "assistant", principalId: null, workItemId: null, text: "1.轻量版 2.标准版" }],
+      pendingQuestion: { kind: "read_only", origin: "advice", sourceEventId: "offer", workItemIds: [], text: "选择哪版？" },
+      discussionOptions: { sourceEventId: "offer", presentationHash: "a".repeat(64), workItemId: null, workItemVersion: 0, snapshotRevision: 0, options } };
+    expect(await classify({ ...proposal("select_option", null, text), choice: { sourceEventId: "offer", optionIndex: 2 } }, input))
+      .toMatchObject({ action: "ask_context" });
+  });
+
+  it("does not let an explicit no-execution boundary prevent a read-only option choice", async () => {
+    const text = "选第二个，不要执行代码修改。";
+    const input: ConversationIntentRequest = { ...request, text, candidates: [],
+      history: [{ sourceEventId: "offer", role: "assistant", principalId: null, workItemId: null, text: "1.轻量版 2.标准版" }],
+      pendingQuestion: { kind: "read_only", origin: "advice", sourceEventId: "offer", workItemIds: [], text: "选择哪版？" },
+      discussionOptions: { sourceEventId: "offer", presentationHash: "a".repeat(64), workItemId: null, workItemVersion: 0, snapshotRevision: 0,
+        options: [{ title: "轻量版", description: "核心功能。", tradeoff: "范围较小。" }, { title: "标准版", description: "权限与记录。", tradeoff: "投入较高。" }] } };
+    expect(await classify({ ...proposal("select_option", null, text), choice: { sourceEventId: "offer", optionIndex: 2 } }, input))
+      .toMatchObject({ action: "select_option", selection: { option: { title: "标准版" } } });
+  });
   it("offers bounded read-only options for an explicit consultation without requiring an existing task", async () => {
     const text = "我想增加一个后台管理，应该如何";
     const advice = { basisSourceEventIds: [request.sourceEventId], summary: "可以先比较管理范围，再选择适合当前阶段的方案。",

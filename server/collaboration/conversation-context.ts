@@ -3,12 +3,13 @@ import type { DatabaseSync } from "node:sqlite";
 import type { ConversationIntentRequest, ConversationIntentDecision } from "./conversation-intent.ts";
 import { readLatestWorkItemSnapshot } from "./snapshot.ts";
 import { redactSensitiveText } from "./sensitive-text.ts";
-import { renderDingTalkSessionMessage } from "../integrations/dingtalk/session-message.ts";
+import { DINGTALK_CONVERSATION_TEXT_LIMIT, renderDingTalkSessionMessage } from "../integrations/dingtalk/session-message.ts";
 import { completedCandidateHasPassedMetaReview } from "./candidate-verification.ts";
 import { renderConversationReplyCard, type InboundCard, type ClarificationCard } from "./message-renderer.ts";
 import type { NaturalApprovalOutcome } from "./natural-approval.ts";
 import { readApprovalPresentation } from "./approval-presentation.ts";
 import { explainHistoricalProgress } from "./conversation-explanation.ts";
+import { discussionOptionsSchema, renderAdviceDiscussion, renderDiscussionSelection, type DiscussionOptions } from "./discussion-options.ts";
 
 export interface ConversationJob {
   id: string; source_event_id: string; conversation_id: string; principal_id: string; normalized_json: string;
@@ -63,6 +64,10 @@ function pendingQuestion(db: DatabaseSync, job: ConversationJob, sent: SentReply
       if (questions.length) { kind = "requirement"; text = questions.map(question => question.question).join("；"); }
     } else if (card.type === "command_status_card" && card.command === "conversation" && row.principal_id === job.principal_id && row.proposal_json) {
       const proposal = JSON.parse(row.proposal_json) as ConversationIntentDecision;
+      if (proposal.action === "select_option") return {
+        kind: "read_only", origin: "advice", sourceEventId: `outbox:${row.id}`, workItemIds: row.work_item_id ? [row.work_item_id] : [],
+        text: proposal.selection.option.title, answerExpected: false,
+      };
       // The delivered suggestion remains a discussion even if it asked no new
       // question. Keep its actual summary as context, not a fabricated prompt.
       if (proposal.action === "offer_advice") return {
@@ -149,7 +154,24 @@ export function readConversationContext(db: DatabaseSync, job: ConversationJob):
     const discard = selected.findIndex(row => row !== current && row !== referenced);
     selected.splice(discard, 1); selected.push(questionSource);
   }
+  let discussionOptions: DiscussionOptions | null = null;
+  const offerRow = question?.origin === "advice" ? sent.find(row => `outbox:${row.id}` === question.sourceEventId) : undefined;
+  if (offerRow?.proposal_json) {
+    const proposal = JSON.parse(offerRow.proposal_json) as ConversationIntentDecision;
+    const card = JSON.parse(offerRow.payload_json) as InboundCard;
+    const expected = proposal.action === "offer_advice" ? renderAdviceDiscussion(proposal.advice)
+      : proposal.action === "select_option" ? renderDiscussionSelection(proposal.selection) : null;
+    if (expected && expected.trim().length <= DINGTALK_CONVERSATION_TEXT_LIMIT && card.type === "command_status_card" && card.command === "conversation" && card.summary === expected &&
+      (proposal.action === "offer_advice" || proposal.action === "select_option")) {
+      discussionOptions = discussionOptionsSchema.parse({ sourceEventId: `outbox:${offerRow.id}`,
+        kind: proposal.action === "select_option" ? "selection" : "offer",
+        presentationHash: conversationSourceHash(offerRow.payload_json), workItemId: proposal.target?.id ?? null,
+        workItemVersion: proposal.target?.version ?? 0, snapshotRevision: proposal.target?.snapshotRevision ?? 0,
+        options: proposal.action === "offer_advice" ? proposal.advice.options : [proposal.selection.option] });
+    }
+  }
   return { sourceEventId: job.source_event_id, principalId: job.principal_id, text: redactSensitiveText(normalized.text),
+    discussionOptions,
     referencedWorkItemId: job.requested_work_item_id, referencedReplyId: replyId, pendingQuestion: question,
     candidates: items.slice(0, 20).map(row => ({ id: row.id, title: redactSensitiveText(row.title), version: row.version,
       snapshotRevision: readLatestWorkItemSnapshot(db, row.id)?.revision ?? 0,
@@ -284,10 +306,8 @@ function clarificationTopics(db: DatabaseSync, request: ConversationIntentReques
 }
 
 export function conversationReply(db: DatabaseSync, result: ConversationIntentDecision, request?: ConversationIntentRequest): string {
-  if (result.action === "offer_advice") return [result.advice.summary,
-    ...result.advice.options.map((option, index) => `${index + 1}. ${option.title}：${option.description} 取舍：${option.tradeoff}`),
-    ...(result.advice.question ? [result.advice.question] : []),
-  ].join("\n\n");
+  if (result.action === "offer_advice") return renderAdviceDiscussion(result.advice);
+  if (result.action === "select_option") return renderDiscussionSelection(result.selection);
   if (result.action === "acknowledge") return "不客气，有需要继续说。";
   if (result.action === "control_requires_authorization") return "这涉及控制或审批操作，需要由负责人确认具体动作和影响；目前没有执行。";
   if (result.action === "read_status" && result.target) return conversationStatus(db, result.target.id, result.sourceEventId);
@@ -311,6 +331,12 @@ export function conversationReply(db: DatabaseSync, result: ConversationIntentDe
     return `之前的回复内容是：${redactSensitiveText(result.reply.text).slice(0, 700)}\n这只是说明之前的消息，不会因此重新修改。`;
   }
   if (result.action === "ask_context" && result.reason === "missing_reply") return "你想了解哪条回复的意思？说一下其中的内容就行。";
+  if (result.action === "ask_context" && request?.discussionOptions &&
+    ["uncertain", "pending_answer", "pending_read_only"].includes(result.reason)) {
+    const labels = request.discussionOptions.options.map(option => `「${option.title}」`);
+    return labels.length === 1 ? `你是想继续细化${labels[0]}，还是提出具体修改要求？`
+      : `你更倾向${labels.slice(0, -1).join("、")}还是${labels.at(-1)}？`;
+  }
   if (result.action === "ask_context" && ["uncertain", "missing_target", "pending_answer", "pending_read_only"].includes(result.reason)) {
     const topics = clarificationTopics(db, request);
     if (topics.length) {

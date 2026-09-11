@@ -83,6 +83,115 @@ function job(db: DatabaseSync, source: string): ConversationJob {
 }
 
 describe("durable conversational ingress before Work Item mutation", () => {
+  it("selects the second actually delivered option across restart without creating work or repeating the menu", async () => {
+    const h = setup(async input => input.sourceEventId === "choose"
+      ? { ...decision(input, "select_option"), choice: { sourceEventId: input.discussionOptions?.sourceEventId ?? "missing", optionIndex: 2 } }
+      : adviceDecision(input));
+    try {
+      h.service.ingestDingTalkMessage(message("consult", "给我两个后台方案"));
+      await h.service.processNaturalIntake(); await deliver(h.db);
+      const before = taskState(h.db);
+      h.service.close(); const resumed = startCollaborationService(h.options);
+      try {
+        const input = message("choose", "选第二个");
+        resumed.ingestDingTalkMessage(input); await resumed.processNaturalIntake(); await deliver(h.db);
+        expect(job(h.db, "choose").status).toBe("applied");
+        expect(JSON.parse(job(h.db, "choose").proposal_json!)).toMatchObject({ action: "select_option",
+          selection: { optionIndex: 2, option: { title: "标准版", description: "兼顾权限和操作记录。" } } });
+        expect(reply(h.db, "choose")).toContain("标准版");
+        expect(reply(h.db, "choose")).not.toMatch(/轻量版|需要补充一点|修改完成|执行|WI-/u);
+        expect(taskState(h.db)).toEqual(before); expect(h.interpreted).toEqual([]);
+        const count = h.db.prepare("SELECT count(*) n FROM collaboration_outbox").get();
+        resumed.ingestDingTalkMessage(input); await resumed.processNaturalIntake();
+        expect(h.db.prepare("SELECT count(*) n FROM collaboration_outbox").get()).toEqual(count);
+      } finally { resumed.close(); }
+    } finally { h.service.close(); h.db.close(); }
+  });
+
+  it.each(["unsent", "sent_later", "other_speaker", "other_group", "wrong_index", "missing_source"])("does not select a discussion option using %s evidence", async mode => {
+    const h = setup(async input => input.sourceEventId === "choose"
+      ? { ...decision(input, "select_option"), choice: {
+        sourceEventId: mode === "missing_source" ? "outbox:invented" : input.discussionOptions?.sourceEventId ?? "missing",
+        optionIndex: mode === "wrong_index" ? 1 : 2 } }
+      : adviceDecision(input));
+    try {
+      h.service.ingestDingTalkMessage(message("consult", "给我两个后台方案")); await h.service.processNaturalIntake();
+      if (!["unsent", "sent_later"].includes(mode)) await deliver(h.db);
+      const before = taskState(h.db);
+      h.service.ingestDingTalkMessage(message("choose", "选第二个", mode === "other_group" ? "elsewhere" : "group", mode === "other_speaker" ? "tester" : "product"));
+      if (mode === "sent_later") await deliver(h.db);
+      await h.service.processNaturalIntake();
+      expect(JSON.parse(job(h.db, "choose").proposal_json!)).toMatchObject({ action: "ask_context" });
+      expect(taskState(h.db)).toEqual(before); expect(h.interpreted).toEqual([]);
+      expect(reply(h.db, "choose")).not.toContain("已选");
+    } finally { h.service.close(); h.db.close(); }
+  });
+
+  it("continues with the single selected option instead of asking which option again", async () => {
+    const h = setup(async input => input.sourceEventId === "consult" ? adviceDecision(input)
+      : { ...decision(input, "select_option"), choice: { sourceEventId: input.discussionOptions?.sourceEventId ?? "missing",
+        optionIndex: input.sourceEventId === "choose" ? 2 : 1 } });
+    try {
+      for (const [id, text] of [["consult", "给我两个方案"], ["choose", "选第二个"], ["continue", "按这个来"]]) {
+        h.service.ingestDingTalkMessage(message(id, text)); await h.service.processNaturalIntake(); await deliver(h.db);
+      }
+      expect(JSON.parse(job(h.db, "continue").proposal_json!)).toMatchObject({ action: "select_option", selection: { option: { title: "标准版" } } });
+      expect(reply(h.db, "continue")).toContain("标准版");
+      expect(reply(h.db, "continue")).not.toEqual(reply(h.db, "choose"));
+      expect(reply(h.db, "continue")!.length).toBeLessThan(reply(h.db, "choose")!.length);
+      expect(h.db.prepare("SELECT count(*) n FROM collaboration_work_items").get()).toEqual({ n: 0 });
+    } finally { h.service.close(); h.db.close(); }
+  });
+
+  it("does not certify an option list whose actual DingTalk serialization was truncated", async () => {
+    const h = setup(async input => input.sourceEventId === "consult"
+      ? { ...adviceDecision(input), advice: { basisSourceEventIds: [input.sourceEventId], summary: "背景".repeat(100),
+        options: ["一", "二", "三"].map(n => ({ title: `方案${n}`, description: "说明".repeat(90), tradeoff: "取舍".repeat(60) })), question: null } }
+      : { ...decision(input, "select_option"), choice: { sourceEventId: input.discussionOptions?.sourceEventId ?? "missing", optionIndex: 3 } });
+    try {
+      h.service.ingestDingTalkMessage(message("consult", "给我几个方案")); await h.service.processNaturalIntake(); await deliver(h.db);
+      h.service.ingestDingTalkMessage(message("choose", "选第三个")); await h.service.processNaturalIntake();
+      expect(JSON.parse(job(h.db, "choose").proposal_json!)).toMatchObject({ action: "ask_context" });
+      expect(reply(h.db, "choose")).not.toContain("已选");
+    } finally { h.service.close(); h.db.close(); }
+  });
+
+  it("rechecks the exact delivered offer before committing a selection", async () => {
+    const h = setup(async input => adviceDecision(input));
+    try {
+      h.service.ingestDingTalkMessage(message("consult", "给我两个方案")); await h.service.processNaturalIntake(); await deliver(h.db);
+      h.service.ingestDingTalkMessage(message("choose", "选第二个"));
+      const before = taskState(h.db);
+      const coordinator = new ConversationIngressCoordinator(h.db, async (input, signal) => {
+        const selected = await classifyConversationIntent({ async complete() {
+          return { ...decision(input, "select_option"), choice: { sourceEventId: input.discussionOptions!.sourceEventId, optionIndex: 2 } };
+        } }, input, signal);
+        h.db.prepare("UPDATE collaboration_outbox SET payload_json=json_set(payload_json,'$.summary','被更改的方案') WHERE source_event_id='conversation:consult'").run();
+        return selected;
+      }, () => { throw new Error("selection must not project work"); });
+      await coordinator.processOne(); coordinator.close();
+      expect(job(h.db, "choose").status).toBe("pending");
+      expect(job(h.db, "choose").proposal_json).toBeNull();
+      expect(reply(h.db, "choose")).toBeNull();
+      expect(taskState(h.db)).toEqual(before);
+    } finally { h.service.close(); h.db.close(); }
+  });
+
+  it("rejects an offer tied to a stale task revision", async () => {
+    const h = setup(async input => input.sourceEventId === "new" ? decision(input, "new_request")
+      : input.sourceEventId === "consult" ? adviceDecision(input, input.candidates[0].id)
+      : { ...decision(input, "select_option", input.candidates[0].id), choice: { sourceEventId: input.discussionOptions?.sourceEventId ?? "missing", optionIndex: 2 } });
+    try {
+      h.service.ingestDingTalkMessage(message("new", "修复登录提示")); await h.service.processNaturalIntake();
+      h.service.ingestDingTalkMessage(message("consult", "给登录问题两个方案")); await h.service.processNaturalIntake(); await deliver(h.db);
+      h.db.prepare("UPDATE collaboration_work_items SET version=version+1 WHERE id=?").run(item(h.db, "new"));
+      const before = taskState(h.db);
+      h.service.ingestDingTalkMessage(message("choose", "选第二个")); await h.service.processNaturalIntake();
+      expect(JSON.parse(job(h.db, "choose").proposal_json!)).toMatchObject({ action: "ask_context", reason: "reference_conflict" });
+      expect(taskState(h.db)).toEqual(before);
+    } finally { h.service.close(); h.db.close(); }
+  });
+
   it("answers the two consultation turns with actual options and no task, Spec, run or authority changes", async () => {
     const h = setup(async input => ({ ...decision(input, "advice"), advice: {
       basisSourceEventIds: input.sourceEventId === "options" ? ["consult", "options"] : ["consult"],
