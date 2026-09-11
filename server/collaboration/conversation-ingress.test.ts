@@ -85,6 +85,133 @@ function job(db: DatabaseSync, source: string): ConversationJob {
 }
 
 describe("durable conversational ingress before Work Item mutation", () => {
+  it("retains constraints stated only before the item existed when implementing the selected scheme", async () => {
+    const requests: NaturalIntakeRequest[] = [];
+    const constraint = "只改提示文字，不改登录逻辑，也不要增加依赖";
+    const h = setup(async input => input.sourceEventId === "consult" ? adviceDecision(input)
+      : { ...decision(input, input.sourceEventId === "choose" ? "select_option" : "new_request"),
+        choice: { sourceEventId: input.discussionOptions!.sourceEventId, optionIndex: input.sourceEventId === "choose" ? 2 : 1 } }, request => {
+      requests.push(request);
+      return { version: 1, sourceEventId: request.event.sourceEventId, baseRevision: request.snapshot.revision,
+        goal: null, acceptance: [{ description: constraint, observation: "登录行为和依赖不变，仅提示改变", quote: constraint }], answers: [], questions: [] };
+    });
+    try {
+      for (const [id, text] of [["consult", `给我两个登录提示方案，${constraint}。`], ["choose", "选第二个"]]) {
+        h.service.ingestDingTalkMessage(message(id, text)); await h.service.processNaturalIntake(); await deliver(h.db);
+      }
+      h.service.close(); const resumed = startCollaborationService(h.options);
+      try {
+        resumed.ingestDingTalkMessage(message("implement", "请实现刚才选择的方案")); await resumed.processNaturalIntake();
+        expect(h.db.prepare("SELECT status FROM collaboration_natural_intake_jobs WHERE source_event_id='implement'").get()).toEqual({ status: "applied" });
+        expect(readLatestWorkItemSnapshot(h.db, item(h.db, "implement")!)?.acceptanceConditions)
+          .toEqual(expect.arrayContaining([expect.objectContaining({ description: constraint })]));
+        expect(JSON.stringify(requests[0].implementationContext)).toContain(constraint);
+        const state = taskState(h.db);
+        resumed.ingestDingTalkMessage(message("implement", "请实现刚才选择的方案")); await resumed.processNaturalIntake();
+        expect(taskState(h.db)).toEqual(state);
+      } finally { resumed.close(); }
+    } finally { h.service.close(); h.db.close(); }
+  });
+
+  it("keeps cited participants and corrections in order without importing unrelated group chatter", async () => {
+    let captured: NaturalIntakeRequest | undefined;
+    const h = setup(async input => {
+      if (input.sourceEventId === "noise") return decision(input, "acknowledgement");
+      if (input.sourceEventId === "implement") return { ...decision(input, "new_request"),
+        choice: { sourceEventId: input.discussionOptions!.sourceEventId, optionIndex: 2 } };
+      const result = adviceDecision(input);
+      if (input.sourceEventId === "correct") result.advice.basisSourceEventIds = ["limits", "correct"];
+      return result;
+    }, request => {
+      captured = request;
+      return { version: 1, sourceEventId: request.event.sourceEventId, baseRevision: request.snapshot.revision,
+        goal: null, acceptance: [], answers: [], questions: [] };
+    });
+    try {
+      for (const [id, text, person] of [["limits", "提示只显示一行，给两个方案", "tester"], ["noise", "谢谢，周末团建去看电影", "manager"],
+        ["correct", "更正前面测试的要求：提示可以两行，但不改登录逻辑。按这个给两个方案", "product"], ["implement", "选第二个，请开始修改", "product"]]) {
+        h.service.ingestDingTalkMessage(message(id, text, "group", person)); await h.service.processNaturalIntake(); await deliver(h.db);
+      }
+      const sources = captured?.implementationContext?.discussionSources ?? [];
+      expect(sources.filter(source => source.role === "user").map(source => source.sourceEventId)).toEqual(["limits", "correct"]);
+      expect(sources.find(source => source.sourceEventId === "limits")?.principalId).not.toBe(sources.find(source => source.sourceEventId === "correct")?.principalId);
+      expect(JSON.stringify(sources)).not.toContain("团建");
+      expect(captured?.contextTruncated).toBe(false);
+    } finally { h.service.close(); h.db.close(); }
+  });
+
+  it("bounds long selection history without certifying the omitted requirements as complete", async () => {
+    let captured: NaturalIntakeRequest | undefined;
+    const h = setup(async input => input.sourceEventId === "consult" ? adviceDecision(input)
+      : { ...decision(input, input.sourceEventId === "implement" ? "new_request" : "select_option"),
+        choice: { sourceEventId: input.discussionOptions!.sourceEventId, optionIndex: input.sourceEventId === "choose-0" ? 2 : 1 } }, request => {
+      captured = request;
+      return { version: 1, sourceEventId: request.event.sourceEventId, baseRevision: request.snapshot.revision,
+        goal: null, acceptance: [], answers: [], questions: [] };
+    });
+    try {
+      h.service.ingestDingTalkMessage(message("consult", "给两个方案，只改提示不要增加依赖")); await h.service.processNaturalIntake(); await deliver(h.db);
+      for (let n = 0; n < 26; n++) {
+        h.service.ingestDingTalkMessage(message(`choose-${n}`, n === 0 ? "选第二个" : "按这个来"));
+        await h.service.processNaturalIntake(); await deliver(h.db);
+      }
+      h.service.ingestDingTalkMessage(message("implement", "请实现刚才选择的方案")); await h.service.processNaturalIntake();
+      expect(captured?.implementationContext?.discussionSources?.length).toBeLessThanOrEqual(24);
+      expect(captured?.implementationContext?.discussionContextIncomplete).toBe(true);
+      expect(captured?.contextTruncated).toBe(true);
+      expect(readLatestWorkItemSnapshot(h.db, item(h.db, "implement")!)?.blockingAmbiguities)
+        .toEqual(expect.arrayContaining([expect.objectContaining({ id: "natural-context-incomplete" })]));
+      expect(h.db.prepare("SELECT count(*) n FROM collaboration_runs").get()).toEqual({ n: 0 });
+    } finally { h.service.close(); h.db.close(); }
+  });
+
+  it("does not import another item's discussion through a cited user event with no direct work item link", async () => {
+    let captured: NaturalIntakeRequest | undefined;
+    const h = setup(async input => {
+      if (input.sourceEventId === "other-task") return decision(input, "new_request");
+      if (input.sourceEventId === "implement") return { ...decision(input, "new_request"),
+        choice: { sourceEventId: input.discussionOptions!.sourceEventId, optionIndex: 2 } };
+      const result = adviceDecision(input, input.sourceEventId === "other-advice" ? input.candidates[0].id : null);
+      if (input.sourceEventId === "consult") result.advice.basisSourceEventIds = ["other-advice", "consult"];
+      return result;
+    }, request => {
+      captured = request;
+      return { version: 1, sourceEventId: request.event.sourceEventId, baseRevision: request.snapshot.revision,
+        goal: null, acceptance: [], answers: [], questions: [] };
+    });
+    try {
+      for (const [id, text] of [["other-task", "请修改支付提示"], ["other-advice", "支付那个必须添加退款按钮，给两个方案"],
+        ["consult", "另一个登录提示问题先给我两个方案"], ["implement", "选第二个，请开始修改"]]) {
+        h.service.ingestDingTalkMessage(message(id, text)); await h.service.processNaturalIntake(); await deliver(h.db);
+      }
+      expect(captured?.event.sourceEventId).toBe("implement");
+      expect(captured?.contextTruncated).toBe(true);
+      expect(captured?.implementationContext?.discussionSources?.some(source => source.sourceEventId === "other-advice")).toBe(false);
+    } finally { h.service.close(); h.db.close(); }
+  });
+
+  it("rechecks the original offer after a later selection while the requirement model is working", async () => {
+    let changed = false;
+    const h = setup(async input => input.sourceEventId === "consult" ? adviceDecision(input)
+      : { ...decision(input, input.sourceEventId === "choose" ? "select_option" : "new_request"),
+        choice: { sourceEventId: input.discussionOptions!.sourceEventId, optionIndex: input.sourceEventId === "choose" ? 2 : 1 } }, request => {
+      h.db.prepare("UPDATE collaboration_outbox SET payload_json=json_set(payload_json,'$.summary','已变更') WHERE source_event_id='conversation:consult'").run();
+      changed = true;
+      return { version: 1, sourceEventId: request.event.sourceEventId, baseRevision: request.snapshot.revision,
+        goal: { text: request.implementationContext!.selection.option.description, quote: request.event.text, confirmed: true },
+        acceptance: [], answers: [], questions: [] };
+    });
+    try {
+      for (const [id, text] of [["consult", "两个方案，只改提示"], ["choose", "选第二个"], ["implement", "请实现刚才选择的方案"]]) {
+        h.service.ingestDingTalkMessage(message(id, text)); await h.service.processNaturalIntake(); await deliver(h.db);
+      }
+      expect(changed).toBe(true);
+      expect(h.db.prepare("SELECT status,proposal_json FROM collaboration_natural_intake_jobs WHERE source_event_id='implement'").get())
+        .toEqual({ status: "pending", proposal_json: null });
+      expect(readLatestWorkItemSnapshot(h.db, item(h.db, "implement")!)?.goalConfirmed).toBe(false);
+    } finally { h.service.close(); h.db.close(); }
+  });
+
   it.each([false, true])("carries a delivered scheme into an explicit implementation request and its Spec (direct=%s)", async direct => {
     const requests: NaturalIntakeRequest[] = [];
     const h = setup(async input => input.sourceEventId === "consult" ? adviceDecision(input)

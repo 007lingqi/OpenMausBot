@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { discussionSelectionSchema } from "./discussion-options.ts";
+import { readDiscussionSources, type DiscussionSource } from "./discussion-sources.ts";
 
 const receiptSchema = z.object({ sourceEventId: z.string(), quote: z.string(),
   action: z.enum(["create_work", "contribute"]), implementationSelection: discussionSelectionSchema });
@@ -12,6 +13,8 @@ export interface DiscussionImplementationContext {
   requestSourceEventId: string;
   requestQuote: string;
   selection: z.infer<typeof discussionSelectionSchema>;
+  discussionSources?: DiscussionSource[];
+  discussionContextIncomplete?: boolean;
 }
 export const implementationContextHash = (context: DiscussionImplementationContext | null): string =>
   createHash("sha256").update(JSON.stringify(context)).digest("hex");
@@ -42,5 +45,8 @@ export function readDiscussionImplementation(db: DatabaseSync, workItemId: strin
   if (!presented || createHash("sha256").update(presentationSchema.parse(presented).payload_json).digest("hex") !== selection.presentation.presentationHash) {
     throw new Error("discussion_implementation_presentation_changed");
   }
-  return { requestSourceEventId: sourceEventId, requestQuote: receipt.quote, selection };
+  const discussion = readDiscussionSources(db, { conversationId: row.conversation_id, workItemId, selection,
+    beforeEventId: sourceEventId, outboxSequence: row.context_outbox_sequence });
+  return { requestSourceEventId: sourceEventId, requestQuote: receipt.quote, selection,
+    discussionSources: discussion.sources, discussionContextIncomplete: discussion.incomplete };
 }

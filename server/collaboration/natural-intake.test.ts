@@ -58,6 +58,13 @@ describe("durable source-bound natural requirement intake", () => {
       expect(() => validateNaturalIntakeProposal({ ...raw, acceptance: [{ ...raw.acceptance[0], quote }] }, request))
         .toThrow("natural_intake_quote_not_in_sources");
     }
+    request.implementationContext.discussionSources = [
+      { sourceEventId: "user-before", role: "user", principalId: "member", eventOrder: 1, text: "不要新增依赖", contentHash: "b".repeat(64) },
+      { sourceEventId: "outbox:before", role: "assistant", principalId: null, eventOrder: 1, text: "可以考虑高级版", contentHash: "c".repeat(64) },
+    ];
+    expect(() => validateNaturalIntakeProposal({ ...raw, acceptance: [{ description: "不增加依赖", observation: "依赖清单保持不变", quote: "不要新增依赖" }] }, request)).not.toThrow();
+    expect(() => validateNaturalIntakeProposal({ ...raw, acceptance: [{ description: "实施高级版", observation: "高级版可用", quote: "可以考虑高级版" }] }, request))
+      .toThrow("natural_intake_quote_not_in_sources");
     expect(() => validateNaturalIntakeProposal({ ...raw, goal: { ...raw.goal, quote: option.description } }, request))
       .toThrow("natural_intake_quote_not_in_event");
   });
