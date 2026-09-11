@@ -10,6 +10,7 @@ import { clarificationRecipient } from "./clarification-recipients.ts";
 import { renderDingTalkSessionMessage } from "../integrations/dingtalk/session-message.ts";
 import { ModelNaturalIntakeInterpreter, validateNaturalIntakeProposal, type NaturalIntakeRequest, type NaturalIntakeInterpreter } from "./natural-intake.ts";
 import { readNaturalIntakeContext } from "./natural-intake-context.ts";
+import { readQuestionHistory } from "./question-lifecycle.ts";
 
 const scratch: string[] = [];
 afterEach(() => { for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true }); });
@@ -31,7 +32,160 @@ function harness(interpreter: NaturalIntakeInterpreter) {
   return { service, db, options };
 }
 
+function lifecycleRequest(text: string, ids: string[] = []): NaturalIntakeRequest {
+  return { event: { sourceEventId: "source", principalId: "requester", text }, history: [], contextTruncated: false,
+    snapshot: { workItemId: "WI-TEST", revision: 1, sourceWorkItemVersion: 1, goal: null, goalConfirmed: false,
+      repository: null, assumptions: [], acceptanceConditions: [], createdAt: 1,
+      blockingAmbiguities: ids.map(id => ({ id: `natural-${id}`, question: id, dependsOn: [], recommendedAnswer: "确定范围" })) },
+    questions: ids.slice(0, 3).map(id => ({ id: `natural-${id}`, title: id, question: id, recommendedAnswer: "确定范围", blocker: "blocking_ambiguity" })),
+  };
+}
+
 describe("durable source-bound natural requirement intake", () => {
+  it("bounds closed-question context but still rejects reuse of an older resolved ID", async () => {
+    const h = harness({ async interpret(request) {
+      const q = (id: string) => ({ id, question: `${id}需要什么结果？`, reason: "确定范围", role: "product", respondent: null });
+      if (request.event.sourceEventId === "bounded-reuse") return { ...proposal(request), questions: [q("gap-0")] };
+      const index = Number(request.event.sourceEventId.split("-").at(-1));
+      const open = request.snapshot.blockingAmbiguities.find(q => q.id.startsWith("natural-gap-"));
+      return { ...proposal(request), answers: open ? [{ questionId: open.id, quote: request.event.text }] : [],
+        questions: [q(`gap-${index}`)] };
+    } });
+    try {
+      const first = h.service.ingestDingTalkMessage(message("bounded-0", "做一个管理后台"));
+      await h.service.processNaturalIntake();
+      for (let index = 1; index <= 27; index++) {
+        h.service.ingestDingTalkMessage(message(`bounded-${index}`, `第${index}项只给管理员使用`, "bounded-0"));
+        expect(await h.service.processNaturalIntake()).toBe(first.workItemId);
+      }
+      const snapshot = readLatestWorkItemSnapshot(h.db, first.workItemId!)!;
+      const history = readQuestionHistory(h.db, snapshot);
+      expect(history.truncated).toBe(true);
+      expect(history.entries).toHaveLength(26);
+      expect(history.entries.some(q => q.questionId === "natural-gap-0")).toBe(false);
+      expect(history.entries.find(q => q.questionId === "natural-gap-27")?.status).toBe("open");
+      expect(readQuestionHistory(h.db, snapshot, ["natural-gap-0"]).entries).toEqual([
+        expect.objectContaining({ questionId: "natural-gap-0", status: "resolved", sourceEventId: "bounded-1" }),
+      ]);
+      h.service.ingestDingTalkMessage(message("bounded-reuse", "继续补充新的页面要求", "bounded-0"));
+      expect(await h.service.processNaturalIntake()).toBeNull();
+      expect(h.db.prepare("SELECT proposal_json FROM collaboration_natural_intake_jobs WHERE source_event_id='bounded-reuse'").get())
+        .toEqual({ proposal_json: null });
+    } finally { h.service.close(); h.db.close(); }
+  });
+
+  it("does not accept model-supplied authority or lifecycle receipts", () => {
+    const request = lifecycleRequest("确认");
+    expect(() => validateNaturalIntakeProposal({ ...proposal(request),
+      questionTransitions: [{ questionId: "natural-access", status: "resolved", principalId: "owner" }],
+    }, request)).toThrow();
+  });
+
+  it("accepts an answer to a still-open gap outside the three displayed questions", async () => {
+    const request = lifecycleRequest("导出只支持CSV", ["page", "role", "menu", "export"]);
+    expect(() => validateNaturalIntakeProposal({ ...proposal(request),
+      answers: [{ questionId: "natural-export", quote: "导出只支持CSV" }],
+    }, request)).not.toThrow();
+    let outputSchema: unknown;
+    const model = new ModelNaturalIntakeInterpreter({ async complete(input) { outputSchema = input.responseSchema; return {}; } });
+    await model.interpret(request, new AbortController().signal);
+    expect(outputSchema).toMatchObject({ properties: { answers: { items: { properties: {
+      questionId: { enum: expect.arrayContaining(["natural-export"]) },
+    } } } } });
+  });
+
+  it("records resolved and superseded gaps without reasking them or erasing their evidence", async () => {
+    const h = harness({ async interpret(request) {
+      const q = (id: string, question: string) => ({ id, question, reason: "决定业务范围", role: "product", respondent: null });
+      if (request.event.sourceEventId === "life-start") return { ...proposal(request),
+        questions: [q("menu", "需要管理哪些菜单？"), q("access", "谁能访问后台？")] };
+      if (request.event.sourceEventId === "life-answer") return { ...proposal(request),
+        answers: [{ questionId: "natural-access", quote: "只有管理员访问" }],
+        questionUpdates: [{ questionId: "natural-menu", status: "superseded", quote: "不做菜单配置了，改做订单查询", replacementQuestionId: "natural-orders" }],
+        questions: [q("orders", "订单需要按哪些条件查询？")] };
+      return { ...proposal(request), questions: [q("access", "谁能访问后台？")] };
+    } });
+    try {
+      const first = h.service.ingestDingTalkMessage(message("life-start", "做一个管理后台"));
+      await h.service.processNaturalIntake();
+      const before = readLatestWorkItemSnapshot(h.db, first.workItemId!)!;
+      h.service.ingestDingTalkMessage(message("life-answer", "只有管理员访问。不做菜单配置了，改做订单查询", "life-start"));
+      expect(await h.service.processNaturalIntake()).toBe(first.workItemId);
+      const after = readLatestWorkItemSnapshot(h.db, first.workItemId!)!;
+      expect(after.blockingAmbiguities.map(q => q.id)).toEqual(["natural-orders"]);
+      expect(readQuestionHistory(h.db, after).entries).toEqual(expect.arrayContaining([
+        expect.objectContaining({ questionId: "natural-access", status: "resolved", quote: "只有管理员访问" }),
+        expect.objectContaining({ questionId: "natural-menu", status: "superseded", replacementQuestionId: "natural-orders" }),
+        expect.objectContaining({ questionId: "natural-orders", status: "open" }),
+      ]));
+      expect(readQuestionHistory(h.db, before).entries.every(q => q.status === "open")).toBe(true);
+      const reply = h.service.pendingOutbox().map(row => row.card).findLast(card => card.type === "clarification_card")!;
+      const serialized = JSON.stringify(renderDingTalkSessionMessage(reply));
+      expect(serialized).toContain("订单需要按哪些条件查询？");
+      expect(serialized).not.toMatch(/谁能访问后台|需要管理哪些菜单|修改完成|WI-/);
+      h.service.ingestDingTalkMessage(message("life-reask", "订单只看本周", "life-start"));
+      const pending = readLatestWorkItemSnapshot(h.db, first.workItemId!)!;
+      expect(await h.service.processNaturalIntake()).toBeNull();
+      expect(readLatestWorkItemSnapshot(h.db, first.workItemId!)).toEqual(pending);
+      expect(h.db.prepare("SELECT status,proposal_json FROM collaboration_natural_intake_jobs WHERE source_event_id='life-reask'").get())
+        .toEqual({ status: "pending", proposal_json: null });
+    } finally { h.service.close(); h.db.close(); }
+  });
+
+  it.each([
+    { status: "partial", questionId: "natural-input-pending", quote: "先做管理员", replacementQuestionId: null },
+    { status: "partial", questionId: "natural-access", quote: "不存在的回答", replacementQuestionId: null },
+    { status: "partial", questionId: "natural-access", quote: "先做管理员", replacementQuestionId: "natural-next" },
+    { status: "superseded", questionId: "natural-access", quote: "先做管理员", replacementQuestionId: null },
+    { status: "superseded", questionId: "natural-access", quote: "先做管理员", replacementQuestionId: "natural-access" },
+    { status: "superseded", questionId: "natural-access", quote: "先做管理员", replacementQuestionId: "natural-missing" },
+  ])("rejects invalid lifecycle updates without allowing gap removal: $status / $questionId / $replacementQuestionId", update => {
+    const request = lifecycleRequest("先做管理员", ["access"]);
+    expect(() => validateNaturalIntakeProposal({ ...proposal(request), questionUpdates: [update],
+      questions: [{ id: "access", question: "管理员有什么权限？", reason: "范围", role: "product", respondent: null }],
+    }, request)).toThrow();
+  });
+
+  it("narrows a partially answered gap and carries its source-bound lifecycle across restart", async () => {
+    const requests: NaturalIntakeRequest[] = [];
+    const h = harness({ async interpret(request) {
+      requests.push(request);
+      const question = { id: "access", question: "管理员能修改哪些菜单？", reason: "确定权限范围", role: "product", respondent: null };
+      if (request.event.sourceEventId === "gap-start") return { ...proposal(request), questions: [question] };
+      if (request.event.sourceEventId === "gap-partial") return { ...proposal(request),
+        questionUpdates: [{ questionId: "natural-access", status: "partial", quote: "先让管理员使用", replacementQuestionId: null }],
+        questions: [{ ...question, question: "管理员需要修改菜单内容，还是只配置可见范围？" }] };
+      return proposal(request);
+    } });
+    try {
+      const first = h.service.ingestDingTalkMessage(message("gap-start", "做一个管理后台"));
+      await h.service.processNaturalIntake();
+      const partial = message("gap-partial", "先让管理员使用", "gap-start");
+      h.service.ingestDingTalkMessage(partial);
+      expect(await h.service.processNaturalIntake()).toBe(first.workItemId);
+      const snapshot = readLatestWorkItemSnapshot(h.db, first.workItemId!)!;
+      expect(snapshot.blockingAmbiguities.filter(q => q.id === "natural-access")).toEqual([
+        expect.objectContaining({ question: "管理员需要修改菜单内容，还是只配置可见范围？" }),
+      ]);
+      expect(h.db.prepare("SELECT definition_status FROM collaboration_work_items WHERE id=?").get(first.workItemId))
+        .toEqual({ definition_status: "waiting_clarification" });
+      const before = h.db.prepare("SELECT count(*) n FROM collaboration_outbox").get();
+      h.service.close();
+      const resumed = startCollaborationService(h.options);
+      try {
+        resumed.ingestDingTalkMessage(partial);
+        expect(await resumed.processNaturalIntake()).toBeNull();
+        expect(h.db.prepare("SELECT count(*) n FROM collaboration_outbox").get()).toEqual(before);
+        resumed.ingestDingTalkMessage(message("gap-next", "另外手机端也要可用", "gap-start"));
+        await resumed.processNaturalIntake();
+        expect(requests.at(-1)).toMatchObject({ questionHistory: { entries: [expect.objectContaining({
+          questionId: "natural-access", status: "partial", sourceEventId: "gap-partial", quote: "先让管理员使用",
+          question: "管理员需要修改菜单内容，还是只配置可见范围？",
+        })] } });
+      } finally { resumed.close(); }
+    } finally { h.service.close(); h.db.close(); }
+  });
+
   it.each([false, true])("shows current follow-up questions before retained older gaps (reuse IDs: %s)", async reuseIds => {
     const question = (id: string, question: string) => ({ id, question, reason: "需要明确首期范围", role: "product", respondent: null });
     const old = [question("admin-scope", "对首期管理的对象，后台必须支持哪些操作？"),
