@@ -16,6 +16,7 @@ import { naturalJobStorage, materialInterpretationSourceCurrent, materialIntakeF
 import { classifyConversationIntent, type ConversationIntentRequest, type ConversationIntentDecision } from "./conversation-intent.ts";
 import { isBusinessQuestion, questionTransitions, readQuestionHistory, type QuestionHistory } from "./question-lifecycle.ts";
 import { implementationContextHash, readDiscussionImplementation, type DiscussionImplementationContext } from "./discussion-implementation.ts";
+import { factProposalSchema, readFactHistory, recordFacts, factGates, type FactHistory } from "./fact-ledger.ts";
 
 export interface NaturalIntakeEvent { sourceEventId: string; principalId: string; text: string }
 export interface NaturalIntakeRequest {
@@ -25,6 +26,7 @@ export interface NaturalIntakeRequest {
   questions: ClarificationQuestion[];
   contextTruncated: boolean;
   questionHistory?: QuestionHistory;
+  factHistory?: FactHistory;
   implementationContext?: DiscussionImplementationContext | null;
   attachments?: AttachmentEvidenceNotification[];
   attachmentsIncomplete?: boolean;
@@ -61,6 +63,7 @@ export class ModelNaturalIntakeInterpreter implements NaturalIntakeInterpreter {
     const responseSchema = schema.extend({ answers: answerIds.length
       ? z.array(schema.shape.answers.element.extend({ questionId: z.enum(answerIds) })).max(3)
       : schema.shape.answers.max(0),
+      facts: z.array(factProposalSchema).max(6),
       questionUpdates: z.array(questionUpdateSchema.extend({ questionId: pendingId })).max(answerIds.length ? 3 : 0),
     });
     return this.model.complete({ signal, responseSchema: z.toJSONSchema(responseSchema), user: JSON.stringify(request), system: [
@@ -86,6 +89,9 @@ export class ModelNaturalIntakeInterpreter implements NaturalIntakeInterpreter {
       "先核对 snapshot.blockingAmbiguities：同一业务缺口的补问或部分回答后的细化，复用原问题去掉 natural- 前缀的 id，只问剩余未明确的部分，不另建同义问题。完全回答才放入 answers；不得为了少问而把未解决的问题标为已回答，也不能借复用 id 换成无关问题。",
       "questions 按本轮最需要用户回答的顺序排列；系统优先展示它们，其他未解决问题仍然保留。",
       "questionHistory 是程序从已提交回执重建的问题状态，含来源。open 未回答、partial 部分回答、resolved 已解决、superseded 因更正被替代。不要再次提出已解决的问题；truncated=true 只表示较早已关闭问题未全部展示，不代表未解问题消失。",
+      "facts 提取当前消息中会影响结果的业务要求或待确认假设，最多6条。key 是同一业务点的稳定英文标识，先查 factHistory 并复用相同业务点的 key，不能换 key 隐藏矛盾；label 用简短业务中文。requirement 的 value 必须逐字来自当前消息，不把推断当成已确认要求；assumption 标记尚需核实的推断，quote 仍须引用当前原文。事实不是权限、审批或测试证据。",
+      "factHistory 保留不同人员的来源。不要因为最新发言、人数或机器人推断而删除旧说法。发现同一业务点不同说法需保留来源，不用 answers 或 questionUpdates 清除 fact- 系统分歧/假设门禁。facts 是补充结构化记录，不替代正常的目标与可观察验收条件。",
+      "为事实分歧或假设提问时，questions.id 复用对应 fact.key（或该 key 加 -resolution），直接说明需要决定的业务选项；系统将问题文案与不可绕过的分歧门禁合为一项，不重复展示。",
       "questionUpdates：部分回答用 status=partial，quote 引用当前回答，并在 questions 用原 id 只追问剩余缺口；replacementQuestionId=null。用户明确更正使旧问题不适用时才用 superseded，quote 引用更正，将 replacementQuestionId 绑定本轮 questions 中不同的新问题完整 natural- 编号。不能用替代来跳过未回答的问题或系统门禁。没有状态变化时用空数组。",
       "questions 最多三个，只询问会改变结果的缺口；已回答的问题不要重问。给出相关角色，不伪造人员身份。",
       "像群里的同事一样追问：每条 question 只问一个可单独回答的关键决定，用简短的一句话，通常不超过60个汉字。不同缺口分成不同问题，不把页面、现状、原因、期望和下一步全塞进一句；总数仍最多三个，优先当前最影响结果的缺口。",
@@ -107,6 +113,7 @@ const schema = z.object({
   acceptance: z.array(z.object({ description: text, observation: text, quote }).strict()).max(10),
   answers: z.array(z.object({ questionId: text, quote }).strict()).max(3),
   questionUpdates: z.array(questionUpdateSchema).max(3).optional(),
+  facts: z.array(factProposalSchema).max(6).optional(),
   questions: z.array(z.object({ id: z.string().regex(/^[a-z][a-z0-9-]{0,48}$/), question: text,
     reason: text, role: z.enum(["requester", "product", "test", "development"]),
     respondent: z.object({ principalId: z.string().min(1).max(256), sourceEventId: z.string().min(1).max(256), quote }).strict().nullable(),
@@ -127,6 +134,9 @@ function answerableQuestionIds(request: NaturalIntakeRequest): string[] {
 
 export function validateNaturalIntakeProposal(raw: unknown, request: NaturalIntakeRequest): NaturalIntakeProposal {
   const result = schema.parse(raw);
+  if (new Set((result.facts ?? []).map(fact => fact.key)).size !== (result.facts ?? []).length) throw new Error("natural_fact_duplicate_key");
+  if ((result.facts ?? []).some(fact => !request.event.text.includes(fact.quote) ||
+    (fact.kind === "requirement" && !fact.quote.includes(fact.value)))) throw new Error("natural_fact_not_grounded");
   if (result.sourceEventId !== request.event.sourceEventId || result.baseRevision !== request.snapshot.revision) {
     throw new Error("natural_intake_source_or_revision_mismatch");
   }
@@ -176,17 +186,24 @@ export function validateNaturalIntakeProposal(raw: unknown, request: NaturalInta
 }
 
 export function naturalDefinitionPatch(request: NaturalIntakeRequest, proposal: NaturalIntakeProposal): WorkItemSnapshotPatch {
+  const gates = factGates(request, proposal.facts ?? [], proposal.questions);
+  const mergedQuestionIds = new Set(gates.flatMap(gate => gate.replacesQuestionId ? [gate.replacesQuestionId] : []));
   const answered = new Set(proposal.answers.map(answer => answer.questionId));
   for (const update of proposal.questionUpdates ?? []) if (update.status === "superseded") answered.add(update.questionId);
-  const ambiguities = request.snapshot.blockingAmbiguities.filter(q => q.id !== "natural-input-pending" &&
+  const ambiguities = request.snapshot.blockingAmbiguities.filter(q => q.id !== "natural-input-pending" && !mergedQuestionIds.has(q.id) &&
     !(q.id === "natural-context-incomplete" && !request.contextTruncated) && !answered.has(q.id));
   for (const q of proposal.questions) {
     const id = `natural-${q.id}`;
+    if (mergedQuestionIds.has(id)) continue;
     const prior = ambiguities.findIndex(value => value.id === id);
     const value = { id, question: redactSensitiveText(q.question), dependsOn: [], role: q.role,
       ...(q.respondent ? { respondent: q.respondent } : {}),
       recommendedAnswer: `请${({ requester: "提出问题的同事", product: "产品同事", test: "测试同事", development: "研发同事" })[q.role]}补充：${redactSensitiveText(q.reason)}` };
     if (prior < 0) ambiguities.push(value); else ambiguities[prior] = value;
+  }
+  for (const { replacesQuestionId: _replaced, ...gate } of gates) {
+    const prior = ambiguities.findIndex(q => q.id === gate.id);
+    if (prior < 0) ambiguities.push(gate); else ambiguities[prior] = gate;
   }
   if (request.contextTruncated && !ambiguities.some(q => q.id === "natural-context-incomplete")) ambiguities.push({
     id: "natural-context-incomplete", question: "这个事项的信息较多，我还需要核对前面的记录，暂不能确认需求完整。",
@@ -198,11 +215,12 @@ export function naturalDefinitionPatch(request: NaturalIntakeRequest, proposal: 
   const priority = new Map(proposal.questions.map((q, index) => [`natural-${q.id}`, index]));
   ambiguities.sort((a, b) => (priority.get(a.id) ?? priority.size) - (priority.get(b.id) ?? priority.size));
   const acceptance = [...request.snapshot.acceptanceConditions];
-  for (const item of proposal.acceptance) {
+  const unsettledFacts = gates.length > 0 || ambiguities.some(q => /^fact-(conflict|assumption)-/u.test(q.id));
+  for (const item of unsettledFacts ? [] : proposal.acceptance) {
     const value = { description: redactSensitiveText(item.description), observation: redactSensitiveText(item.observation) };
     if (!acceptance.some(v => v.description === value.description && v.observation === value.observation)) acceptance.push(value);
   }
-  return { ...(proposal.goal ? { goal: redactSensitiveText(proposal.goal.text), goalConfirmed: proposal.goal.confirmed } : {}),
+  return { ...(proposal.goal && !unsettledFacts ? { goal: redactSensitiveText(proposal.goal.text), goalConfirmed: proposal.goal.confirmed } : {}),
     acceptanceConditions: acceptance, blockingAmbiguities: ambiguities };
 }
 
@@ -273,6 +291,7 @@ export class NaturalIntakeCoordinator {
       const { facts: _facts, ...snapshot } = latest;
       const attachmentContext = readNaturalAttachmentContext(this.db, job.work_item_id);
       const implementationContext = readDiscussionImplementation(this.db, job.work_item_id, job.source_event_id);
+      const factHistory = readFactHistory(this.db, job.work_item_id, latest.revision);
       const request: NaturalIntakeRequest = { event: context.event, snapshot,
         implementationContext,
         attachments: attachmentContext.attachments, attachmentsIncomplete: attachmentContext.incomplete,
@@ -280,7 +299,8 @@ export class NaturalIntakeCoordinator {
         attachmentReplacements: attachmentContext.replacements,
         history: context.history, questions: evaluateDefinitionReadiness(latest, this.repositories).frontier,
         questionHistory: readQuestionHistory(this.db, latest),
-        contextTruncated: context.contextTruncated || implementationContext?.discussionContextIncomplete === true };
+        factHistory,
+        contextTruncated: context.contextTruncated || implementationContext?.discussionContextIncomplete === true || factHistory.truncated };
       // Redact every data field, including legacy snapshots written before inbound sanitization.
       function sanitize(value: unknown): unknown {
         if (typeof value === "string") return redactSensitiveText(value);
@@ -305,6 +325,7 @@ export class NaturalIntakeCoordinator {
         implementationContextHash: implementationContextHash(request.implementationContext ?? null),
         proposalJson: JSON.stringify({ ...sanitize(result) as Record<string, unknown>,
           questionTransitions: sanitize(questionTransitions(safeRequest, result)),
+          factRecords: sanitize(recordFacts(safeRequest, result.facts ?? [])),
           implementationContext: safeRequest.implementationContext,
           eventEvidence: context.eventEvidence,
           attachmentContextHash: attachmentContext.fingerprint, attachmentEvidence: attachmentContext.attachments.map(attachmentReceipt), attachmentReplacements: attachmentContext.replacements,

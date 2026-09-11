@@ -1,0 +1,265 @@
+{
+  "version": 1,
+  "batch": "source-bound-facts-and-conflict-gates",
+  "date": "2026-09-11",
+  "baseCommit": "a44ccf1",
+  "status": "checks_passed",
+  "startedAt": "2026-09-11T02:42:38.091Z",
+  "finishedAt": "2026-09-11T02:43:08.106Z",
+  "scope": {
+    "realModel": true,
+    "realDingTalk": false,
+    "execution": false,
+    "isolatedLedger": true
+  },
+  "model": "gpt-6-astra",
+  "reasoningEffort": "medium",
+  "modelCalls": 4,
+  "sourceFingerprint": "2be01807e9232ab0b03d992a1859c3c498842c4be4df8a748bf1867b897b2bfa",
+  "sourceUnchanged": true,
+  "sourceFiles": {
+    "server/collaboration/fact-ledger.ts": "8765225bde455a529929db0028026545bbc56c12b48bffa41f09f9b1993d2422",
+    "server/collaboration/natural-intake.ts": "59f03a35e61a19b501a49101a31c416a4c8944fa70c1de8061e6e07801361923",
+    "server/collaboration/natural-intake.test.ts": "efffff0bfa9a2f09459228dec33e4e5e08ef25d36e9257577142e8c7e63390b8",
+    "server/collaboration/readiness.ts": "c7cc929031434d8734ec9c427de1bf01b12537d6777509cebd94c48be6206e4c",
+    "server/integrations/dingtalk/session-message.ts": "2eb8027aedebea6ef530351323ac815957667d12bb342175e5bb3f9f3d74d1d8"
+  },
+  "review": {
+    "conflictPresent": true,
+    "goalUnchanged": true,
+    "acceptanceUnchanged": true,
+    "oneReply": true,
+    "plainReply": true
+  },
+  "turns": [
+    {
+      "scenario": "participant-format-conflict",
+      "turn": 0,
+      "speaker": "product",
+      "text": "订单导出格式用 CSV。",
+      "action": "create_work",
+      "target": "WI-3E442C270BEE",
+      "replies": [],
+      "deliveryExpectation": "silent_preparation",
+      "replied": false,
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "deliveryPolicy": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true
+      },
+      "passed": true,
+      "snapshot": {
+        "work_item_id": "WI-3E442C270BEE",
+        "revision": 2,
+        "source_work_item_version": 1,
+        "goal": "订单导出格式用 CSV。",
+        "goal_confirmed": 1,
+        "repository": "/tmp/configured-repository",
+        "facts_json": "[\"订单导出格式用 CSV。\"]",
+        "assumptions_json": "[]",
+        "acceptance_json": "[{\"description\":\"订单导出文件采用 CSV 格式。\",\"observation\":\"导出的订单文件为 CSV 文件，内容可按 CSV 格式解析。\"}]",
+        "blocking_ambiguities_json": "[]",
+        "created_at": 1789094566719
+      },
+      "intentStatus": "applied",
+      "naturalStatus": "applied"
+    },
+    {
+      "scenario": "participant-format-conflict",
+      "turn": 1,
+      "speaker": "tester",
+      "text": "订单导出格式要用 Excel，不要 CSV。",
+      "action": "contribute",
+      "target": "WI-3E442C270BEE",
+      "replies": [
+        "前面要求 CSV，这次要求 Excel 且不要 CSV，最终订单导出采用哪种格式？"
+      ],
+      "deliveryExpectation": "reply_required",
+      "replied": true,
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "deliveryPolicy": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true,
+        "stageReplyDelivered": true,
+        "target": true
+      },
+      "passed": true,
+      "snapshot": {
+        "work_item_id": "WI-3E442C270BEE",
+        "revision": 4,
+        "source_work_item_version": 2,
+        "goal": "订单导出格式用 CSV。",
+        "goal_confirmed": 1,
+        "repository": "/tmp/configured-repository",
+        "facts_json": "[\"订单导出格式用 CSV。\",\"订单导出格式要用 Excel，不要 CSV。\"]",
+        "assumptions_json": "[]",
+        "acceptance_json": "[{\"description\":\"订单导出文件采用 CSV 格式。\",\"observation\":\"导出的订单文件为 CSV 文件，内容可按 CSV 格式解析。\"}]",
+        "blocking_ambiguities_json": "[{\"id\":\"fact-conflict-order-export-format\",\"question\":\"前面要求 CSV，这次要求 Excel 且不要 CSV，最终订单导出采用哪种格式？\",\"dependsOn\":[],\"recommendedAnswer\":\"请相关同事澄清分歧，原始说法和来源均会保留。\",\"role\":\"product\"}]",
+        "created_at": 1789094583551
+      },
+      "intentStatus": "applied",
+      "naturalStatus": "applied"
+    }
+  ],
+  "modelResults": [
+    {
+      "scenario": "participant-format-conflict",
+      "turn": 0,
+      "phase": "intent",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "participant-format-conflict:0",
+        "intent": "new_request",
+        "targetWorkItemId": null,
+        "replySourceEventId": null,
+        "quote": "订单导出格式用 CSV。",
+        "confidence": "high",
+        "advice": null,
+        "choice": null
+      }
+    },
+    {
+      "scenario": "participant-format-conflict",
+      "turn": 0,
+      "phase": "requirements",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "participant-format-conflict:0",
+        "baseRevision": 1,
+        "goal": {
+          "text": "订单导出格式用 CSV。",
+          "confirmed": true,
+          "quote": "订单导出格式用 CSV。"
+        },
+        "acceptance": [
+          {
+            "description": "订单导出文件采用 CSV 格式。",
+            "observation": "导出的订单文件为 CSV 文件，内容可按 CSV 格式解析。",
+            "quote": "订单导出格式用 CSV。"
+          }
+        ],
+        "answers": [],
+        "questionUpdates": [],
+        "facts": [
+          {
+            "key": "order-export-format",
+            "label": "订单导出格式",
+            "value": "订单导出格式用 CSV。",
+            "kind": "requirement",
+            "quote": "订单导出格式用 CSV。"
+          }
+        ],
+        "questions": []
+      },
+      "factHistory": {
+        "entries": [],
+        "truncated": false
+      }
+    },
+    {
+      "scenario": "participant-format-conflict",
+      "turn": 1,
+      "phase": "intent",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "participant-format-conflict:1",
+        "intent": "contribution",
+        "targetWorkItemId": "WI-3E442C270BEE",
+        "replySourceEventId": null,
+        "quote": "订单导出格式要用 Excel，不要 CSV。",
+        "confidence": "high",
+        "advice": null,
+        "choice": null
+      }
+    },
+    {
+      "scenario": "participant-format-conflict",
+      "turn": 1,
+      "phase": "requirements",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "participant-format-conflict:1",
+        "baseRevision": 3,
+        "goal": {
+          "text": "订单导出格式要用 Excel，不要 CSV。",
+          "confirmed": true,
+          "quote": "订单导出格式要用 Excel，不要 CSV。"
+        },
+        "acceptance": [
+          {
+            "description": "订单导出文件采用 Excel 格式，不采用 CSV 格式。",
+            "observation": "导出的订单文件为 Excel 格式文件，而非 CSV 文件。",
+            "quote": "订单导出格式要用 Excel，不要 CSV。"
+          }
+        ],
+        "answers": [],
+        "questionUpdates": [],
+        "facts": [
+          {
+            "key": "order-export-format",
+            "label": "订单导出格式",
+            "value": "订单导出格式要用 Excel，不要 CSV。",
+            "kind": "requirement",
+            "quote": "订单导出格式要用 Excel，不要 CSV。"
+          }
+        ],
+        "questions": [
+          {
+            "id": "order-export-format",
+            "question": "前面要求 CSV，这次要求 Excel 且不要 CSV，最终订单导出采用哪种格式？",
+            "reason": "两位参与者对同一导出格式提出不同要求，需要明确最终选择；当前发言不能自动消除此前要求。",
+            "role": "product",
+            "respondent": null
+          }
+        ]
+      },
+      "factHistory": {
+        "entries": [
+          {
+            "key": "order-export-format",
+            "label": "订单导出格式",
+            "value": "订单导出格式用 CSV。",
+            "kind": "requirement",
+            "quote": "订单导出格式用 CSV。",
+            "id": "2fa452f1449dc086773377104ceea674d2ee51c8303302b5271b8cca56f22b7c",
+            "sourceEventId": "participant-format-conflict:0",
+            "principalId": "08bb8fdc-dfc1-4000-8b78-0ef2e427b375",
+            "revision": 2
+          }
+        ],
+        "truncated": false
+      }
+    }
+  ],
+  "limitations": [
+    "Synthetic participants, isolated ledger and fake sender; no actual execution or real DingTalk.",
+    "Conflict recognition depends on extraction using the same business key; semantic equivalence and unextracted conflicts are not proven.",
+    "Resolution/retraction and assumption-confirmation lifecycle are not implemented in this batch; no live rollout before these are completed.",
+    "Existing generic evaluation checks do not fully cover fact-gate naturalness; concrete final reply and Spec checks were reviewed separately.",
+    "Not complete product, migration, restart trial or final Owner acceptance."
+  ]
+}

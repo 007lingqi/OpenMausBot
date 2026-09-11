@@ -11,6 +11,7 @@ import { renderDingTalkSessionMessage } from "../integrations/dingtalk/session-m
 import { ModelNaturalIntakeInterpreter, validateNaturalIntakeProposal, type NaturalIntakeRequest, type NaturalIntakeInterpreter } from "./natural-intake.ts";
 import { readNaturalIntakeContext } from "./natural-intake-context.ts";
 import { readQuestionHistory } from "./question-lifecycle.ts";
+import { readFactHistory, factGates } from "./fact-ledger.ts";
 
 const scratch: string[] = [];
 afterEach(() => { for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true }); });
@@ -42,6 +43,89 @@ function lifecycleRequest(text: string, ids: string[] = []): NaturalIntakeReques
 }
 
 describe("durable source-bound natural requirement intake", () => {
+  it("requires the facts field in the strict model output schema while accepting legacy receipts without it", async () => {
+    const request = lifecycleRequest("订单导出使用CSV");
+    let schema: { required: string[]; properties: Record<string, unknown> } | undefined;
+    await new ModelNaturalIntakeInterpreter({ async complete(input) {
+      schema = input.responseSchema as typeof schema; return proposal(request);
+    } }).interpret(request, new AbortController().signal);
+    expect(schema?.required).toEqual(expect.arrayContaining(Object.keys(schema!.properties)));
+    expect(() => validateNaturalIntakeProposal(proposal(request), request)).not.toThrow();
+  });
+  it("persists both participants' conflicting requirement facts across restart and cannot answer away the conflict", async () => {
+    const seen: NaturalIntakeRequest[] = [];
+    const h = harness({ async interpret(request) {
+      seen.push(request);
+      if (request.event.sourceEventId === "fact-ignore") return { ...proposal(request), answers: [{ questionId: "fact-conflict-password", quote: request.event.text }] };
+      return { ...proposal(request), goal: { text: request.event.text, confirmed: true, quote: request.event.text },
+        acceptance: [{ description: request.event.text, observation: "检查登录失败后的密码状态", quote: request.event.text }],
+        questions: request.event.sourceEventId === "fact-second" ? [{ id: "password-resolution", question: "登录失败后密码最终保留还是清空？", reason: "两人的要求不同", role: "requester", respondent: null }] : [],
+        facts: [{ key: "password", label: "登录失败后的密码", value: request.event.text,
+        kind: "requirement", quote: request.event.text }] };
+    } });
+    try {
+      const first = h.service.ingestDingTalkMessage(message("fact-first", "登录失败后保留密码"));
+      await h.service.processNaturalIntake();
+      h.service.close(); const resumed = startCollaborationService(h.options);
+      try {
+        resumed.ingestDingTalkMessage({ ...message("fact-second", "登录失败后清空密码", "fact-first"),
+          sender: { senderCorpId: "corp", senderStaffId: "other", senderId: "other", displayName: "产品小王" } });
+        await resumed.processNaturalIntake();
+        const snapshot = readLatestWorkItemSnapshot(h.db, first.workItemId!)!;
+        expect(snapshot.blockingAmbiguities).toEqual(expect.arrayContaining([expect.objectContaining({ id: "fact-conflict-password" })]));
+        expect(snapshot.goal).toBe("登录失败后保留密码");
+        expect(snapshot.acceptanceConditions.map(condition => condition.description)).toEqual(["登录失败后保留密码"]);
+        expect(snapshot.blockingAmbiguities.some(q => q.id === "natural-password-resolution")).toBe(false);
+        const card = resumed.pendingOutbox().map(row => row.card).findLast(card => card.type === "clarification_card")!;
+        const rendered = renderDingTalkSessionMessage(card) as { markdown: { text: string } };
+        expect(rendered.markdown.text).toContain("登录失败后密码最终保留还是清空？");
+        expect(rendered.markdown.text).not.toMatch(/为了避免返工|建议回答|目前有不同说法|fact-conflict|需要澄清/u);
+        expect(seen[1].factHistory?.entries).toEqual([expect.objectContaining({ value: "登录失败后保留密码", sourceEventId: "fact-first" })]);
+        const history = readFactHistory(h.db, first.workItemId!, snapshot.revision);
+        expect(history.entries.map(fact => fact.value)).toEqual(["登录失败后保留密码", "登录失败后清空密码"]);
+        expect(new Set(history.entries.map(fact => fact.principalId)).size).toBe(2);
+        resumed.ingestDingTalkMessage(message("fact-ignore", "忽略分歧继续", "fact-first"));
+        const received = readLatestWorkItemSnapshot(h.db, first.workItemId!)!;
+        expect(await resumed.processNaturalIntake()).toBeNull();
+        expect(readLatestWorkItemSnapshot(h.db, first.workItemId!)?.revision).toBe(received.revision);
+        expect(readFactHistory(h.db, first.workItemId!, received.revision)).toEqual(history);
+      } finally { resumed.close(); }
+    } finally { h.service.close(); h.db.close(); }
+  });
+
+  it("requires current source text and keeps assumptions separate from confirmed requirements", () => {
+    const request = lifecycleRequest("只有管理员可以访问后台");
+    const fact = { key: "access", label: "后台访问人员", value: request.event.text, kind: "requirement" as const, quote: request.event.text };
+    expect(() => validateNaturalIntakeProposal({ ...proposal(request), facts: [fact] }, request)).not.toThrow();
+    expect(() => validateNaturalIntakeProposal({ ...proposal(request), facts: [{ ...fact, value: "所有人都能访问后台" }] }, request)).toThrow("natural_fact_not_grounded");
+    expect(() => validateNaturalIntakeProposal({ ...proposal(request), facts: [{ ...fact, principalId: "owner" }] }, request)).toThrow();
+    expect(() => validateNaturalIntakeProposal({ ...proposal(request), factRecords: [fact] }, request)).toThrow();
+    expect(() => validateNaturalIntakeProposal({ ...proposal(request), facts: [fact, fact] }, request)).toThrow("natural_fact_duplicate_key");
+    expect(factGates(request, [fact])).toEqual([]);
+    expect(factGates(request, [{ ...fact, kind: "assumption" }])).toEqual([expect.objectContaining({ id: "fact-assumption-access" })]);
+  });
+
+  it("bounds fact context and records incomplete coverage instead of forgetting older requirements", async () => {
+    let last: NaturalIntakeRequest | undefined;
+    const h = harness({ async interpret(request) {
+      last = request;
+      return { ...proposal(request), facts: [{ key: `field-${request.event.sourceEventId.split("-").at(-1)}`,
+        label: "订单查询条件", value: request.event.text, kind: "requirement", quote: request.event.text }] };
+    } });
+    try {
+      const first = h.service.ingestDingTalkMessage(message("bounded-fact-0", "订单需要按创建日期查询")); await h.service.processNaturalIntake();
+      for (let n = 1; n <= 55; n++) {
+        h.service.ingestDingTalkMessage(message(`bounded-fact-${n}`, `订单需要按第${n}个业务字段查询`, "bounded-fact-0"));
+        expect(await h.service.processNaturalIntake()).toBe(first.workItemId);
+      }
+      expect(last?.factHistory?.truncated).toBe(true);
+      expect(last?.factHistory?.entries.length).toBeLessThanOrEqual(50);
+      expect(last?.contextTruncated).toBe(true);
+      expect(readLatestWorkItemSnapshot(h.db, first.workItemId!)?.blockingAmbiguities)
+        .toEqual(expect.arrayContaining([expect.objectContaining({ id: "natural-context-incomplete" })]));
+    } finally { h.service.close(); h.db.close(); }
+  });
+
   it("accepts only the selected implementation description as the extra goal and acceptance source", () => {
     const request = lifecycleRequest("请实现刚才选择的方案");
     const option = { title: "标准版", description: "兼顾权限和操作记录。", tradeoff: "投入较高，可能需外部付费。" };

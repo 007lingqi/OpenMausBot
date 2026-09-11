@@ -112,8 +112,8 @@ export function renderDingTalkSessionMessage(payload: unknown): Record<string, u
     Array.isArray(card.questions) && card.questions.length > 0 && card.questions.length <= 3 &&
     card.questions.every(question => {
       const item = record(question);
-      return typeof item?.id === "string" && item.id.startsWith("natural-") &&
-        !["natural-input-pending", "natural-context-incomplete"].includes(item.id) && item.showRecommendedAnswer === false &&
+      return typeof item?.id === "string" && ((item.id.startsWith("natural-") &&
+        !["natural-input-pending", "natural-context-incomplete"].includes(item.id)) || /^fact-(?:conflict|assumption)-[a-z][a-z0-9-]{0,39}$/u.test(item.id)) && item.showRecommendedAnswer === false &&
         typeof item.question === "string" && item.question.trim().length > 0;
     });
   const headline = type === "primary_status_card"

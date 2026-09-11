@@ -89,8 +89,8 @@ export function evaluateDefinitionReadiness(
     });
   });
 
-  const contextual = candidates.filter(q => q.id.startsWith("natural-") &&
-    !["natural-input-pending", "natural-context-incomplete"].includes(q.id));
+  const contextual = candidates.filter(q => (q.id.startsWith("natural-") &&
+    !["natural-input-pending", "natural-context-incomplete"].includes(q.id)) || /^fact-(?:conflict|assumption)-[a-z][a-z0-9-]{0,39}$/u.test(q.id));
   for (const question of contextual) question.showRecommendedAnswer = false;
   const unreadDocuments = candidates.filter(q => q.id === ONLINE_DOCUMENT_GATE_ID);
   if (!contextual.length) return { ready: blockers.length === 0, blockers,
