@@ -3,6 +3,7 @@ import type { AgentRunRequest } from "../provider-runner.ts";
 import { redactSensitiveText } from "../sensitive-text.ts";
 import { assertRevisionChanges, gitBlobSha, matchesPathScope } from "../worktree-manager.ts";
 import type { ProviderReadViewFile } from "./provider-read-view.ts";
+import { parseExecutionSpec } from "../execution-spec.ts";
 
 export const CONTAINED_VIEW_ROOT = "/workspace/view";
 export const CONTAINED_CANDIDATE_ROOT = "/run/omb-private/candidate";
@@ -36,6 +37,7 @@ export function containedProviderRequest(request: AgentRunRequest): ContainedPro
     allowedChanges: request.allowedChanges?.map(change => ({ path: change.path, operation: change.operation,
       parentBlobSha: change.parentBlobSha, resultBlobSha: change.resultBlobSha })),
     inputEvidence: list(request.inputEvidence, 64, 32_000), readScope: list(request.readScope, 64, 2000),
+    ...(request.requirementSpec !== undefined ? { requirementSpec: parseExecutionSpec(request.requirementSpec, request.workItemId) } : {}),
     writeScope: list(request.writeScope, 64, 2000), denyScope: list(request.denyScope, 64, 2000),
     expectedArtifacts: list(request.expectedArtifacts, 64, 2000), completionDefinition: text(request.completionDefinition, 32_000),
     environment: {}, capabilities: { network: false, dependencyInstallation: false, arbitraryCommands: false, gitCommit: false },

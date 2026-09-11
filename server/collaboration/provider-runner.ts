@@ -29,6 +29,8 @@ export interface AgentRunRequest {
   objective: string;
   instructions: string;
   inputEvidence: string[];
+  /** Host-derived current Spec; absent only for legacy/direct provider adapters. */
+  requirementSpec?: import("./execution-spec.ts").ExecutionRequirementSpec;
   readScope: string[];
   writeScope: string[];
   denyScope: string[];

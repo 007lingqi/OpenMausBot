@@ -28,6 +28,15 @@ const post=(url:string, body:unknown=payload(), signal?:AbortSignal)=>fetch(url,
  method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal,
 });
 const sse=()=>new Response('data: synthetic\n\n',{headers:{'content-type':'text/event-stream'}});
+it('accepts an omitted tools field as no tools without accepting malformed declarations',async()=>{
+ const upstream=vi.fn<typeof fetch>(async()=>sse());const url=await gateway(upstream);
+ const {tools:_,...withoutTools}=payload();
+ const response=await post(url,withoutTools);
+ expect(response.status).toBe(200);await response.text();
+ expect(JSON.parse(String(upstream.mock.calls[0][1]?.body))).toEqual({...withoutTools,tools:[]});
+ for(const tools of [null,{},'none'])expect((await post(url,{...withoutTools,tools})).status).toBe(400);
+ expect(upstream).toHaveBeenCalledTimes(1);
+});
 it('accepts only client-side function, custom and one-level namespace tools',async()=>{
  const upstream=vi.fn<typeof fetch>(async()=>sse());const url=await gateway(upstream);
  const result=await post(url,{...payload(),tools:[{type:'function',name:'read'},{type:'custom',name:'patch'},

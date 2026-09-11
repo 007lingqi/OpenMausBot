@@ -35,7 +35,7 @@ function permitted(body:unknown):boolean {
   return object(body) && body.model==='gpt-6-astra' && object(body.reasoning) && body.reasoning.effort==='medium' &&
     body.stream===true && body.store===false && !('previous_response_id' in body) && !('conversation' in body) &&
     (!('background' in body)||body.background===false) && (typeof body.input==='string'||Array.isArray(body.input)) &&
-    Array.isArray(body.tools) && body.tools.length<=64 && body.tools.every(tool=>localTool(tool));
+    (!('tools' in body)||(Array.isArray(body.tools) && body.tools.length<=64 && body.tools.every(tool=>localTool(tool))));
 }
 function fail(response:ServerResponse,status:number,code:string):void {
   if(response.destroyed)return;
@@ -111,6 +111,9 @@ export async function startLocalOpenCodexGateway(options:{
       try {body=JSON.parse(Buffer.concat(chunks).toString('utf8'));}
       catch{outcome='json_invalid';fail(response,400,'local_gateway_json_invalid');return;}
       if(!permitted(body)){outcome='request_denied';fail(response,400,'local_gateway_request_denied');return;}
+      // Current CLI versions omit tools when none are advertised. Canonicalize
+      // that case to an empty allowlist, never add a tool or relax a declaration.
+      if(object(body)&&!('tools' in body))body.tools=[];
       clearTimeout(admissionTimer);stage='upstream';refreshIdle();
       const upstream=await abortable(fetcher(endpoint.href,{method:'POST',redirect:'error',
         headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:controller.signal}),controller.signal,

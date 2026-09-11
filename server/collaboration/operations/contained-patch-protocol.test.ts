@@ -16,6 +16,17 @@ const files = [{ path: "src/main.ts", automaticReplacementAllowed: true }, { pat
 const proposal = { status: "completed", summary: "default updated", changes: [{ path: "src/main.ts", contents: "P2\n" }] };
 
 describe("contained patch protocol", () => {
+  it("preserves the exact current Spec across the contained request boundary and rejects foreign or privileged variants", () => {
+    const requirementSpec = { version: 1 as const, workItemId: request.workItemId, snapshotRevision: 7, sourceWorkItemVersion: 3,
+      goal: "订单导出为Excel", acceptanceConditions: [{ description: "导出Excel", observation: "文件为Excel" }] };
+    expect(containedProviderRequest({ ...request, requirementSpec }).requirementSpec).toEqual(requirementSpec);
+    expect(() => containedProviderRequest({ ...request, requirementSpec: { ...requirementSpec, workItemId: "WI-OTHER" } })).toThrow();
+    expect(() => containedProviderRequest({ ...request, requirementSpec: { ...requirementSpec, snapshotRevision: 0 } })).toThrow();
+    expect(() => containedProviderRequest({ ...request, requirementSpec: { ...requirementSpec, acceptanceConditions: [] } })).toThrow();
+    const forged = { ...requirementSpec, permissions: { network: true } };
+    expect(() => containedProviderRequest({ ...request, requirementSpec: forged })).toThrow();
+  });
+
   it("retains host-pinned source and enforces the exact revision operations before accepting model content", () => {
     const sourceSha = "a".repeat(40), parentBlobSha = gitBlobSha("P1\n", sourceSha), resultBlobSha = gitBlobSha("P2\n", sourceSha);
     const revision = { ...request, sourceSha, allowedChanges: [

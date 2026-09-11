@@ -39,7 +39,7 @@ export class ConfiguredSequentialPlanner implements PlannerPort {
   }
 
   propose(snapshot: WorkItemSnapshot): PlannerProposal {
-    const evidence = snapshot.facts.length ? snapshot.facts : [snapshot.goal ?? "confirmed work item goal"];
+    const evidence = [`Current Spec: ${snapshot.workItemId} / revision ${snapshot.revision}`];
     const goal = snapshot.goal ?? "Complete the confirmed work item";
     const budget = {
       maxMinutes: this.options.maxMinutes,
@@ -81,7 +81,7 @@ export class ConfiguredSequentialPlanner implements PlannerPort {
           writeScope: [...this.options.writeScopes],
           commands: [],
           expectedArtifacts: [...this.options.writeScopes],
-          completionDefinition: snapshot.acceptanceConditions.map((item) => item.description).join("; ") || goal,
+          completionDefinition: "Satisfy every acceptance condition in the host-supplied current requirementSpec; preserve its full scope.",
         },
         {
           ...common,
@@ -94,7 +94,7 @@ export class ConfiguredSequentialPlanner implements PlannerPort {
           writeScope: [],
           commands: [...this.options.targetCommandIds],
           expectedArtifacts: ["target test evidence"],
-          completionDefinition: snapshot.acceptanceConditions.map((item) => item.observation).join("; ") || "All target commands pass.",
+          completionDefinition: "Produce independent test evidence for every acceptance condition in the current Spec; a zero exit code alone is insufficient.",
         },
         {
           ...common,

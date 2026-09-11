@@ -31,7 +31,10 @@ import type {
   SandboxedCommandRunner,
   TargetCommandSpec,
 } from "./quality-gate.ts";
-import { startCollaborationService } from "./service.ts";
+import { startCollaborationService, type CollaborationServiceOptions } from "./service.ts";
+import type { NaturalIntakeInterpreter } from "./natural-intake.ts";
+import { ConfiguredSequentialPlanner, configuredPlanningPolicy } from "./operations/configured-planner.ts";
+import { readLatestWorkItemSnapshot } from "./snapshot.ts";
 import { NODE_TEST_REPORTER_SOURCE } from "./node-test-reporter.ts";
 import { resolveTargetCommandsForCandidate } from "./target-test-selection.ts";
 import { authorizeCandidateRevisionLocally, reserveCandidateRevision, readCandidateRevisionForAttempt } from "./candidate-revision.ts";
@@ -201,6 +204,8 @@ function setup(input: {
   commands?: Record<string, TargetCommandSpec>;
   commandRunner?: SandboxedCommandRunner | null;
   containment?: ContainmentPort;
+  naturalIntake?: NaturalIntakeInterpreter;
+  initialMessage?: DingTalkInboundMessage;
 }) {
   const root = temp();
   const repo = repository(root);
@@ -221,18 +226,21 @@ function setup(input: {
       },
       limits: { maxAttempts: 1, agentTimeoutMs: 2_000, maxAgentEventBytes: 16_000, interruptGraceMs: 500 },
     };
-  const service = startCollaborationService({
+  const plannerConfig = { repository: repo, writeScopes: ["src/**"], targetCommandIds: Object.keys(execution.repositories[repo].targetCommands) };
+  const options: CollaborationServiceOptions = {
     dataDirectory: join(root, "data"),
     planning: {
-      planner: { propose: () => validProposal() },
-      policy: { ...policy, allowedRepositories: [repo] },
+      planner: input.naturalIntake ? new ConfiguredSequentialPlanner(plannerConfig) : { propose: () => validProposal() },
+      policy: input.naturalIntake ? configuredPlanningPolicy(plannerConfig) : { ...policy, allowedRepositories: [repo] },
+      ...(input.naturalIntake ? { naturalIntake: input.naturalIntake, defaultDefinition: { repository: repo, acceptanceConditions: [] } } : {}),
     },
     execution,
-  });
+  };
+  const service = startCollaborationService(options);
   service.bootstrapOwnerLocally({ senderCorpId: "corp-1", senderStaffId: "owner-1", now: 500 });
-  const accepted = new FakeDingTalkAdapter((event) => service.ingestDingTalkMessage(event)).receive(inbound());
+  const accepted = new FakeDingTalkAdapter((event) => service.ingestDingTalkMessage(event)).receive(input.initialMessage ?? inbound());
   if (!accepted.accepted || !accepted.workItemId) throw new Error("Expected Work Item");
-  service.reviseWorkItemDefinition(
+  if (!input.naturalIntake) service.reviseWorkItemDefinition(
     accepted.workItemId,
     {
       goal: "将 fixture value 更新为 after",
@@ -243,7 +251,7 @@ function setup(input: {
     },
     2_000,
   );
-  return { root, repo, baseSha, originalStatus, service, commandRunner, execution, workItemId: accepted.workItemId };
+  return { root, repo, baseSha, originalStatus, service, options, commandRunner, execution, workItemId: accepted.workItemId };
 }
 
 function ledger(root: string): DatabaseSync {
@@ -251,6 +259,81 @@ function ledger(root: string): DatabaseSync {
 }
 
 describe("trusted candidate executor", () => {
+  it("carries an author correction through restart, configured planning and actual candidate/test output without resurrecting the old requirement", async () => {
+    let received: AgentRunRequest | undefined, calls = 0;
+    const f = setup({ initialMessage: { ...inbound(), text: "订单导出为CSV" },
+      naturalIntake: { async interpret(request) {
+        const value = request.event.text.includes("Excel") ? "Excel" : "CSV";
+        const own = request.factHistory?.entries.find(f => f.key === "format" && f.principalId === request.event.principalId);
+        return { version: 1, sourceEventId: request.event.sourceEventId, baseRevision: request.snapshot.revision,
+          goal: { text: request.event.text, confirmed: true, quote: request.event.text },
+          acceptance: [{ description: `订单导出为${value}`, observation: `文件内容为${value}`, quote: value }], answers: [], questions: [],
+          facts: [{ key: "format", label: "格式", value, kind: "requirement", quote: request.event.text }],
+          factCorrections: request.event.text.includes("更正") ? [{ factId: own!.id, quote: request.event.text }] : [] };
+      } },
+      agent: new FakeAgent(request => {
+        calls++; received = request;
+        const value = request.requirementSpec?.acceptanceConditions[0].description === "订单导出为Excel" ? "Excel" : "wrong";
+        writeFileSync(join(request.cwd, "src/value.txt"), `${value}\n`); return completed(request);
+      }),
+      commands: { target: { argv: [process.execPath, "-e", "require('node:assert/strict').equal(require('node:fs').readFileSync('src/value.txt','utf8'),'Excel\\n')"], timeoutMs: 5000, maxOutputBytes: 32000 } },
+      commandRunner: new FakeSandboxedCommandRunner(request => {
+        const result = spawnSync(request.argv[0], request.argv.slice(1), { cwd: request.cwd });
+        return { ...sandboxedResult(request), exitCode: result.status ?? 1, stdout: result.stdout, stderr: result.stderr };
+      }) });
+    let service = f.service;
+    const db = ledger(f.root);
+    try {
+      await service.processNaturalIntake();
+      service.ingestDingTalkMessage({ ...inbound(), sourceEventId: "format-second", transportMessageId: "format-second",
+        text: "订单导出为Excel", replyToSourceEventId: inbound().sourceEventId,
+        sender: { ...inbound().sender, senderStaffId: "other", senderId: "other" } });
+      await service.processNaturalIntake();
+      await expect(service.executeCurrentPlan(f.workItemId)).rejects.toThrow();
+      expect(calls).toBe(0);
+      service.close(); service = startCollaborationService(f.options);
+      const correction = { ...inbound(), sourceEventId: "format-correct", transportMessageId: "format-correct",
+        text: "更正：订单导出为Excel", replyToSourceEventId: inbound().sourceEventId };
+      service.ingestDingTalkMessage(correction); await service.processNaturalIntake();
+      const snapshot = readLatestWorkItemSnapshot(db, f.workItemId)!;
+      const outcome = await service.executeCurrentPlan(f.workItemId);
+      expect(calls).toBe(1);
+      expect(received?.requirementSpec).toMatchObject({ snapshotRevision: snapshot.revision, acceptanceConditions: snapshot.acceptanceConditions });
+      expect(JSON.stringify(received?.inputEvidence)).not.toContain("CSV");
+      expect(JSON.stringify(received?.requirementSpec)).not.toContain("CSV");
+      expect(readFileSync(join(outcome.worktreePath, "src/value.txt"), "utf8")).toBe("Excel\n");
+      expect(readFileSync(join(f.repo, "src/value.txt"), "utf8")).toBe("before\n");
+      expect(outcome.resultSha).not.toBeNull(); expect(outcome.evidence.every(e => e.exitCode === 0)).toBe(true);
+      service.ingestDingTalkMessage(correction); await service.processNaturalIntake();
+      expect(readLatestWorkItemSnapshot(db, f.workItemId)?.revision).toBe(snapshot.revision);
+      expect(calls).toBe(1); expect(snapshot.facts.some(f => f.includes("CSV"))).toBe(true);
+    } finally { service.close(); db.close(); }
+  });
+
+  it("supplies the current persisted requirement Spec, not the retired conversation, to the developer", async () => {
+    let received: AgentRunRequest | undefined;
+    const f = setup({ agent: new FakeAgent(request => {
+      received = request; writeFileSync(join(request.cwd, "src/value.txt"), "after\n"); return completed(request);
+    }) });
+    try {
+      const acceptance = [{ description: "订单导出为Excel", observation: "导出文件为Excel" },
+        { description: "登录逻辑不变", observation: "原登录回归通过" }];
+      f.service.reviseWorkItemDefinition(f.workItemId, { goal: "订单导出为Excel", goalConfirmed: true,
+        acceptanceConditions: acceptance, facts: ["旧要求：订单导出为CSV", "更正：订单导出为Excel"] }, Date.now());
+      const db = ledger(f.root);
+      const row = db.prepare("SELECT * FROM collaboration_work_item_snapshots WHERE work_item_id=? ORDER BY revision DESC LIMIT 1").get(f.workItemId)!;
+      db.close();
+      await f.service.executeCurrentPlan(f.workItemId);
+      expect(received?.requirementSpec).toMatchObject({ version: 1, workItemId: f.workItemId,
+        snapshotRevision: row.revision, sourceWorkItemVersion: row.source_work_item_version,
+        goal: "订单导出为Excel", acceptanceConditions: acceptance });
+      expect(JSON.stringify((received as unknown as { requirementSpec: unknown }).requirementSpec)).not.toContain("CSV");
+      const persisted = ledger(f.root);
+      expect(persisted.prepare("SELECT facts_json FROM collaboration_work_item_snapshots WHERE work_item_id=? ORDER BY revision DESC LIMIT 1").get(f.workItemId)?.facts_json).toContain("CSV");
+      persisted.close();
+    } finally { f.service.close(); }
+  });
+
   it("rejects direct repeated execution of a successful candidate without a revision grant before reserving another session", async () => {
     const f = createCandidateRevisionFixture({ takeLease: false }), agent = new FakeAgent(vi.fn(request => completed(request)));
     const executor = new CandidateExecutor(f.filePath, { agent, containment: new FakeContainment(), commandRunner: new FakeSandboxedCommandRunner(),

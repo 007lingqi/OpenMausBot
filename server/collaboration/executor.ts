@@ -35,6 +35,8 @@ import { CommandCleanupError } from "./execution-limits.ts";
 import { resolveTargetCommandsForCandidate } from "./target-test-selection.ts";
 import { assertCandidateRevisionCanStart, assertCandidateRevisionStillCurrent, readCandidateRevisionForAttempt, type CandidateRevisionGrant } from "./candidate-revision.ts";
 import { hasUnsettledRepositoryActivity } from "./repository-occupancy.ts";
+import { executionSpec, type ExecutionRequirementSpec } from "./execution-spec.ts";
+import { readWorkItemSnapshotRevision } from "./snapshot.ts";
 
 interface NodeRow {
   node_id: string;
@@ -54,6 +56,8 @@ interface NodeRow {
   budget_json: string;
   repository: string;
   current_plan_revision: number;
+  snapshot_revision: number;
+  requirementSpec: ExecutionRequirementSpec;
 }
 
 export interface RepositoryExecutionConfig {
@@ -266,6 +270,7 @@ export class CandidateExecutor {
       objective: node.objective,
       instructions: revision?.instructions ?? node.instructions,
       inputEvidence: parseStrings(node.input_evidence_json),
+      requirementSpec: node.requirementSpec,
       readScope: parseStrings(node.read_scope_json),
       writeScope: parseStrings(node.write_scope_json),
       denyScope: parseStrings(node.deny_scope_json),
@@ -587,7 +592,7 @@ export class CandidateExecutor {
       .prepare(
         "SELECT n.node_id, n.assigned_agent_id, n.objective, n.input_evidence_json, n.instructions, " +
           "n.read_scope_json, n.write_scope_json, n.deny_scope_json, n.commands_json, n.expected_artifacts_json, " +
-          "n.completion_definition, n.budget_json, s.repository, w.current_plan_revision, " +
+          "n.completion_definition, n.budget_json, s.repository, w.current_plan_revision, p.snapshot_revision, " +
           "(SELECT v.commands_json FROM collaboration_work_nodes v " +
           " WHERE v.work_item_id = w.id AND v.plan_revision = p.revision AND v.node_type = 'validate' AND v.active = 1) " +
           "AS target_commands_json, " +
@@ -607,7 +612,9 @@ export class CandidateExecutor {
       .get(workItemId) as NodeRow | undefined;
     if (!row?.repository) throw new Error("Work Item has no current executable modify node");
     if (!readPlanMaterialReadiness(this.database, workItemId, row.current_plan_revision).ready) throw new Error("plan_materials_incomplete");
-    return row;
+    const snapshot = readWorkItemSnapshotRevision(this.database, workItemId, row.snapshot_revision);
+    if (!snapshot) throw Error("execution_spec_missing");
+    return { ...row, requirementSpec: executionSpec(snapshot) };
   }
 
   private executionBlockReason(

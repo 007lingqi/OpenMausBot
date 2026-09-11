@@ -1,0 +1,135 @@
+{
+  "version": 1,
+  "kind": "current-spec-read-only-model-component",
+  "result": {
+    "status": "passed",
+    "startedAt": "2026-09-11T03:55:44.284Z",
+    "finishedAt": "2026-09-11T03:55:56.451Z",
+    "model": "gpt-6-astra",
+    "reasoningEffort": "medium",
+    "scope": {
+      "realModel": true,
+      "realDingTalk": false,
+      "appliedChanges": false,
+      "productionRepository": false,
+      "containmentValidation": false
+    },
+    "sourceHash": "0c9730b7af6e9aaffd4d913d99768beb59dc3e3aeeac349c0b772eb451e39589",
+    "requirementSpec": {
+      "version": 1,
+      "workItemId": "WI-SYNTHETIC-SPEC",
+      "snapshotRevision": 7,
+      "sourceWorkItemVersion": 3,
+      "goal": "订单导出格式从CSV改为Excel，只改src/format.js中的format常量，其他保持不变。",
+      "acceptanceConditions": [
+        {
+          "description": "format常量严格等于Excel",
+          "observation": "检查format导出值为Excel，不再为CSV"
+        }
+      ]
+    },
+    "proposal": {
+      "status": "completed",
+      "summary": "未执行的补丁提案：仅将 format 常量从 CSV 改为 Excel。未修改文件或运行测试。",
+      "changes": [
+        {
+          "path": "src/format.js",
+          "contents": "export const format = \"Excel\";\n"
+        }
+      ],
+      "readOnlyEnforced": true
+    },
+    "checks": {
+      "correctCurrentValue": true,
+      "onlyExpectedFile": true,
+      "originalSourceUnchanged": true
+    },
+    "sourceFiles": [
+      {
+        "path": "server/collaboration/execution-spec.ts",
+        "sha256": "2d824a152a6ab0536b54741ee2ce255394302805fd75a12c03b7db4579758a64"
+      },
+      {
+        "path": "server/collaboration/operations/docker-patch-agent.ts",
+        "sha256": "8c4a865439170ac117128566626a616a4747f1dfd68ff789b8f01b2312ee375f"
+      },
+      {
+        "path": "server/collaboration/operations/contained-patch-protocol.ts",
+        "sha256": "bffd4252cfc8a1622c5b4e2d42b0d883cf6452f5db4f6ae3ac42602301451761"
+      },
+      {
+        "path": "server/collaboration/operations/opencodex-local-gateway.ts",
+        "sha256": "7996143e0841becc403db604786f2d8bf3298507cae8bf509cee505e43bf1fce"
+      }
+    ],
+    "sourceUnchangedDuringRun": true
+  },
+  "gatewayDiagnostics": [
+    {
+      "stage": "stream",
+      "outcome": "completed",
+      "inputBytes": 74163,
+      "outputBytes": 82136,
+      "durationMs": 5358.047375,
+      "firstByteMs": 1405.96525,
+      "upstreamStatus": 200
+    },
+    {
+      "stage": "stream",
+      "outcome": "completed",
+      "inputBytes": 75114,
+      "outputBytes": 83073,
+      "durationMs": 5148.21325,
+      "firstByteMs": 1463.1627500000004,
+      "upstreamStatus": 200
+    }
+  ],
+  "environment": {
+    "cliVersion": "0.153.4",
+    "configuredExecutable": "/Users/mac/.local/bin/codex",
+    "resolvedExecutable": "/Applications/ChatGPT.app/Contents/Resources/codex",
+    "gateway": "temporary patched loopback gateway forwarding to the existing authorized loopback channel",
+    "onlineConfigurationChanged": false
+  },
+  "history": [
+    {
+      "stage": "original CLI request",
+      "attempts": 3,
+      "outcome": "provider_process_failed",
+      "confirmedDiagnostic": "local_gateway_request_denied",
+      "nextAction": "stopped unchanged path; non-forwarding shape probe showed tools was omitted"
+    },
+    {
+      "stage": "setup",
+      "outcome": "pnpm exec tsx unavailable; used existing Node --experimental-strip-types; no dependency installation"
+    },
+    {
+      "stage": "patched gateway with symlink executable before canonicalization",
+      "attempts": 3,
+      "outcome": "proposal_check_failed",
+      "detail": "First summary was not recorded; two later summaries explicitly reported read-tool IPC decoding errors. These are provider-reported diagnostics, not a proved internal CLI root cause."
+    },
+    {
+      "stage": "diagnostic wrapper using real executable path",
+      "attempts": 2,
+      "outcome": "passed"
+    },
+    {
+      "stage": "direct real executable path",
+      "attempts": 1,
+      "outcome": "passed"
+    },
+    {
+      "stage": "product canonicalization with original symlink executable",
+      "attempts": 1,
+      "outcome": "passed",
+      "detail": "Final fixed-source result is recorded above."
+    }
+  ],
+  "limits": [
+    "Only a synthetic single-file proposal; no proposal applied, real DingTalk delivery, independent Verifier, Linux isolation, VM recovery or Owner final acceptance.",
+    "Successful model output alone is not code-delivery evidence.",
+    "Gateway compatibility is local source code; the online gateway was not replaced.",
+    "The path differential is observed; do not generalize to every IPC decoding failure."
+  ]
+}
