@@ -9,10 +9,13 @@ export const discussionOptionsSchema = z.object({ sourceEventId: z.string().min(
   options: z.array(discussionOptionSchema).min(1).max(3) }).strict();
 export type DiscussionOption = z.infer<typeof discussionOptionSchema>;
 export type DiscussionOptions = z.infer<typeof discussionOptionsSchema>;
-export interface DiscussionSelection {
-  presentation: DiscussionOptions;
-  optionIndex: number;
-  option: DiscussionOption;
+export const discussionSelectionSchema = z.object({ presentation: discussionOptionsSchema,
+  optionIndex: z.number().int().min(1).max(3), option: discussionOptionSchema }).strict();
+export type DiscussionSelection = z.infer<typeof discussionSelectionSchema>;
+
+export function referencesSelectedScheme(text: string, offer: DiscussionOptions): boolean {
+  return offer.kind === "selection" && offer.options.length === 1 &&
+    /(?:刚才(?:选择|选中|选定)?的|已(?:选择|选中|选定)的|这个|该|选定的)方案/u.test(text);
 }
 
 export function renderAdviceDiscussion(advice: { summary: string; options: DiscussionOption[]; question: string | null }): string {
@@ -22,7 +25,7 @@ export function renderAdviceDiscussion(advice: { summary: string; options: Discu
 
 export function renderDiscussionSelection(selection: DiscussionSelection): string {
   if (selection.presentation.kind === "selection") return `好，继续按「${selection.option.title}」细化。`;
-  const description = /[。！？!?]$/u.test(selection.option.description) ? selection.option.description : `${selection.option.description}。`;
+  const description = /[。！？!?][”’」』"']?$/u.test(selection.option.description) ? selection.option.description : `${selection.option.description}。`;
   return `已选「${selection.option.title}」：${description}后续按这个方案继续细化。`;
 }
 

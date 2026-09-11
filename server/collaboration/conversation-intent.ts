@@ -1,7 +1,8 @@
 import { z } from "zod";
+import { isDeepStrictEqual } from "node:util";
 import type { NaturalIntakeModelPort } from "./natural-intake.ts";
 import { redactSensitiveText } from "./sensitive-text.ts";
-import { discussionOptionSchema, discussionOptionsSchema, selectionMatchesUtterance, type DiscussionSelection } from "./discussion-options.ts";
+import { discussionOptionSchema, discussionOptionsSchema, referencesSelectedScheme, selectionMatchesUtterance, type DiscussionSelection } from "./discussion-options.ts";
 
 const id = z.string().trim().min(1).max(256);
 const candidate = z.object({ id, title: z.string().max(120), version: z.number().int().positive(),
@@ -60,6 +61,7 @@ interface Evidence {
   quote: string;
   target: ConversationIntentRequest["candidates"][number] | null;
   reply: ConversationIntentRequest["history"][number] | null;
+  implementationSelection?: DiscussionSelection;
 }
 /** A routing proposal only. It cannot authorize execution, certify completion or
  * perform a control operation. The eventual ledger transaction must recheck the
@@ -89,20 +91,22 @@ function safeRequest(value: ConversationIntentRequest): ConversationIntentReques
  * Read the complete current utterance, excluding quoted wording as evidence of
  * an instruction. Mixed discussion/deferred execution stays read-only; ordinary
  * scope constraints and quoted UI copy do not veto an otherwise direct request. */
-function explicitImplementationRequest(text: string): boolean {
+function explicitImplementationRequest(text: string, scheme = false): boolean {
   const current = text.normalize("NFKC").replace(/“[^”]*”|‘[^’]*’|「[^」]*」|『[^』]*』|"[^"]*"|'[^']*'|`[^`]*`/gu, "「引用内容」")
     .replace(/\s+/gu, " ").trim();
   const directRequest = /^(?:请|帮我|麻烦|现在|需要|我要)(?:你|直接|开始|现在|先)?(?:实现|开发|新增|增加|修改|调整|修复|改成|改为)\S+/u;
   const executionDenied = /(?:不要|不想|不需要|无需|不用|不必|不能|不允许|不|别|勿|禁止|暂缓|推迟|延后|暂停)(?:马上|立即|现在|实际|真正|着急|急着|开始)?(?:实施|执行|动手|开工|开发|落地|编码|写代码|改(?:任何)?(?:代码|文件)|修改代码|做|开始修改)/u;
   const discussionOnly = /(?:只|仅|只是|先|暂时)(?:想|要|需要|希望|做|进行|先)?(?:讨论|比较|评估|研究|分析|咨询|思考|梳理|了解|看方案|给出方案|给出建议)/u;
-  return directRequest.test(current) && !executionDenied.test(current) && !discussionOnly.test(current) &&
+  const schemeRequest = scheme && (/^(?:请|帮我|现在)?按[^。！？]{1,80}(?:实现|实施|开发|开始修改)/u.test(current) ||
+    /^(?:我)?选(?:择)?第[一二三123]个[^。！？]{0,40}[，,；;](?:请|现在|直接|就)?(?:开始)?(?:实现|实施|开发|修改)/u.test(current));
+  return (directRequest.test(current) || schemeRequest) && !executionDenied.test(current) && !discussionOnly.test(current) &&
     !/[?？]|如何|怎么|是否|能否|吗/u.test(current);
 }
 
 function validate(request: ConversationIntentRequest, raw: unknown): ConversationIntentDecision {
   const proposal = proposalSchema.parse(raw);
   if (proposal.intent !== "advice" && proposal.advice != null) throw new Error("conversation_advice_unexpected");
-  if (proposal.intent !== "select_option" && proposal.choice != null) throw new Error("conversation_choice_unexpected");
+  if (!["select_option", "new_request", "contribution"].includes(proposal.intent) && proposal.choice != null) throw new Error("conversation_choice_unexpected");
   if (proposal.sourceEventId !== request.sourceEventId || !proposal.quote.trim() || !request.text.includes(proposal.quote)) {
     throw new Error("conversation_source_invalid");
   }
@@ -123,7 +127,10 @@ function validate(request: ConversationIntentRequest, raw: unknown): Conversatio
   if (quotedContext?.workItemId && target?.id !== quotedContext.workItemId && proposal.intent !== "acknowledgement") return ask("reference_conflict");
   if (request.referencedWorkItemId && target?.id !== request.referencedWorkItemId && proposal.intent !== "acknowledgement") return ask("reference_conflict");
   if (proposal.intent === "explanation" && request.referencedReplyId && reply?.sourceEventId !== request.referencedReplyId) return ask("reference_conflict");
-  if (proposal.intent === "select_option") {
+  if (["new_request", "contribution"].includes(proposal.intent) && !proposal.choice && request.discussionOptions && explicitImplementationRequest(request.text, true) &&
+    (referencesSelectedScheme(request.text, request.discussionOptions) ||
+      request.discussionOptions.options.some(option => request.text.includes(option.title)))) return ask("pending_answer");
+  if (proposal.intent === "select_option" || proposal.choice) {
     if (request.pendingQuestion?.kind === "approval") return ask("pending_approval");
     if (request.contextTruncated) return ask("context_incomplete");
     const offer = request.discussionOptions, choice = proposal.choice;
@@ -132,14 +139,20 @@ function validate(request: ConversationIntentRequest, raw: unknown): Conversatio
       request.pendingQuestion?.sourceEventId !== offer.sourceEventId) return ask("reference_unavailable");
     if ((target?.id ?? null) !== offer.workItemId || (target && (target.version !== offer.workItemVersion ||
       target.snapshotRevision !== offer.snapshotRevision))) return ask("reference_conflict");
-    if (!selectionMatchesUtterance(request.text, offer, choice.optionIndex)) return ask("pending_answer");
+    const implementation = proposal.intent !== "select_option";
+    if (implementation && !explicitImplementationRequest(request.text, true)) return ask("pending_read_only");
+    if (implementation && target?.state !== undefined && target.state !== "open") return ask("target_closed");
+    if (!selectionMatchesUtterance(request.text, offer, choice.optionIndex) &&
+      !(implementation && choice.optionIndex === 1 && referencesSelectedScheme(request.text, offer))) return ask("pending_answer");
     const option = offer.options[choice.optionIndex - 1];
-    return { ...evidence, action: "select_option", selection: { presentation: offer, optionIndex: choice.optionIndex,
-      option: { title: adviceText(option.title), description: adviceText(option.description), tradeoff: adviceText(option.tradeoff) } } };
+    const selection = { presentation: offer, optionIndex: choice.optionIndex,
+      option: { title: adviceText(option.title), description: adviceText(option.description), tradeoff: adviceText(option.tradeoff) } };
+    if (proposal.intent === "select_option") return { ...evidence, action: "select_option", selection };
+    evidence.implementationSelection = selection;
   }
   // Candidate order is not proof of the options actually delivered to this speaker.
   // The eventual ingress router must resolve verified displayed choices separately.
-  if (/^(?:(?:我)?(?:就)?选(?:择)?|是)?(?:第[一二三四五六七八九十\d]+(?:个|项)|[123](?:个|项)|前一个|后一个|上一个|下一个)/u.test(request.text)) return ask("reference_unavailable");
+  if (!evidence.implementationSelection && /^(?:(?:我)?(?:就)?选(?:择)?|是)?(?:第[一二三四五六七八九十\d]+(?:个|项)|[123](?:个|项)|前一个|后一个|上一个|下一个)/u.test(request.text)) return ask("reference_unavailable");
   if (request.pendingQuestion && request.pendingQuestion.answerExpected !== false && proposal.intent === "acknowledgement") return ask("pending_answer");
   const shortAssent = /^(?:好的?|对的?|是的?|没错|(?:对)?就(?:是)?这样|就是这个意思|可以|按这个来|同意)$/u
     .test(request.text.replace(/[，,。.!！\s]/gu, ""));
@@ -151,8 +164,8 @@ function validate(request: ConversationIntentRequest, raw: unknown): Conversatio
   // read-only gate when the classifier independently chose new_request and the
   // complete current message explicitly asks to implement something. This never
   // classifies messages by keywords or turns an option/assent into permission.
-  const explicitImplementation = proposal.intent === "new_request" && request.pendingQuestion?.origin === "advice" && !shortAssent &&
-    explicitImplementationRequest(request.text);
+  const explicitImplementation = !!evidence.implementationSelection || (proposal.intent === "new_request" && request.pendingQuestion?.origin === "advice" && !shortAssent &&
+    explicitImplementationRequest(request.text));
   if (request.pendingQuestion?.kind === "read_only" && ["new_request", "contribution"].includes(proposal.intent) && !explicitImplementation) return ask("pending_read_only");
   if (request.pendingQuestion?.kind === "approval" && ["new_request", "contribution", "advice"].includes(proposal.intent)) return ask("pending_approval");
   if (request.contextTruncated && !["acknowledgement", "control_request"].includes(proposal.intent)) return ask("context_incomplete");
@@ -181,10 +194,12 @@ export function validateConversationDecision(request: ConversationIntentRequest,
   const checked = validate(request, { version: 1, sourceEventId: result.sourceEventId, intent: result.intent,
     targetWorkItemId: result.target?.id ?? null, replySourceEventId: result.reply?.sourceEventId ?? null,
     advice: "advice" in result ? result.advice : null,
-    choice: result.action === "select_option" ? { sourceEventId: result.selection.presentation.sourceEventId, optionIndex: result.selection.optionIndex } : null,
+    choice: result.action === "select_option" ? { sourceEventId: result.selection.presentation.sourceEventId, optionIndex: result.selection.optionIndex }
+      : result.implementationSelection ? { sourceEventId: result.implementationSelection.presentation.sourceEventId, optionIndex: result.implementationSelection.optionIndex } : null,
     quote: result.quote, confidence: result.action === "ask_context" ? "uncertain" : "high" });
   if (checked.action !== result.action) throw new Error("conversation_action_invalid");
-  if (checked.action === "select_option" && result.action === "select_option" && JSON.stringify(checked.selection) !== JSON.stringify(result.selection)) {
+  if (!isDeepStrictEqual(checked.implementationSelection, result.implementationSelection)) throw new Error("conversation_implementation_selection_invalid");
+  if (checked.action === "select_option" && result.action === "select_option" && !isDeepStrictEqual(checked.selection, result.selection)) {
     throw new Error("conversation_selection_invalid");
   }
   return result.action === "ask_context" ? { ...checked, action: "ask_context", reason: result.reason,
@@ -210,6 +225,7 @@ export async function classifyConversationIntent(model: NaturalIntakeModelPort, 
       "advice必须给出简短summary、最多3个options（title、description、tradeoff）及至多1个必要question，无需追问则null；basisSourceEventIds包含当前sourceEventId及实际使用的history来源，最多4个。其他意图advice必须为null。",
       "discussionOptions 是程序核对的已送达方案，不是候选任务顺序。用户明确选方案时用 select_option，choice 指定原样 sourceEventId 和从1开始的 optionIndex，targetWorkItemId与该方案的workItemId一致；advice=null。其他意图choice=null。",
       "‘选第二个’、方案名称或唯一方案后的‘按这个来’可以记录讨论选择，不等于实施、部署或审批；不要重新给一组选项。多个选项下只说‘按这个来’仍需澄清。不存在discussionOptions或无法确定用户选择时clarify。",
+      "若当前明确要求实施已展示方案（如‘请实现刚才选择的方案’、‘选第二个，请开始修改’），用new_request（方案workItemId=null）或contribution（方案已关联事项），并用choice绑定实际方案；不要只输出select_option而遗漏实施请求。该绑定只是需求来源，不是生产、部署或任何高风险授权。无关的新需求不携带choice。",
       "直接给出简短建议和各方案取舍，不加固定开场或反复声明未执行；确有必要才追问。question=null仍是只读讨论，不代表用户要求创建任务。",
       "建议只能讨论可选范围与取舍，不输出代码、命令、链接、审批字段或Secret，不声称已执行、已修改、已验证或已完成，不承诺自动执行。无候选事项也可以建议，不编造项目现状。",
       "查询、解释、建议或致谢不是修改请求；不要因为没有候选事项就创建任务。不能仅凭最近一条、候选顺序或发言人数猜测事项。不同同事可能穿插讨论不同问题。",

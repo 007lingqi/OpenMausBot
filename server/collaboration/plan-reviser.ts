@@ -10,6 +10,7 @@ import { assertLedgerArmed } from "./restore-guard.ts";
 import { buildDefinitionPatchFromText } from "./spec-builder.ts";
 import { redactSensitiveText } from "./sensitive-text.ts";
 import { NaturalIntakeCoordinator, type NaturalIntakeInterpreter, type NaturalProjection } from "./natural-intake.ts";
+import { implementationContextHash, readDiscussionImplementation } from "./discussion-implementation.ts";
 import { NaturalAssociationCoordinator } from "./natural-association.ts";
 import { ConversationIngressCoordinator } from "./conversation-ingress.ts";
 import { clarificationRecipient } from "./clarification-recipients.ts";
@@ -206,6 +207,8 @@ export class PlanningCoordinator {
           (natural.materialJobId ? "AND w.control_state='active'" : ""))
           .get(natural.materialJobId ?? natural.sourceEventId, natural.sourceEventId, workItemId, natural.claimToken, now, current?.sourceWorkItemVersion ?? -1);
         if (!claim || current?.revision !== natural.expectedRevision ||
+          (natural.implementationContextHash !== undefined && natural.implementationContextHash !==
+            implementationContextHash(readDiscussionImplementation(this.database, workItemId, natural.sourceEventId))) ||
           (natural.materialJobId && !materialInterpretationSourceCurrent(this.database, workItemId, natural.materialJobId)) ||
           readNaturalAttachmentContext(this.database, workItemId).fingerprint !== natural.attachmentContextHash) {
           this.database.exec("COMMIT");

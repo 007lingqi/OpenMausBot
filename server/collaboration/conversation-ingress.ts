@@ -74,7 +74,7 @@ export class ConversationIngressCoordinator {
           "WHERE j.event_id=? AND j.status='running' AND j.claim_token=? AND j.lease_until>? AND e.conversation_id=? AND e.principal_id=? " +
           "AND e.work_item_id IS NULL AND e.association_state='ambiguous'").get(job.id, token, now + Math.max(0, Date.now() - started), job.conversation_id, job.principal_id) as { normalized_json: string } | undefined;
         if (!current || conversationSourceHash(current.normalized_json) !== job.source_hash) throw new Error("conversation_claim_stale");
-        if (result.action === "select_option") {
+        if (result.action === "select_option" || result.implementationSelection) {
           const fresh = readConversationContext(this.db, job);
           validateResult(fresh, result);
           if (JSON.stringify(fresh.discussionOptions) !== JSON.stringify(request.discussionOptions)) throw new Error("conversation_selection_stale");

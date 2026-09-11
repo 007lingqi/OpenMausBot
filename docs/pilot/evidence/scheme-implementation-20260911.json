@@ -1,0 +1,417 @@
+{
+  "version": 1,
+  "batch": "scheme-implementation",
+  "date": "2026-09-11",
+  "baseCommit": "8f7f1b6",
+  "status": "checks_passed",
+  "startedAt": "2026-09-11T02:11:32.109Z",
+  "finishedAt": "2026-09-11T02:12:30.981Z",
+  "scope": {
+    "realModel": true,
+    "realDingTalk": false,
+    "execution": false,
+    "isolatedLedger": true
+  },
+  "model": "gpt-6-astra",
+  "reasoningEffort": "medium",
+  "modelCalls": 7,
+  "sourceFingerprint": "17a3b31538d8e7e1ccd9455012184e0d6517ce869508c88b66a6a0c8c5707380",
+  "sourceUnchanged": true,
+  "sourceFiles": {
+    "server/collaboration/discussion-implementation.ts": "17279c52261b6af9f05eee3945bbdb85ae7efcbb6a8e37538ca833af1d5f5b5e",
+    "server/collaboration/discussion-options.ts": "2b2e8c37fa69c2d1ea243efc11648cf9242768f16f93808943bf888ca37dcd3d",
+    "server/collaboration/discussion-options.test.ts": "cde6ce812bb2f5a15d2e8d60662fc3488c13e7601b28306c5757a0ee3f7e6a47",
+    "server/collaboration/conversation-intent.ts": "ae0acf321ae49f295de3df62f4d5c95fbeb9bb4eeb19b9e3f187906863eab2da",
+    "server/collaboration/conversation-intent.test.ts": "9879a5dc013965f9e235222e8fb472c8003aca6c883ff1c34157005ba2d8b5d0",
+    "server/collaboration/conversation-ingress.ts": "93bdd4c414d13a9e47d68403ca77f33fe42727e5622a5ed928e26261dfca9e5b",
+    "server/collaboration/conversation-ingress.test.ts": "1f38f6e25d0988a72296981d60978ae0d8b23e7c36db1db4729aa0a0e07ae49f",
+    "server/collaboration/natural-intake.ts": "f8f48a552d6a18cfa496d22c6376906cd4372dde313b15d6a8da92ee16fa8dab",
+    "server/collaboration/natural-intake.test.ts": "e740084c70ff09a29b42f8a82c692d6e9623df5cbb9b60630e0c865d1d9a1f2f",
+    "server/collaboration/plan-reviser.ts": "0f575e3910461443d6bcc22786791659df3975645b1f21658ba977adb018cf4c"
+  },
+  "turns": [
+    {
+      "scenario": "selected-scheme-implementation",
+      "turn": 0,
+      "speaker": "product",
+      "text": "登录失败提示要更易懂。先给我两个只改提示文字的方案供选择，其他功能不变，暂时不要修改代码。",
+      "action": "offer_advice",
+      "target": null,
+      "replies": [
+        "仅比较登录失败提示文案，保持现有功能和判断逻辑不变。\n\n1\\. 简洁直白版：提示文案：“登录未成功，请重试。” 取舍：短小易读，不推测失败原因，但对用户下一步的帮助有限。\n\n2\\. 温和引导版：提示文案：“暂时无法登录，请再试一次。如果仍无法登录，可以稍后再试。” 取舍：语气更温和，给出后续建议，但文字较长，未区分具体失败原因。"
+      ],
+      "deliveryExpectation": "reply_required",
+      "replied": true,
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "deliveryPolicy": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true,
+        "unchangedRequirements": true
+      },
+      "passed": true,
+      "snapshot": null,
+      "intentStatus": "applied",
+      "naturalStatus": null
+    },
+    {
+      "scenario": "selected-scheme-implementation",
+      "turn": 1,
+      "speaker": "product",
+      "text": "选第二个",
+      "action": "select_option",
+      "target": null,
+      "replies": [
+        "已选「温和引导版」：提示文案：“暂时无法登录，请再试一次。如果仍无法登录，可以稍后再试。”后续按这个方案继续细化。"
+      ],
+      "deliveryExpectation": "reply_required",
+      "replied": true,
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "deliveryPolicy": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true,
+        "unchangedRequirements": true,
+        "replyLength": true
+      },
+      "passed": true,
+      "snapshot": null,
+      "intentStatus": "applied",
+      "naturalStatus": null
+    },
+    {
+      "scenario": "selected-scheme-implementation",
+      "turn": 2,
+      "speaker": "product",
+      "text": "请实现刚才选择的方案，其他功能不变。",
+      "action": "create_work",
+      "target": "WI-B0A82F04AF0A",
+      "replies": [],
+      "deliveryExpectation": "silent_preparation",
+      "replied": false,
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "deliveryPolicy": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true
+      },
+      "passed": true,
+      "snapshot": {
+        "work_item_id": "WI-B0A82F04AF0A",
+        "revision": 2,
+        "source_work_item_version": 1,
+        "goal": "提示文案：“暂时无法登录，请再试一次。如果仍无法登录，可以稍后再试。”",
+        "goal_confirmed": 1,
+        "repository": "/tmp/configured-repository",
+        "facts_json": "[\"请实现刚才选择的方案，其他功能不变。\"]",
+        "assumptions_json": "[]",
+        "acceptance_json": "[{\"description\":\"所选方案对应的登录失败提示使用指定文案。\",\"observation\":\"提示显示为“暂时无法登录，请再试一次。如果仍无法登录，可以稍后再试。”\"},{\"description\":\"除所选提示文案调整外，其他功能保持不变。\",\"observation\":\"其他功能的用户可见行为与调整前一致。\"}]",
+        "blocking_ambiguities_json": "[]",
+        "created_at": 1789092717694
+      },
+      "intentStatus": "applied",
+      "naturalStatus": "applied"
+    },
+    {
+      "scenario": "direct-scheme-implementation",
+      "turn": 0,
+      "speaker": "product",
+      "text": "登录失败提示要更易懂。给我两个只改提示文字的方案供选择，其他功能不变。先讨论。",
+      "action": "offer_advice",
+      "target": null,
+      "replies": [
+        "可比较以下两种文案方向，仅调整现有登录失败提示文字，不改变功能或错误判断逻辑。\n\n1\\. 简洁直白：使用短句说明结果，例如“登录未成功，请重试”；现有已明确区分的错误则用通俗语言表达。 取舍：阅读快、改动小，但能提供的排查帮助有限。\n\n2\\. 行动引导：在现有错误分类支持的范围内补充下一步建议，例如凭据错误时提示“账号或密码不正确，请检查后重新输入”。 取舍：更容易理解该怎么做，但文字较长，且建议必须与现有错误原因相符。"
+      ],
+      "deliveryExpectation": "reply_required",
+      "replied": true,
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "deliveryPolicy": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true,
+        "unchangedRequirements": true
+      },
+      "passed": true,
+      "snapshot": null,
+      "intentStatus": "applied",
+      "naturalStatus": null
+    },
+    {
+      "scenario": "direct-scheme-implementation",
+      "turn": 1,
+      "speaker": "product",
+      "text": "选第二个，请开始修改。其他功能不变。",
+      "action": "create_work",
+      "target": "WI-D633F423FB36",
+      "replies": [],
+      "deliveryExpectation": "silent_preparation",
+      "replied": false,
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "deliveryPolicy": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true
+      },
+      "passed": true,
+      "snapshot": {
+        "work_item_id": "WI-D633F423FB36",
+        "revision": 2,
+        "source_work_item_version": 1,
+        "goal": "在现有错误分类支持的范围内补充下一步建议，例如凭据错误时提示“账号或密码不正确，请检查后重新输入”。",
+        "goal_confirmed": 1,
+        "repository": "/tmp/configured-repository",
+        "facts_json": "[\"选第二个，请开始修改。其他功能不变。\"]",
+        "assumptions_json": "[]",
+        "acceptance_json": "[{\"description\":\"错误提示在现有错误分类支持的范围内提供对应的下一步操作建议。\",\"observation\":\"用户遇到现有已分类错误时，提示包含与该错误对应的下一步建议；凭据错误可提示检查账号或密码后重新输入。\"},{\"description\":\"除所选方案涉及的错误提示调整外，其他功能保持不变。\",\"observation\":\"其他功能的用户可见行为与修改前一致。\"}]",
+        "blocking_ambiguities_json": "[]",
+        "created_at": 1789092745653
+      },
+      "intentStatus": "applied",
+      "naturalStatus": "applied"
+    }
+  ],
+  "modelResults": [
+    {
+      "scenario": "selected-scheme-implementation",
+      "turn": 0,
+      "phase": "intent",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "selected-scheme-implementation:0",
+        "intent": "advice",
+        "targetWorkItemId": null,
+        "replySourceEventId": null,
+        "quote": "先给我两个只改提示文字的方案供选择，其他功能不变，暂时不要修改代码。",
+        "confidence": "high",
+        "advice": {
+          "basisSourceEventIds": [
+            "selected-scheme-implementation:0"
+          ],
+          "summary": "仅比较登录失败提示文案，保持现有功能和判断逻辑不变。",
+          "options": [
+            {
+              "title": "简洁直白版",
+              "description": "提示文案：“登录未成功，请重试。”",
+              "tradeoff": "短小易读，不推测失败原因，但对用户下一步的帮助有限。"
+            },
+            {
+              "title": "温和引导版",
+              "description": "提示文案：“暂时无法登录，请再试一次。如果仍无法登录，可以稍后再试。”",
+              "tradeoff": "语气更温和，给出后续建议，但文字较长，未区分具体失败原因。"
+            }
+          ],
+          "question": null
+        },
+        "choice": null
+      }
+    },
+    {
+      "scenario": "selected-scheme-implementation",
+      "turn": 1,
+      "phase": "intent",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "selected-scheme-implementation:1",
+        "intent": "select_option",
+        "targetWorkItemId": null,
+        "replySourceEventId": null,
+        "quote": "选第二个",
+        "confidence": "high",
+        "advice": null,
+        "choice": {
+          "sourceEventId": "outbox:2adc8b26-f2bc-4e23-a130-22eaf34a099a",
+          "optionIndex": 2
+        }
+      }
+    },
+    {
+      "scenario": "selected-scheme-implementation",
+      "turn": 2,
+      "phase": "intent",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "selected-scheme-implementation:2",
+        "intent": "new_request",
+        "targetWorkItemId": null,
+        "replySourceEventId": null,
+        "quote": "请实现刚才选择的方案，其他功能不变。",
+        "confidence": "high",
+        "advice": null,
+        "choice": {
+          "sourceEventId": "outbox:9d047125-6212-4977-9ed5-d013a2b21068",
+          "optionIndex": 1
+        }
+      }
+    },
+    {
+      "scenario": "selected-scheme-implementation",
+      "turn": 2,
+      "phase": "requirements",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "selected-scheme-implementation:2",
+        "baseRevision": 1,
+        "goal": {
+          "text": "提示文案：“暂时无法登录，请再试一次。如果仍无法登录，可以稍后再试。”",
+          "confirmed": true,
+          "quote": "请实现刚才选择的方案，其他功能不变。"
+        },
+        "acceptance": [
+          {
+            "description": "所选方案对应的登录失败提示使用指定文案。",
+            "observation": "提示显示为“暂时无法登录，请再试一次。如果仍无法登录，可以稍后再试。”",
+            "quote": "提示文案：“暂时无法登录，请再试一次。如果仍无法登录，可以稍后再试。”"
+          },
+          {
+            "description": "除所选提示文案调整外，其他功能保持不变。",
+            "observation": "其他功能的用户可见行为与调整前一致。",
+            "quote": "其他功能不变。"
+          }
+        ],
+        "answers": [],
+        "questionUpdates": [],
+        "questions": []
+      }
+    },
+    {
+      "scenario": "direct-scheme-implementation",
+      "turn": 0,
+      "phase": "intent",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "direct-scheme-implementation:0",
+        "intent": "advice",
+        "targetWorkItemId": null,
+        "replySourceEventId": null,
+        "quote": "给我两个只改提示文字的方案供选择，其他功能不变。先讨论。",
+        "confidence": "high",
+        "advice": {
+          "basisSourceEventIds": [
+            "direct-scheme-implementation:0"
+          ],
+          "summary": "可比较以下两种文案方向，仅调整现有登录失败提示文字，不改变功能或错误判断逻辑。",
+          "options": [
+            {
+              "title": "简洁直白",
+              "description": "使用短句说明结果，例如“登录未成功，请重试”；现有已明确区分的错误则用通俗语言表达。",
+              "tradeoff": "阅读快、改动小，但能提供的排查帮助有限。"
+            },
+            {
+              "title": "行动引导",
+              "description": "在现有错误分类支持的范围内补充下一步建议，例如凭据错误时提示“账号或密码不正确，请检查后重新输入”。",
+              "tradeoff": "更容易理解该怎么做，但文字较长，且建议必须与现有错误原因相符。"
+            }
+          ],
+          "question": null
+        },
+        "choice": null
+      }
+    },
+    {
+      "scenario": "direct-scheme-implementation",
+      "turn": 1,
+      "phase": "intent",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "direct-scheme-implementation:1",
+        "intent": "new_request",
+        "targetWorkItemId": null,
+        "replySourceEventId": null,
+        "quote": "选第二个，请开始修改。其他功能不变。",
+        "confidence": "high",
+        "advice": null,
+        "choice": {
+          "sourceEventId": "outbox:f639c5c7-f730-4185-a5ef-d6c88466c1c9",
+          "optionIndex": 2
+        }
+      }
+    },
+    {
+      "scenario": "direct-scheme-implementation",
+      "turn": 1,
+      "phase": "requirements",
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "direct-scheme-implementation:1",
+        "baseRevision": 1,
+        "goal": {
+          "text": "在现有错误分类支持的范围内补充下一步建议，例如凭据错误时提示“账号或密码不正确，请检查后重新输入”。",
+          "confirmed": true,
+          "quote": "选第二个，请开始修改。其他功能不变。"
+        },
+        "acceptance": [
+          {
+            "description": "错误提示在现有错误分类支持的范围内提供对应的下一步操作建议。",
+            "observation": "用户遇到现有已分类错误时，提示包含与该错误对应的下一步建议；凭据错误可提示检查账号或密码后重新输入。",
+            "quote": "在现有错误分类支持的范围内补充下一步建议，例如凭据错误时提示“账号或密码不正确，请检查后重新输入”。"
+          },
+          {
+            "description": "除所选方案涉及的错误提示调整外，其他功能保持不变。",
+            "observation": "其他功能的用户可见行为与修改前一致。",
+            "quote": "其他功能不变。"
+          }
+        ],
+        "answers": [],
+        "questionUpdates": [],
+        "questions": []
+      }
+    }
+  ],
+  "limitations": [
+    "Synthetic messages and fake sender; not real DingTalk delivery or execution.",
+    "Original consultation constraints outside selected options are not yet fully inherited; live execution switch must wait for that work.",
+    "No release, full product acceptance, real multi-person trial, migration or Owner sign-off."
+  ]
+}

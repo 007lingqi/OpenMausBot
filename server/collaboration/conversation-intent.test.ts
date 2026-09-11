@@ -24,6 +24,60 @@ function adviceProposal(input = request) {
     question: "你最看重哪些功能？" as string | null } };
 }
 
+function implementationRequest(text: string): ConversationIntentRequest {
+  return { ...request, text, candidates: [],
+    history: [{ sourceEventId: "offer", role: "assistant", principalId: null, workItemId: null, text: "已选标准版：权限与记录。" }],
+    pendingQuestion: { kind: "read_only", origin: "advice", sourceEventId: "offer", workItemIds: [], text: "已选标准版" },
+    discussionOptions: { kind: "selection", sourceEventId: "offer", presentationHash: "a".repeat(64),
+      workItemId: null, workItemVersion: 0, snapshotRevision: 0,
+      options: [{ title: "标准版", description: "权限与记录。", tradeoff: "投入较高。" }] } };
+}
+
+describe("explicit scheme implementation binding", () => {
+  it("does not lose the selected source when the model omits its choice binding", async () => {
+    const input = implementationRequest("请实现刚才选择的方案");
+    expect(await classify(proposal("new_request", null, input.text), input)).toMatchObject({ action: "ask_context" });
+  });
+  it.each(["请实现刚才选择的方案", "请按这个方案开始修改", "请实现标准版"])("grounds %s in a delivered selection", async text => {
+    const input = implementationRequest(text);
+    const result = await classify({ ...proposal("new_request", null, text), choice: { sourceEventId: "offer", optionIndex: 1 } }, input);
+    expect(result).toMatchObject({ action: "create_work", implementationSelection: { option: { title: "标准版" } } });
+    expect(validateConversationDecision(input, result)).toEqual(result);
+  });
+  it.each(["按这个来", "请实现这个方案，但暂时不要实施", "请实现这个方案，只分析成本", "‘请实现这个方案’是原话，我在转述", "请实现这个方案，可以吗？"])
+    ("does not treat discussion or deferred requests as implementation: %s", async text => {
+      expect(await classify({ ...proposal("new_request", null, text), choice: { sourceEventId: "offer", optionIndex: 1 } }, implementationRequest(text)))
+        .toMatchObject({ action: "ask_context" });
+    });
+  it("does not attach the previous scheme to an unrelated new requirement", async () => {
+    const input = implementationRequest("请新增支付失败原因提示");
+    const result = await classify(proposal("new_request", null, input.text), input);
+    expect(result).toMatchObject({ action: "create_work" });
+    expect(result.implementationSelection).toBeUndefined();
+    expect(await classify({ ...proposal("new_request", null, input.text), choice: { sourceEventId: "offer", optionIndex: 1 } }, input))
+      .toMatchObject({ action: "ask_context" });
+  });
+  it.each(["source", "index", "approval", "truncated", "missing"])("rejects invalid implementation binding: %s", async fault => {
+    const input = implementationRequest("请实现刚才选择的方案");
+    if (fault === "approval") input.pendingQuestion = { ...input.pendingQuestion!, kind: "approval" };
+    if (fault === "truncated") input.contextTruncated = true;
+    if (fault === "missing") input.discussionOptions = undefined;
+    expect(await classify({ ...proposal("new_request", null, input.text),
+      choice: { sourceEventId: fault === "source" ? "forged" : "offer", optionIndex: fault === "index" ? 3 : 1 } }, input)).toMatchObject({ action: "ask_context" });
+  });
+  it("adds the selected scheme to its existing open item, but not an old version or closed item", async () => {
+    const input = implementationRequest("请实现刚才选择的方案");
+    input.candidates = [request.candidates[0]];
+    input.history[0].workItemId = "WI-LOGIN";
+    input.pendingQuestion!.workItemIds = ["WI-LOGIN"];
+    input.discussionOptions = { ...input.discussionOptions!, workItemId: "WI-LOGIN", workItemVersion: 2, snapshotRevision: 3 };
+    const raw = { ...proposal("contribution", "WI-LOGIN", input.text), choice: { sourceEventId: "offer", optionIndex: 1 } };
+    expect(await classify(raw, input)).toMatchObject({ action: "contribute", target: { id: "WI-LOGIN" } });
+    expect(await classify(raw, { ...input, candidates: [{ ...input.candidates[0], version: 3 }] })).toMatchObject({ action: "ask_context", reason: "reference_conflict" });
+    expect(await classify(raw, { ...input, candidates: [{ ...input.candidates[0], state: "completed" }] })).toMatchObject({ action: "ask_context", reason: "target_closed" });
+  });
+});
+
 describe("conversation intent before task mutation", () => {
   it.each(["选第一个和第二个", "不要第二个", "不是第二个", "按这个来"])("keeps ambiguous or negative choices unresolved: %s", async text => {
     const options = [{ title: "轻量版", description: "核心功能。", tradeoff: "范围较小。" },

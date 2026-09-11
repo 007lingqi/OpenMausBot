@@ -42,6 +42,26 @@ function lifecycleRequest(text: string, ids: string[] = []): NaturalIntakeReques
 }
 
 describe("durable source-bound natural requirement intake", () => {
+  it("accepts only the selected implementation description as the extra goal and acceptance source", () => {
+    const request = lifecycleRequest("请实现刚才选择的方案");
+    const option = { title: "标准版", description: "兼顾权限和操作记录。", tradeoff: "投入较高，可能需外部付费。" };
+    request.implementationContext = { requestSourceEventId: "source", requestQuote: request.event.text,
+      selection: { option, optionIndex: 1, presentation: { kind: "selection", sourceEventId: "outbox:offer", presentationHash: "a".repeat(64),
+        workItemId: null, workItemVersion: 0, snapshotRevision: 0, options: [option] } } };
+    const raw = { ...proposal(request), goal: { text: option.description, quote: request.event.text, confirmed: true },
+      acceptance: [{ description: option.description, observation: "测试权限与操作记录", quote: option.description }] };
+    expect(() => validateNaturalIntakeProposal(raw, request)).not.toThrow();
+    expect(() => validateNaturalIntakeProposal(raw, { ...request, implementationContext: null })).toThrow();
+    expect(() => validateNaturalIntakeProposal({ ...raw, goal: { ...raw.goal, text: "增加管理员、采购企业系统并发布生产" } }, request))
+      .toThrow("natural_intake_confirmation_not_grounded");
+    for (const quote of [option.tradeoff, "轻量版只覆盖核心功能", "自动部署生产"]) {
+      expect(() => validateNaturalIntakeProposal({ ...raw, acceptance: [{ ...raw.acceptance[0], quote }] }, request))
+        .toThrow("natural_intake_quote_not_in_sources");
+    }
+    expect(() => validateNaturalIntakeProposal({ ...raw, goal: { ...raw.goal, quote: option.description } }, request))
+      .toThrow("natural_intake_quote_not_in_event");
+  });
+
   it("bounds closed-question context but still rejects reuse of an older resolved ID", async () => {
     const h = harness({ async interpret(request) {
       const q = (id: string) => ({ id, question: `${id}需要什么结果？`, reason: "确定范围", role: "product", respondent: null });
