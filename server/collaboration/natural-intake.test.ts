@@ -93,6 +93,7 @@ describe("durable source-bound natural requirement intake", () => {
       { ...raw, factCorrections: [...raw.factCorrections, ...raw.factCorrections] },
       { ...raw, factCorrectionRecords: [] },
       { ...raw, sharedSpecRewrites: {acceptance:[],goal:null} },
+      { ...raw, semanticFactReview: {} },
     ]) expect(() => validateNaturalIntakeProposal(invalid, request)).toThrow();
     expect(() => validateNaturalIntakeProposal(raw, { ...request, factHistory: { entries: [old], truncated: true } })).toThrow();
     expect(() => validateNaturalIntakeProposal(raw, { ...request, contextTruncated: true })).toThrow();
@@ -189,7 +190,7 @@ describe("durable source-bound natural requirement intake", () => {
     }finally{h.service.close();h.db.close();}
   });
 
-  it("does not resolve a correction when a shared acceptance quote cannot be safely separated", async () => {
+  it("persists a specific business clarification instead of retrying an inseparable correction as a provider failure", async () => {
     const h = harness({ async interpret(request) {
       const correcting = request.event.sourceEventId === "ambiguous-correct";
       const quote = request.event.text;
@@ -204,9 +205,23 @@ describe("durable source-bound natural requirement intake", () => {
       h.service.ingestDingTalkMessage(message("ambiguous-correct", "更正：导出Excel", "ambiguous-first"));
       const before = readLatestWorkItemSnapshot(h.db, first.workItemId!)!;
       await h.service.processNaturalIntake();
-      expect(readLatestWorkItemSnapshot(h.db, first.workItemId!)?.revision).toBe(before.revision);
-      expect(h.db.prepare("SELECT error_code FROM collaboration_natural_intake_jobs WHERE source_event_id=?").get("ambiguous-correct"))
-        .toMatchObject({ error_code: "natural_intake_unavailable" });
+      const pending = readLatestWorkItemSnapshot(h.db, first.workItemId!)!;
+      expect(pending.revision).toBe(before.revision + 1);
+      expect(pending.acceptanceConditions).toEqual(before.acceptanceConditions);
+      expect(pending.goal).toBe(before.goal);
+      expect(pending.blockingAmbiguities).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: "fact-rewrite-scope", question: expect.stringContaining("格式") }),
+      ]));
+      expect(readFactHistory(h.db, first.workItemId!, pending.revision).entries.map(f => f.value).sort()).toEqual(["Excel", "内部员工"].sort());
+      expect(h.db.prepare("SELECT status,error_code,attempts FROM collaboration_natural_intake_jobs WHERE source_event_id=?").get("ambiguous-correct"))
+        .toMatchObject({ status: "applied", error_code: null, attempts: 1 });
+      const card = h.service.pendingOutbox().map(r => r.card).findLast(c => c.type === "clarification_card")!;
+      // SAFETY: the serializer receives a real clarification card; its markdown branch is asserted below.
+      const reply = renderDingTalkSessionMessage(card).markdown as { text: string };
+      expect(reply.text).toContain("格式");
+      expect(reply.text).not.toMatch(/负责人检查|修改完成|需求中的“格式”已更正/u);
+      await h.service.processNaturalIntake();
+      expect(readLatestWorkItemSnapshot(h.db, first.workItemId!)?.revision).toBe(pending.revision);
     } finally { h.service.close(); h.db.close(); }
   });
 
@@ -240,6 +255,80 @@ describe("durable source-bound natural requirement intake", () => {
         expect(history.entries.map(fact => fact.value)).toEqual(["Excel", "Excel"]);
         resumed.ingestDingTalkMessage(correction); await resumed.processNaturalIntake();
         expect(readLatestWorkItemSnapshot(h.db, first.workItemId!)?.revision).toBe(snapshot.revision);
+      } finally { resumed.close(); }
+    } finally { h.service.close(); h.db.close(); }
+  });
+
+  it("resumes an uncertain semantic correction from natural clarification after restart, preserves scope, and can correct again", async () => {
+    let reviewCount = 0;
+    const interpreter = new ModelNaturalIntakeInterpreter({ async complete(input) {
+      if (input.system.includes("你是需求局部重写器")) {
+        const context = JSON.parse(input.user);
+        return { acceptance: context.acceptance.map((scope: { before: { description: string; observation: string } }) => ({
+          before: scope.before, after: { ...scope.before, description: scope.before.description.replace("逗号分隔的", "Excel") },
+        })), goal: context.goal ? { before: context.goal.before, after: context.goal.before.replace("CSV", "Excel") } : null };
+      }
+      if (input.system.includes("你是独立的需求范围核对器")) {
+        reviewCount++;
+        return { appliesRequestedChanges: true, preservesOtherRequirements: true, uncertain: reviewCount === 1,
+          question: reviewCount === 1 ? "只是修改订单文件格式，还是也要改变可下载的订单范围？" : null };
+      }
+      // SAFETY: this test model receives the production interpreter's serialized NaturalIntakeRequest, not external JSON.
+      const request = JSON.parse(input.user) as NaturalIntakeRequest;
+      const initial = request.event.sourceEventId === "semantic-first";
+      const clarifying = request.event.sourceEventId === "semantic-clarify";
+      const value = initial ? "CSV" : request.event.text.includes("JSON") ? "JSON" : "Excel";
+      const quote = initial ? "给内部员工导出CSV" : request.event.text;
+      return { ...proposal(request), goal: initial ? { text: request.event.text, quote: request.event.text, confirmed: true } : null,
+        acceptance: initial ? [{ description: "为内部员工提供逗号分隔的导出文件", observation: "只能下载自己负责的订单", quote },
+          { description: "登录不变", observation: "登录行为不变", quote: "登录不变" }] : [],
+        facts: clarifying ? [] : [{ key: "format", label: "文件格式", value, kind: "requirement", quote },
+          ...(initial ? [{ key: "audience", label: "使用人群", value: "内部员工", kind: "requirement", quote }] : [])],
+        factCorrections: initial || clarifying ? [] : [{ factId: request.factHistory!.entries.find(f => f.key === "format")!.id, quote }],
+      };
+    } });
+    // Exercise the real intake model adapter; association/classification have
+    // separate tests and are not supplied by this scripted model boundary.
+    const h = harness({ interpret: interpreter.interpret.bind(interpreter), reviewFactRewrite: interpreter.reviewFactRewrite.bind(interpreter) });
+    try {
+      const first = h.service.ingestDingTalkMessage(message("semantic-first", "给内部员工导出CSV，登录不变"));
+      await h.service.processNaturalIntake();
+      h.service.ingestDingTalkMessage(message("semantic-correct", "更正：导出Excel，其他不变", "semantic-first"));
+      await h.service.processNaturalIntake();
+      const pending = readLatestWorkItemSnapshot(h.db, first.workItemId!)!;
+      expect(pending.blockingAmbiguities.some(q => q.id === "fact-rewrite-scope")).toBe(true);
+      expect(pending.blockingAmbiguities.find(q => q.id === "fact-rewrite-scope")?.question).toBe("只是修改订单文件格式，还是也要改变可下载的订单范围？");
+      h.service.close();
+      const resumed = startCollaborationService(h.options);
+      try {
+        const clarification = message("semantic-clarify", "只是订单文件格式改成Excel，内部员工范围和登录都不变", "semantic-first");
+        resumed.ingestDingTalkMessage(clarification); await resumed.processNaturalIntake();
+        const current = readLatestWorkItemSnapshot(h.db, first.workItemId!)!;
+        expect(current.blockingAmbiguities.some(q => q.id === "fact-rewrite-scope")).toBe(false);
+        expect(current.goal).toBe("给内部员工导出Excel，登录不变");
+        expect(current.acceptanceConditions).toEqual([
+          { description: "为内部员工提供Excel导出文件", observation: "只能下载自己负责的订单" },
+          { description: "登录不变", observation: "登录行为不变" },
+        ]);
+        expect(reviewCount).toBe(2);
+        expect(readFactHistory(h.db, first.workItemId!, current.revision).entries.map(f => f.value).sort()).toEqual(["Excel", "内部员工"].sort());
+        const outboxCount = resumed.pendingOutbox().length;
+        resumed.ingestDingTalkMessage(clarification); await resumed.processNaturalIntake();
+        expect(readLatestWorkItemSnapshot(h.db, first.workItemId!)?.revision).toBe(current.revision);
+        expect(resumed.pendingOutbox()).toHaveLength(outboxCount);
+        resumed.ingestDingTalkMessage(message("semantic-again", "更正为JSON", "semantic-first")); await resumed.processNaturalIntake();
+        const again = readLatestWorkItemSnapshot(h.db, first.workItemId!)!;
+        expect(again.goal).toBe("给内部员工导出JSON，登录不变");
+        expect(again.acceptanceConditions[0]).toEqual({ description: "为内部员工提供JSON导出文件", observation: "只能下载自己负责的订单" });
+        expect(reviewCount).toBe(2);
+        expect(resumed.ownerBinding()).toBeNull();
+        // SAFETY: this test created and successfully applied the exact job; the query selects its non-null JSON receipt.
+        const stored = h.db.prepare("SELECT proposal_json FROM collaboration_natural_intake_jobs WHERE source_event_id='semantic-clarify'").get() as { proposal_json: string };
+        const tampered = JSON.parse(stored.proposal_json);
+        tampered.semanticFactReview.candidateHash = "0".repeat(64);
+        expect(() => h.db.prepare("UPDATE collaboration_natural_intake_jobs SET proposal_json=? WHERE source_event_id='semantic-clarify'").run(JSON.stringify(tampered)))
+          .toThrow("natural intake provenance is immutable");
+        expect(readFactHistory(h.db, first.workItemId!, again.revision).entries.map(f => f.value).sort()).toEqual(["JSON", "内部员工"].sort());
       } finally { resumed.close(); }
     } finally { h.service.close(); h.db.close(); }
   });

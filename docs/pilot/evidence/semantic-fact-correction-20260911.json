@@ -1,0 +1,193 @@
+{
+  "version": 1,
+  "date": "2026-09-11",
+  "baselineCommit": "6779a5c",
+  "scope": {
+    "realModel": true,
+    "initialSpec": "synthetic legacy paraphrase fixture",
+    "realDingTalk": false,
+    "execution": false
+  },
+  "model": {
+    "name": "gpt-6-astra",
+    "reasoningEffort": "medium",
+    "transport": "opencodex_local",
+    "endpoint": "http://127.0.0.1:18101/v1/responses"
+  },
+  "sourceFingerprint": "f7f627ff9e62cc9702a41520a2a57fec9bd451693bdd5003dcf2982404999d6e",
+  "sourceFingerprintMethod": "SHA256 over sorted relative .ts paths and bytes under server/, separated by NUL",
+  "sourceUnchanged": true,
+  "rawReport": "/var/folders/64/jv3wggb52g7dp20c2d849sy40000gn/T/bot-semantic-fact-eval-VNTs9n/report.json",
+  "probe": "/private/tmp/bot-semantic-fact-eval.ts",
+  "result": "passed",
+  "realModelCalls": 4,
+  "regression": {
+    "command": "pnpm test",
+    "exitCode": 0,
+    "mainFilesPassed": 334,
+    "mainFilesSkipped": 1,
+    "mainTestsPassed": 4730,
+    "mainTestsSkipped": 18,
+    "mainTestsRegistered": 4748,
+    "rawSummary": "/var/folders/64/jv3wggb52g7dp20c2d849sy40000gn/T/omb-test-floor-mxoBYE/vitest-summary.json",
+    "additionalPassed": { "broker": 7, "updater": 15, "desktopViewer": 5, "packageLink": 2, "saveFile": 10 },
+    "packagingAndHeadlessSmoke": "passed",
+    "typecheck": "passed"
+  },
+  "requests": [
+    {
+      "phase": "intake",
+      "response": {
+        "version": 1,
+        "sourceEventId": "correct",
+        "baseRevision": 3,
+        "goal": {
+          "text": "给内部员工导出Excel订单，只包含本人负责订单的订单号和金额，登录不变",
+          "confirmed": false,
+          "quote": "更正我之前的文件格式：导出Excel。其他要求不变。"
+        },
+        "acceptance": [
+          {
+            "description": "订单文件以Excel格式导出",
+            "observation": "导出的订单文件为Excel格式",
+            "quote": "导出Excel"
+          }
+        ],
+        "answers": [],
+        "questionUpdates": [],
+        "facts": [
+          {
+            "key": "format",
+            "label": "文件格式",
+            "value": "Excel",
+            "kind": "requirement",
+            "quote": "更正我之前的文件格式：导出Excel。"
+          }
+        ],
+        "factCorrections": [
+          {
+            "factId": "79d21a524129a4cde50d06341b3400dad6d2d9c41858dbea73d7332899d0a4b3",
+            "quote": "更正我之前的文件格式：导出Excel。"
+          }
+        ],
+        "questions": []
+      }
+    },
+    {
+      "phase": "rewrite",
+      "response": {
+        "acceptance": [
+          {
+            "before": {
+              "description": "为内部员工提供逗号分隔的订单文件",
+              "observation": "仅包含本人负责订单的订单号和金额"
+            },
+            "after": {
+              "description": "为内部员工提供Excel格式的订单文件",
+              "observation": "仅包含本人负责订单的订单号和金额"
+            }
+          }
+        ],
+        "goal": {
+          "before": "给内部员工导出CSV订单，只包含本人负责订单的订单号和金额，登录不变",
+          "after": "给内部员工导出Excel订单，只包含本人负责订单的订单号和金额，登录不变"
+        }
+      }
+    },
+    {
+      "phase": "review",
+      "response": {
+        "appliesRequestedChanges": true,
+        "preservesOtherRequirements": true,
+        "uncertain": false,
+        "question": null
+      }
+    },
+    {
+      "phase": "adversarial-review",
+      "response": {
+        "appliesRequestedChanges": true,
+        "preservesOtherRequirements": false,
+        "uncertain": false,
+        "question": "是否将候选验收中的“所有用户、所有订单及全部字段”改回“仅内部员工、仅本人负责订单的订单号和金额”？"
+      }
+    }
+  ],
+  "finalGoal": "给内部员工导出Excel订单，只包含本人负责订单的订单号和金额，登录不变",
+  "finalAcceptance": [
+    {
+      "description": "为内部员工提供Excel格式的订单文件",
+      "observation": "仅包含本人负责订单的订单号和金额"
+    },
+    {
+      "description": "保持现有登录行为",
+      "observation": "登录成功与失败时的行为不变"
+    },
+    {
+      "description": "订单文件以Excel格式导出",
+      "observation": "导出的订单文件为Excel格式"
+    }
+  ],
+  "remainingAmbiguities": [],
+  "jobs": [
+    {
+      "status": "applied",
+      "error_code": null,
+      "attempts": 1
+    },
+    {
+      "status": "applied",
+      "error_code": null,
+      "attempts": 1
+    }
+  ],
+  "adversarialResult": {
+    "clarificationQuestion": "是否将候选验收中的“所有用户、所有订单及全部字段”改回“仅内部员工、仅本人负责订单的订单号和金额”？"
+  },
+  "notes": [
+    "The starting paraphrased Spec was seeded synthetically; subsequent intake, rewrite and preservation review used the real model.",
+    "No DingTalk sender, real participants, executor, actual code changes or deployment were part of this probe.",
+    "The malicious candidate was synthetic; only its independent rejection used a real model call.",
+    "Semantic judgement by a separate model call is not deterministic proof of business correctness or final delivery acceptance.",
+    "An additional equivalent Excel acceptance was appended by intake; semantic deduplication remains unfinished."
+  ],
+  "priorAttempts": [
+    {
+      "report": "/var/folders/64/jv3wggb52g7dp20c2d849sy40000gn/T/bot-semantic-fact-eval-DbFBAe/report.json",
+      "result": "unverified",
+      "reason": "Sandboxed host-channel attempt did not reach a completed model response; intake stayed pending."
+    },
+    {
+      "report": "/var/folders/64/jv3wggb52g7dp20c2d849sy40000gn/T/bot-semantic-fact-eval-qOCKl2/report.json",
+      "result": "passed",
+      "reason": "Three model calls passed before final non-behavioral cleanup."
+    },
+    {
+      "report": "/var/folders/64/jv3wggb52g7dp20c2d849sy40000gn/T/bot-semantic-fact-eval-kH2qPi/report.json",
+      "result": "assertion_failed",
+      "reason": "Exact-wording assertion rejected the equivalent phrase Excel格式的订单文件. Preserved record; corrected only this wording expectation and reran final probe."
+    }
+  ],
+  "lint": {
+    "baseline": {
+      "anti-slop(no-conditional-empty-object-spread)": 7,
+      "anti-slop(no-unknown-returns)": 5,
+      "anti-slop(no-shape-in-symbol-names)": 2,
+      "anti-slop(no-unknown-parameters)": 4,
+      "anti-slop(require-safety-comment-for-type-assertion)": 27,
+      "anti-slop(no-runtime-typeof)": 2,
+      "anti-slop(no-unsafe-dictionary-type)": 3,
+      "anti-slop(no-chained-type-assertions)": 8
+    },
+    "current": {
+      "anti-slop(no-conditional-empty-object-spread)": 7,
+      "anti-slop(no-unknown-returns)": 5,
+      "anti-slop(no-shape-in-symbol-names)": 2,
+      "anti-slop(no-unknown-parameters)": 4,
+      "anti-slop(require-safety-comment-for-type-assertion)": 27,
+      "anti-slop(no-runtime-typeof)": 2,
+      "anti-slop(no-unsafe-dictionary-type)": 3,
+      "anti-slop(no-chained-type-assertions)": 8
+    }
+  }
+}

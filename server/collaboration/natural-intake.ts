@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { evaluateDefinitionReadiness, type ClarificationQuestion } from "./readiness.ts";
-import { readLatestWorkItemSnapshot, type WorkItemSnapshot, type WorkItemSnapshotPatch } from "./snapshot.ts";
+import { readLatestWorkItemSnapshot, type WorkItemSnapshot, type WorkItemSnapshotPatch, type BlockingAmbiguity } from "./snapshot.ts";
 import { redactSensitiveText } from "./sensitive-text.ts";
 import { assertLedgerArmed } from "./restore-guard.ts";
 import { enqueueInboundCard } from "./outbox.ts";
@@ -17,7 +17,8 @@ import { classifyConversationIntent, type ConversationIntentRequest, type Conver
 import { isBusinessQuestion, questionTransitions, readQuestionHistory, type QuestionHistory } from "./question-lifecycle.ts";
 import { implementationContextHash, readDiscussionImplementation, type DiscussionImplementationContext } from "./discussion-implementation.ts";
 import { factProposalSchema, factCorrectionSchema, readFactHistory, recordFacts, factGates,
-  validateFactCorrections, correctedFactHistory, recordFactCorrections, retainedFactAcceptance, sharedFactSpecRewrites, type FactHistory } from "./fact-ledger.ts";
+  validateFactCorrections, correctedFactHistory, recordFactCorrections, retainedFactAcceptance, sharedFactSpecRewrites, sharedFactRewriteContext, type FactHistory } from "./fact-ledger.ts";
+import { reviewSharedFactRewrite, validateSemanticReview, type FactRewriteClarification, type SemanticRewriteReview, type SharedRewriteContext } from "./fact-rewrite.ts";
 
 export interface NaturalIntakeEvent { sourceEventId: string; principalId: string; text: string }
 export interface NaturalIntakeRequest {
@@ -37,6 +38,7 @@ export interface NaturalIntakeRequest {
 /** This port has no filesystem, execution, configuration or Owner-action capabilities. */
 export interface NaturalIntakeInterpreter {
   interpret(request: NaturalIntakeRequest, signal: AbortSignal): Promise<unknown>;
+  reviewFactRewrite?: (context: SharedRewriteContext, signal: AbortSignal) => Promise<SemanticRewriteReview | FactRewriteClarification | null>;
   associate?: NaturalAssociationPort;
   classifyConversation?: (request: ConversationIntentRequest, signal: AbortSignal) => Promise<ConversationIntentDecision>;
 }
@@ -50,6 +52,9 @@ export interface NaturalIntakeModelPort {
 export class ModelNaturalIntakeInterpreter implements NaturalIntakeInterpreter {
   private readonly model: NaturalIntakeModelPort;
   constructor(model: NaturalIntakeModelPort) { this.model = model; }
+  reviewFactRewrite(context: SharedRewriteContext, signal: AbortSignal): Promise<SemanticRewriteReview | FactRewriteClarification | null> {
+    return reviewSharedFactRewrite(this.model, context, signal);
+  }
   classifyConversation(request: ConversationIntentRequest, signal: AbortSignal): Promise<ConversationIntentDecision> {
     return classifyConversationIntent(this.model, request, signal);
   }
@@ -95,6 +100,7 @@ export class ModelNaturalIntakeInterpreter implements NaturalIntakeInterpreter {
       "factHistory 保留不同人员的来源。不要因为最新发言、人数或机器人推断而删除旧说法。发现同一业务点不同说法需保留来源，不用 answers 或 questionUpdates 清除 fact- 系统分歧/假设门禁。facts 是补充结构化记录，不替代正常的目标与可观察验收条件。",
       "value 使用原文中最小可比较取值，例如 CSV 或 Excel，不用整句措辞差别制造分歧。factCorrections 仅用于当前发言人明确更正自己的要求或核实自己的假设：factId 引用 factHistory.entries 中自己同 key 最新的事实，quote 引用当前明确更正且包含新值的原文；同时在 facts 提交同 key 的新 requirement，并更新目标与验收。不能更正别人、不能把普通补充或致谢当成撤回。其他人仍有不同说法时继续澄清。不更正时 factCorrections=[]。",
       "验收条件只写修改后的当前结果，不加‘替代原要求’等历史比较说明，也不把同一个结果再添加一条。更正格式不意味着删掉原使用人群、字段、异常处理等未变要求。factHistory.bindings 中的 sharedAcceptance/sharedGoal 仅表示共用来源，不是业务冲突；程序会保留其中未被更正的原文并重新绑定来源，不能因此重复追问已明确的人群。未明确的真实缺口仍须保留。",
+      "fact-rewrite-scope 表示更正已记录、原目标/验收还在等待范围核对。用户可直接补充期望，提取明确新事实即可；程序会再次核对退休事实与当前更正，不用重复提交已完成的 factCorrections，也不能用 answers 清除此系统门禁。",
       "为事实分歧或假设提问时，questions.id 复用对应 fact.key（或该 key 加 -resolution），直接说明需要决定的业务选项；系统将问题文案与不可绕过的分歧门禁合为一项，不重复展示。",
       "questionUpdates：部分回答用 status=partial，quote 引用当前回答，并在 questions 用原 id 只追问剩余缺口；replacementQuestionId=null。用户明确更正使旧问题不适用时才用 superseded，quote 引用更正，将 replacementQuestionId 绑定本轮 questions 中不同的新问题完整 natural- 编号。不能用替代来跳过未回答的问题或系统门禁。没有状态变化时用空数组。",
       "questions 最多三个，只询问会改变结果的缺口；已回答的问题不要重问。给出相关角色，不伪造人员身份。",
@@ -195,7 +201,7 @@ export function naturalDefinitionPatch(request: NaturalIntakeRequest, proposal: 
   return naturalDefinitionProjection(request,proposal).patch;
 }
 
-function naturalDefinitionProjection(request: NaturalIntakeRequest, proposal: NaturalIntakeProposal) {
+function naturalDefinitionProjection(request: NaturalIntakeRequest, proposal: NaturalIntakeProposal, reviewed?: SemanticRewriteReview, clarification?: string) {
   const history = correctedFactHistory(request, proposal.factCorrections ?? []);
   const gates = factGates({ ...request, factHistory: history }, proposal.facts ?? [], proposal.questions);
   const correctedKeys = new Set((proposal.factCorrections ?? []).map(c => request.factHistory!.entries.find(f => f.id === c.factId)!.key));
@@ -204,7 +210,7 @@ function naturalDefinitionProjection(request: NaturalIntakeRequest, proposal: Na
   const mergedQuestionIds = new Set(gates.flatMap(gate => gate.replacesQuestionId ? [gate.replacesQuestionId] : []));
   const answered = new Set(proposal.answers.map(answer => answer.questionId));
   for (const update of proposal.questionUpdates ?? []) if (update.status === "superseded") answered.add(update.questionId);
-  const ambiguities = request.snapshot.blockingAmbiguities.filter(q => q.id !== "natural-input-pending" && !mergedQuestionIds.has(q.id) && !clearedGates.has(q.id) &&
+  const ambiguities = request.snapshot.blockingAmbiguities.filter(q => q.id !== "natural-input-pending" && q.id !== "fact-rewrite-scope" && !mergedQuestionIds.has(q.id) && !clearedGates.has(q.id) &&
     !(q.id === "natural-context-incomplete" && !request.contextTruncated) && !answered.has(q.id));
   for (const q of proposal.questions) {
     const id = `natural-${q.id}`;
@@ -228,8 +234,32 @@ function naturalDefinitionProjection(request: NaturalIntakeRequest, proposal: Na
   // Reordering does not resolve any gap; system/dependency gates still apply.
   const priority = new Map(proposal.questions.map((q, index) => [`natural-${q.id}`, index]));
   ambiguities.sort((a, b) => (priority.get(a.id) ?? priority.size) - (priority.get(b.id) ?? priority.size));
-  const unsettledFacts = history.truncated || gates.length > 0 || ambiguities.some(q => /^fact-(conflict|assumption)-/u.test(q.id));
-  const sharedSpecRewrites=unsettledFacts?{acceptance:[],goal:null}:sharedFactSpecRewrites(request,proposal);
+  let unsettledFacts = history.truncated || gates.length > 0 || ambiguities.some(q => /^fact-(conflict|assumption)-/u.test(q.id));
+  let sharedSpecRewrites: ReturnType<typeof sharedFactSpecRewrites> = {acceptance:[],goal:null};
+  let rewriteContext: SharedRewriteContext | undefined;
+  let semanticFactReview: SemanticRewriteReview | undefined;
+  if (!unsettledFacts) {
+    try { sharedSpecRewrites = sharedFactSpecRewrites(request, proposal); }
+    catch (error) {
+      if (!(error instanceof Error) || error.message !== "natural_fact_correction_scope_ambiguous") throw error;
+      rewriteContext = request.contextTruncated ? undefined : sharedFactRewriteContext(request, proposal);
+      if (reviewed && rewriteContext) {
+        semanticFactReview = validateSemanticReview(rewriteContext, reviewed);
+        sharedSpecRewrites = semanticFactReview.rewrites;
+      } else {
+        unsettledFacts = true;
+        const labels = [...new Set(history.retired?.map(f => f.label) ?? [])];
+        const changed = [...history.entries, ...recordFacts(request, proposal.facts ?? [])]
+          .filter(f => history.retired?.some(old => old.principalId === f.principalId && old.key === f.key && old.value !== f.value))
+          .sort((a, b) => b.revision - a.revision)[0];
+        const scopeQuestion: BlockingAmbiguity = { id: "fact-rewrite-scope", question: clarification && clarification.length <= 160
+          ? redactSensitiveText(clarification) : `这次更正“${labels.join("、")}”后，你希望得到什么结果，哪些原要求保持不变？`,
+          dependsOn: [], role: "product", recommendedAnswer: "直接说明期望即可，不需要编号或技术格式。原要求和你的更正都已保留。" };
+        if (changed) scopeQuestion.respondent = { principalId: changed.principalId, sourceEventId: changed.sourceEventId, quote: changed.quote };
+        ambiguities.unshift(scopeQuestion);
+      }
+    }
+  }
   const retained = unsettledFacts ? [...request.snapshot.acceptanceConditions] : retainedFactAcceptance(request, history);
   // A repeated confirmation can give the same condition both unique and shared
   // provenance. Rewrite it before retiring the unique source, not after deletion.
@@ -256,8 +286,10 @@ function naturalDefinitionProjection(request: NaturalIntakeRequest, proposal: Na
   if(corrections.length){
     const detailed=corrections.join("");
     contextSummary=unsettledFacts?"已记录你的需求更正，仍有关键要求需要确认。":detailed.length<=400?detailed:"已更新本次更正的需求，未涉及的要求保留。";
+  } else if (semanticFactReview) {
+    contextSummary = "已按补充说明更新需求，未涉及的要求保留。";
   }
-  return {patch,sharedSpecRewrites,contextSummary};
+  return {patch,sharedSpecRewrites,contextSummary,rewriteContext,semanticFactReview};
 }
 
 export interface NaturalProjection {
@@ -347,16 +379,25 @@ export class NaturalIntakeCoordinator {
         return value;
       }
       const safeRequest = sanitize(request) as NaturalIntakeRequest;
-      const raw = await Promise.race([this.interpreter.interpret(safeRequest, controller.signal), new Promise<never>((_, reject) => {
+      const deadline = new Promise<never>((_, reject) => {
         timer = setTimeout(() => { controller.abort(); reject(new Error("natural_intake_timeout")); }, 90_000);
         controller.signal.addEventListener("abort", () => reject(new Error("natural_intake_cancelled")), { once: true });
-      })]);
+      });
+      const raw = await Promise.race([this.interpreter.interpret(safeRequest, controller.signal), deadline]);
       if (this.stopped) return null;
       const result = validateNaturalIntakeProposal(raw, safeRequest);
       // Full ID lookup is independent of the bounded historical presentation.
       validateNaturalIntakeProposal(result, { ...safeRequest,
         questionHistory: readQuestionHistory(this.db, latest, result.questions.map(q => `natural-${q.id}`)) });
-      const {patch,sharedSpecRewrites,contextSummary}=naturalDefinitionProjection(safeRequest,result);
+      let definition = naturalDefinitionProjection(safeRequest,result);
+      if (definition.rewriteContext && this.interpreter.reviewFactRewrite) {
+        const review = await Promise.race([this.interpreter.reviewFactRewrite(definition.rewriteContext, controller.signal), deadline]);
+        if (this.stopped) return null;
+        if (review) definition = "clarificationQuestion" in review
+          ? naturalDefinitionProjection(safeRequest,result,undefined,review.clarificationQuestion)
+          : naturalDefinitionProjection(safeRequest,result,review);
+      }
+      const {patch,sharedSpecRewrites,contextSummary,semanticFactReview}=definition;
       const applied = this.apply(job.work_item_id, patch, now + Math.max(0, Date.now() - startedAt), {
         sourceEventId: job.source_event_id, expectedRevision: latest.revision, claimToken,
         contextSummary,
@@ -368,6 +409,7 @@ export class NaturalIntakeCoordinator {
           factRecords: sanitize(recordFacts(safeRequest, result.facts ?? [])),
           factCorrectionRecords: sanitize(recordFactCorrections(safeRequest, result.factCorrections ?? [])),
           sharedSpecRewrites: sanitize(sharedSpecRewrites),
+          semanticFactReview: sanitize(semanticFactReview),
           implementationContext: safeRequest.implementationContext,
           eventEvidence: context.eventEvidence,
           attachmentContextHash: attachmentContext.fingerprint, attachmentEvidence: attachmentContext.attachments.map(attachmentReceipt), attachmentReplacements: attachmentContext.replacements,

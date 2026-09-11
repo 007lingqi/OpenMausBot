@@ -3,6 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import type { NaturalIntakeRequest, NaturalIntakeProposal } from "./natural-intake.ts";
 import type { BlockingAmbiguity, AcceptanceCondition } from "./snapshot.ts";
+import { semanticReviewSchema, validateSemanticReview, type SharedRewriteContext, type RewriteFact, type SemanticRewriteReview } from "./fact-rewrite.ts";
 
 export const factProposalSchema = z.object({ key: z.string().regex(/^[a-z][a-z0-9-]{0,39}$/u),
   label: z.string().trim().min(1).max(60), value: z.string().trim().min(1).max(500),
@@ -23,9 +24,10 @@ const rowSchema = z.object({ source_event_id: z.string(), principal_id: z.string
 const conditionSchema = z.object({ description: z.string(), observation: z.string() });
 const sharedRewritesSchema = z.object({ acceptance: z.array(z.object({ before: conditionSchema, after: conditionSchema }).strict()),
   goal: z.object({ before: z.string(), after: z.string() }).strict().nullable() }).strict();
-type SharedSpecRewrites = z.infer<typeof sharedRewritesSchema>;
+export type SharedSpecRewrites = z.infer<typeof sharedRewritesSchema>;
 const receiptSchema = z.object({ factRecords: z.array(recordSchema).optional(), factCorrectionRecords: z.array(correctionRecordSchema).optional(),
   sharedSpecRewrites: sharedRewritesSchema.optional(),
+  semanticFactReview: semanticReviewSchema.optional(),
   acceptance: z.array(conditionSchema.extend({ quote: z.string() })), goal: z.object({ text: z.string(), quote: z.string() }).nullable(),
   eventEvidence: z.object({ normalizedHash: z.string() }) });
 const sameCondition = (a: AcceptanceCondition, b: AcceptanceCondition): boolean => a.description === b.description && a.observation === b.observation;
@@ -85,7 +87,37 @@ export function sharedFactSpecRewrites(request: NaturalIntakeRequest, proposal: 
   return result;
 }
 
-function restoreSharedRewrites(rewrites:SharedSpecRewrites,active:Map<string,BoundFact>,retired:BoundFact[],applied:AcceptanceCondition[],goal:string|null):void {
+function rewriteContext(snapshot: Pick<NaturalIntakeRequest["snapshot"], "workItemId" | "revision" | "acceptanceConditions" | "goal">,
+  active: BoundFact[], retired: BoundFact[], event: NaturalIntakeRequest["event"]): SharedRewriteContext {
+  const all = [...active, ...retired];
+  const factsFor = (related: BoundFact[]): RewriteFact[] => {
+    if (!related.some(f => retired.includes(f))) return [];
+    const facts = new Map<string, RewriteFact>();
+    for (const old of related) {
+      const latest = active.filter(f => f.principalId === old.principalId && f.key === old.key).sort((a, b) => b.revision - a.revision)[0];
+      if (!latest || latest.kind !== "requirement") throw new Error("natural_fact_rewrite_source_invalid");
+      const value = { key: old.key, principalId: old.principalId, before: old.value, after: latest.value };
+      facts.set(JSON.stringify(value), value);
+    }
+    return [...facts].sort(([a], [b]) => a.localeCompare(b)).map(([, value]) => value);
+  };
+  const acceptance = snapshot.acceptanceConditions.flatMap(before => {
+    const facts = factsFor(all.filter(f => f.bindings?.sharedAcceptance?.some(c => sameCondition(c, before))));
+    return facts.some(f => f.before !== f.after) ? [{ before, facts }] : [];
+  });
+  const goalFacts = snapshot.goal ? factsFor(all.filter(f => f.bindings?.sharedGoal === snapshot.goal)) : [];
+  return { workItemId: snapshot.workItemId, baseRevision: snapshot.revision, sourceEventId: event.sourceEventId,
+    clarification: { principalId: event.principalId, text: event.text }, acceptance,
+    goal: snapshot.goal && goalFacts.some(f => f.before !== f.after) ? { before: snapshot.goal, facts: goalFacts } : null };
+}
+
+export function sharedFactRewriteContext(request: NaturalIntakeRequest, proposal: NaturalIntakeProposal): SharedRewriteContext {
+  const history = correctedFactHistory(request, proposal.factCorrections ?? []);
+  return rewriteContext(request.snapshot, [...history.entries, ...recordFacts(request, proposal.facts ?? [])], history.retired ?? [], request.event);
+}
+
+function restoreSharedRewrites(rewrites:SharedSpecRewrites,active:Map<string,BoundFact>,retired:BoundFact[],applied:AcceptanceCondition[],goal:string|null,
+  review?: SemanticRewriteReview):void {
   const all=[...active.values(),...retired];
   const transfer=(related:BoundFact[],update:(bindings:NonNullable<BoundFact['bindings']>)=>void)=>{
     for(const fact of related){
@@ -96,14 +128,14 @@ function restoreSharedRewrites(rewrites:SharedSpecRewrites,active:Map<string,Bou
   };
   for(const {before,after} of rewrites.acceptance){
     const related=all.filter(f=>f.bindings?.sharedAcceptance?.some(c=>sameCondition(c,before)));
-    const [description,observation]=rewriteSharedText([before.description,before.observation],related,[...active.values()],retired);
-    if(!related.length||!sameCondition(after,{description,observation})||!applied.some(c=>sameCondition(c,after))||applied.some(c=>sameCondition(c,before)))throw Error("natural_fact_rewrite_source_invalid");
+    const [description,observation]=review ? [after.description, after.observation] : rewriteSharedText([before.description,before.observation],related,[...active.values()],retired);
+    if(!related.length||!sameCondition(after,{description,observation})||!applied.some(c=>sameCondition(c,after))||(!sameCondition(before,after)&&applied.some(c=>sameCondition(c,before))))throw Error("natural_fact_rewrite_source_invalid");
     for(const fact of related)fact.bindings!.sharedAcceptance=fact.bindings!.sharedAcceptance!.filter(c=>!sameCondition(c,before));
     transfer(related,bindings=>{bindings.sharedAcceptance??=[];if(!bindings.sharedAcceptance.some(c=>sameCondition(c,after)))bindings.sharedAcceptance.push(after);});
   }
   if(rewrites.goal){
     const {before,after}=rewrites.goal,related=all.filter(f=>f.bindings?.sharedGoal===before);
-    if(!related.length||rewriteSharedText([before],related,[...active.values()],retired)[0]!==after||goal!==after)throw Error("natural_fact_rewrite_source_invalid");
+    if(!related.length||(!review && rewriteSharedText([before],related,[...active.values()],retired)[0]!==after)||goal!==after)throw Error("natural_fact_rewrite_source_invalid");
     for(const fact of related)fact.bindings!.sharedGoal=null;
     transfer(related,bindings=>{bindings.sharedGoal=after;});
   }
@@ -117,7 +149,8 @@ export function readFactHistory(db: DatabaseSync, workItemId: string, revision: 
     "FROM collaboration_natural_all_jobs j JOIN collaboration_external_events e ON e.source='dingtalk' AND e.source_event_id=j.source_event_id AND e.work_item_id=j.work_item_id " +
     "JOIN collaboration_work_item_snapshots s ON s.work_item_id=j.work_item_id AND s.revision=j.result_revision " +
     "WHERE j.work_item_id=? AND j.status='applied' AND j.result_revision<=? " +
-    "AND (json_array_length(j.proposal_json,'$.factRecords')>0 OR json_array_length(j.proposal_json,'$.factCorrectionRecords')>0) ORDER BY j.result_revision")
+    "AND (json_array_length(j.proposal_json,'$.factRecords')>0 OR json_array_length(j.proposal_json,'$.factCorrectionRecords')>0 " +
+    "OR json_array_length(j.proposal_json,'$.sharedSpecRewrites.acceptance')>0 OR json_type(j.proposal_json,'$.sharedSpecRewrites.goal')='object') ORDER BY j.result_revision")
     .iterate(workItemId, revision);
   for (const raw of rows) {
     const row = rowSchema.parse(raw), receipt = receiptSchema.parse(JSON.parse(row.proposal_json));
@@ -150,7 +183,16 @@ export function readFactHistory(db: DatabaseSync, workItemId: string, revision: 
       const sharedGoal=receipt.goal&&row.goal===receipt.goal.text&&matches(receipt.goal.quote).length>1&&matches(receipt.goal.quote).some(candidate=>candidate.id===fact.id)?row.goal:null;
       active.set(fact.id, { ...fact, bindings: { acceptance, goal, ambiguous,sharedAcceptance,sharedGoal } });
     }
-    if(receipt.sharedSpecRewrites)restoreSharedRewrites(receipt.sharedSpecRewrites,active,retired,applied,row.goal);
+    if (receipt.semanticFactReview) {
+      const previous = z.object({ acceptance_json: z.string(), goal: z.string().nullable() }).parse(db.prepare(
+        "SELECT acceptance_json,goal FROM collaboration_work_item_snapshots WHERE work_item_id=? AND revision=?").get(workItemId, row.result_revision - 1));
+      const context = rewriteContext({ workItemId, revision: row.result_revision - 1, goal: previous.goal,
+        acceptanceConditions: z.array(conditionSchema).parse(JSON.parse(previous.acceptance_json)) }, [...active.values()], retired,
+      { sourceEventId: row.source_event_id, principalId: row.principal_id, text: event.text });
+      const review = validateSemanticReview(context, receipt.semanticFactReview);
+      if (JSON.stringify(review.rewrites) !== JSON.stringify(receipt.sharedSpecRewrites)) throw new Error("natural_fact_rewrite_review_invalid");
+    }
+    if(receipt.sharedSpecRewrites)restoreSharedRewrites(receipt.sharedSpecRewrites,active,retired,applied,row.goal,receipt.semanticFactReview);
   }
   const current = z.object({ acceptance_json: z.string(), goal: z.string().nullable() }).parse(db.prepare("SELECT acceptance_json,goal FROM collaboration_work_item_snapshots WHERE work_item_id=? AND revision=?").get(workItemId, revision));
   const conditions = z.array(conditionSchema).parse(JSON.parse(current.acceptance_json));
