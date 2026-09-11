@@ -26,12 +26,27 @@ function temporaryDirectory(): string {
 }
 
 function stripCandidateRevisionSchema(db: DatabaseSync): void {
+  db.exec("DROP TABLE collaboration_turn_parts; DELETE FROM collaboration_schema_migrations WHERE version=41");
   const rows = z.array(z.object({ name: z.string().regex(/^[a-z_]+$/u) })).parse(db.prepare("SELECT name FROM sqlite_schema WHERE type='trigger' AND name LIKE 'candidate_revision_%'").all());
   for (const row of rows) db.exec(`DROP TRIGGER "${row.name}"`);
   db.exec("DROP TABLE IF EXISTS collaboration_candidate_revision_stages; DROP TABLE IF EXISTS collaboration_candidate_revision_requests");
 }
 
 describe("collaboration ledger", () => {
+  it("upgrades v40 additively without rewriting events or inventing turn branches", () => {
+    const f = createCandidateRevisionFixture({ takeLease: false });
+    try {
+      const events = f.db.prepare("SELECT * FROM collaboration_external_events ORDER BY rowid").all();
+      const intents = f.db.prepare("SELECT * FROM collaboration_conversation_intents ORDER BY rowid").all();
+      const previous = f.db.prepare("SELECT * FROM collaboration_schema_migrations WHERE version<=40").all();
+      f.db.exec("DROP TABLE collaboration_turn_parts; DELETE FROM collaboration_schema_migrations WHERE version=41; PRAGMA user_version=40");
+      expect(applyCollaborationMigrations(f.db).schemaVersion).toBe(COLLABORATION_SCHEMA_VERSION);
+      expect(f.db.prepare("SELECT * FROM collaboration_turn_parts").all()).toEqual([]);
+      expect(f.db.prepare("SELECT * FROM collaboration_external_events ORDER BY rowid").all()).toEqual(events);
+      expect(f.db.prepare("SELECT * FROM collaboration_conversation_intents ORDER BY rowid").all()).toEqual(intents);
+      expect(f.db.prepare("SELECT * FROM collaboration_schema_migrations WHERE version<=40").all()).toEqual(previous);
+    } finally { f.close(); }
+  });
   it.each(["execution", "verification", "orphan-dispatch"])("requires quiescence before adding revision guards when %s activity is unresolved", activity => {
     const f = createCandidateRevisionFixture({ takeLease: false });
     try {
@@ -50,14 +65,14 @@ describe("collaboration ledger", () => {
       f.db.prepare("INSERT INTO collaboration_execution_preparation_results VALUES(?,2,'failed',3,3,?)").run(f.workItemId, f.now);
       const dispatches = f.db.prepare("SELECT * FROM collaboration_execution_dispatches ORDER BY attempt").all();
       stripCandidateRevisionSchema(f.db); f.db.exec("DELETE FROM collaboration_schema_migrations WHERE version=40; PRAGMA user_version=39");
-      expect(applyCollaborationMigrations(f.db).schemaVersion).toBe(40);
+      expect(applyCollaborationMigrations(f.db).schemaVersion).toBe(COLLABORATION_SCHEMA_VERSION);
       expect(f.db.prepare("SELECT * FROM collaboration_execution_dispatches ORDER BY attempt").all()).toEqual(dispatches);
     } finally { f.close(); }
   });
   it("adds immutable candidate revision storage at schema 40 without inventing requests", () => {
     const ledger = openCollaborationLedger(temporaryDirectory());
     try {
-      expect(ledger.migrationState.schemaVersion).toBe(40);
+      expect(ledger.migrationState.schemaVersion).toBe(COLLABORATION_SCHEMA_VERSION);
       const db = new DatabaseSync(ledger.filePath);
       try {
         expect(db.prepare("SELECT * FROM collaboration_candidate_revision_requests").all()).toEqual([]);

@@ -79,6 +79,7 @@ export { readDingTalkAllowedConversationIds } from "./integrations/dingtalk/conf
 import { DocumentResourceJournal } from "./collaboration/operations/document-resource-journal.ts";
 import { DocumentResourceRecovery } from "./collaboration/operations/document-resource-recovery.ts";
 import { proactiveConversationRoutes, proactiveDestination, hasOwnerTextCommandReceipt, conversationReplyOrigin, naturalRetryResultOrigin } from "./collaboration/delivery-routing.ts";
+import { turnSourceOrigin } from "./collaboration/turn-sources.ts";
 
 interface HeadlessArguments {
   dataDirectory: string;
@@ -230,7 +231,7 @@ function latestWorkItemSourceEventId(databaseFile: string, workItemId: string, a
           "WHERE source = 'dingtalk' AND work_item_id = ? ORDER BY received_at DESC LIMIT 1",
       )
       .get(workItemId) as { source_event_id: string } | undefined;
-    return row?.source_event_id;
+    return row ? turnSourceOrigin(database, row.source_event_id) : undefined;
   } finally {
     database.close();
   }
@@ -266,7 +267,10 @@ export function createDingTalkDelivery(
         (message.aggregateType === "work_item" && message.dedupeKey.startsWith("dingtalk:event:lifecycle-recovery:"))
           ? latestWorkItemSourceEventId(databaseFile, message.aggregateId) ?? sourceEventId(message.dedupeKey)
           : sourceEventId(message.dedupeKey);
-      return routedSourceEventId;
+      if (!routedSourceEventId) return undefined;
+      const database = new DatabaseSync(databaseFile, { readOnly: true });
+      try { return turnSourceOrigin(database, routedSourceEventId); }
+      finally { database.close(); }
   }
   const reconcile: NonNullable<OutboxDeliveryPort["reconcile"]> = async message => {
     const routedSourceEventId = routeEvent(message);

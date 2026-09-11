@@ -64,6 +64,13 @@ function pendingQuestion(db: DatabaseSync, job: ConversationJob, sent: SentReply
       if (questions.length) { kind = "requirement"; text = questions.map(question => question.question).join("；"); }
     } else if (card.type === "command_status_card" && card.command === "conversation" && row.principal_id === job.principal_id && row.proposal_json) {
       const proposal = JSON.parse(row.proposal_json) as ConversationIntentDecision;
+      const boundaries = proposal.action === "route_turn" ? proposal.parts.filter(part => part.decision.action === "keep_discussing").map(part => part.decision)
+        : proposal.action === "keep_discussing" ? [proposal] : [];
+      if (boundaries.length) {
+        const ids = [...new Set(boundaries.flatMap(boundary => boundary.target && candidates.includes(boundary.target.id) ? [boundary.target.id] : []))];
+        return { kind: "read_only", origin: "discussion", sourceEventId: `outbox:${row.id}`,
+          workItemIds: ids.length <= 3 ? ids : [], text: redactSensitiveText(card.summary ?? "先讨论当前想法").slice(0, 500), answerExpected: false };
+      }
       if (proposal.action === "select_option") return {
         kind: "read_only", origin: "advice", sourceEventId: `outbox:${row.id}`, workItemIds: row.work_item_id ? [row.work_item_id] : [],
         text: proposal.selection.option.title, answerExpected: false,
@@ -83,11 +90,14 @@ function pendingQuestion(db: DatabaseSync, job: ConversationJob, sent: SentReply
         // Older requirement questions must not turn its next answer into a
         // contribution. Rows are already newest-first, actually delivered and
         // scoped to this person/group, with intervening turns excluded above.
-        if (text && (kind === "read_only" || kind === "approval")) return {
-          kind, sourceEventId: `outbox:${row.id}`, workItemIds: row.work_item_id ? [row.work_item_id] : [],
-          text: redactSensitiveText(text).slice(0, 500),
-          ...(kind === "read_only" && (proposal.intent === "advice" || proposal.origin === "advice") ? { origin: "advice" as const } : {}),
-        };
+        if (text && (kind === "read_only" || kind === "approval")) {
+          const prompt: NonNullable<ConversationIntentRequest["pendingQuestion"]> = {
+            kind, sourceEventId: `outbox:${row.id}`, workItemIds: row.work_item_id ? [row.work_item_id] : [],
+            text: redactSensitiveText(text).slice(0, 500),
+          };
+          if (kind === "read_only" && (proposal.intent === "advice" || proposal.origin)) prompt.origin = proposal.origin ?? "advice";
+          return prompt;
+        }
       }
     } else if (card.type === "plan_status_card" && card.status === "candidate_ready" && row.work_item_id && candidates.includes(row.work_item_id)) {
       // This is only conversational addressing, never control authorization.
@@ -113,7 +123,8 @@ export function readConversationContext(db: DatabaseSync, job: ConversationJob):
     Array<{ id: string; title: string; version: number; status: string }>;
   const userSql = "SELECT e.*,e.rowid AS event_order,COALESCE(e.work_item_id,j.target_work_item_id) AS context_item_id FROM collaboration_external_events e " +
     "LEFT JOIN collaboration_conversation_intents j ON j.event_id=e.id AND j.status='applied' " +
-    "WHERE e.conversation_id=? AND e.rowid<=(SELECT rowid FROM collaboration_external_events WHERE id=?) ";
+    "WHERE e.conversation_id=? AND e.rowid<=(SELECT rowid FROM collaboration_external_events WHERE id=?) " +
+    "AND NOT EXISTS(SELECT 1 FROM collaboration_turn_parts p WHERE p.child_event_id=e.id) ";
   type UserRow = { source_event_id: string; principal_id: string; normalized_json: string; context_item_id: string | null; received_at: number; event_order: number };
   const rows = db.prepare(userSql + "ORDER BY e.rowid DESC LIMIT 13").all(job.conversation_id, job.id) as UserRow[];
   const reference = replyId ? db.prepare(userSql + "AND e.source_event_id=?").get(job.conversation_id, job.id, replyId) as UserRow | undefined : undefined;
@@ -268,15 +279,29 @@ export function refreshConversationStatusReply(db: DatabaseSync, row: { id: stri
   if (!row.source_event_id.startsWith("conversation:")) return true;
   const context = db.prepare("SELECT j.proposal_json,j.target_work_item_id,e.conversation_id,w.conversation_id AS target_group " +
     "FROM collaboration_conversation_intents j JOIN collaboration_external_events e ON e.id=j.event_id " +
-    "LEFT JOIN collaboration_work_items w ON w.id=j.target_work_item_id WHERE j.event_id=? AND j.status='applied' AND e.source_event_id=?")
+    "LEFT JOIN collaboration_work_items w ON w.id=j.target_work_item_id WHERE j.event_id=? AND j.status IN ('applied','routed','failed') AND e.source_event_id=?")
     .get(row.aggregate_id, row.source_event_id.slice("conversation:".length)) as {
       proposal_json: string | null; target_work_item_id: string | null; conversation_id: string; target_group: string | null;
     } | undefined;
   if (!context?.proposal_json) return true;
   const result = JSON.parse(context.proposal_json) as ConversationIntentDecision;
-  if (result.action !== "read_status") return true;
-  if (!context.target_work_item_id || context.conversation_id !== context.target_group) return false;
-  const payload = JSON.stringify(renderConversationReplyCard(conversationStatus(db, context.target_work_item_id, row.source_event_id.slice("conversation:".length))));
+  if (result.action !== "read_status" && result.action !== "route_turn") return true;
+  let text: string;
+  if (result.action === "route_turn") {
+    if (!result.parts.some(part => part.decision.action === "read_status")) return true;
+    for (const part of result.parts) if (part.decision.target && !db.prepare("SELECT 1 FROM collaboration_work_items WHERE id=? AND conversation_id=?")
+      .get(part.decision.target.id, context.conversation_id)) return false;
+    // SAFETY: migration 41 declares these three selected columns as NOT NULL
+    // INTEGER/TEXT in a STRICT table; binding checks below reject mismatches.
+    const parts = db.prepare("SELECT ordinal,decision_json,reply_text FROM collaboration_turn_parts WHERE parent_event_id=? ORDER BY ordinal").all(row.aggregate_id) as Array<{ ordinal: number; decision_json: string; reply_text: string }>;
+    if (parts.length !== result.parts.length || parts.some((part, i) => part.ordinal !== i || part.decision_json !== JSON.stringify(result.parts[i].decision))) return false;
+    text = parts.map((part, i) => result.parts[i].decision.action === "read_status"
+      ? conversationStatus(db, result.parts[i].decision.target!.id, result.sourceEventId) : part.reply_text).join("\n\n");
+  } else {
+    if (!context.target_work_item_id || context.conversation_id !== context.target_group) return false;
+    text = conversationStatus(db, context.target_work_item_id, row.source_event_id.slice("conversation:".length));
+  }
+  const payload = JSON.stringify(renderConversationReplyCard(text));
   if (payload === row.payload_json) return true;
   if (row.attempt !== 1) return false;
   const updated = db.prepare("UPDATE collaboration_outbox SET payload_json=? WHERE id=? AND delivery_state='claimed' AND attempt=1 AND sent_at IS NULL")
@@ -305,7 +330,21 @@ function clarificationTopics(db: DatabaseSync, request: ConversationIntentReques
   return topics;
 }
 
+export function conversationTurnReply(db: DatabaseSync, result: Extract<ConversationIntentDecision, { action: "route_turn" }>, request?: ConversationIntentRequest): string {
+  return result.parts.map(part => {
+    if (["create_work", "contribute"].includes(part.decision.action)) {
+      const title = statusTopicExcerpt(part.decision.target?.title ?? part.text);
+      return `「${title}」：已记录这项需求，尚未完成修改。`;
+    }
+    return conversationReply(db, part.decision, request ? { ...request, text: part.text } : undefined);
+  }).join("\n\n");
+}
+
 export function conversationReply(db: DatabaseSync, result: ConversationIntentDecision, request?: ConversationIntentRequest): string {
+  if (result.action === "keep_discussing") return result.target
+    ? `关于「${statusTopicExcerpt(result.target.title)}」，先讨论想法，不发起这项新改动。`
+    : "先讨论这个想法，不发起这项新改动。";
+  if (result.action === "ask_context" && result.reason === "compound_discussion") return "这条消息里的方案和其他事项还没能分别关联。请先说要继续哪一项；目前没有执行修改。";
   if (result.action === "offer_advice") return renderAdviceDiscussion(result.advice);
   if (result.action === "select_option") return renderDiscussionSelection(result.selection);
   if (result.action === "acknowledge") return "不客气，有需要继续说。";

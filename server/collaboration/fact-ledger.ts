@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { NaturalIntakeRequest, NaturalIntakeProposal } from "./natural-intake.ts";
 import type { BlockingAmbiguity, AcceptanceCondition } from "./snapshot.ts";
 import { semanticReviewSchema, validateSemanticReview, type SharedRewriteContext, type RewriteFact, type SemanticRewriteReview } from "./fact-rewrite.ts";
+import { turnSourceOrigin } from "./turn-sources.ts";
 
 export const factProposalSchema = z.object({ key: z.string().regex(/^[a-z][a-z0-9-]{0,39}$/u),
   label: z.string().trim().min(1).max(60), value: z.string().trim().min(1).max(500),
@@ -154,6 +155,7 @@ export function readFactHistory(db: DatabaseSync, workItemId: string, revision: 
     .iterate(workItemId, revision);
   for (const raw of rows) {
     const row = rowSchema.parse(raw), receipt = receiptSchema.parse(JSON.parse(row.proposal_json));
+    turnSourceOrigin(db, row.source_event_id);
     const event = z.object({ text: z.string() }).parse(JSON.parse(row.normalized_json));
     if (receipt.eventEvidence.normalizedHash !== hash(row.normalized_json)) throw new Error("natural_fact_source_invalid");
     const facts = receipt.factRecords ?? [];

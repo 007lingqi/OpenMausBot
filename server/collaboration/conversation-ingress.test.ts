@@ -19,9 +19,13 @@ import { applyCollaborationMigrations, COLLABORATION_SCHEMA_VERSION } from "./mi
 import { readPlanMaterialReadiness } from "./plan-material-readiness.ts";
 import { LocalOwnerRegistry } from "./owner.ts";
 import { enqueueInboundCard } from "./outbox.ts";
+import { projectConversationTurn } from "./conversation-turn.ts";
+import { turnSourceOrigin } from "./turn-sources.ts";
 
 const paths: string[] = [];
+const turnReviewEnvelope = z.object({ properties: z.object({ allIntentsCovered: z.object({}).passthrough() }).passthrough() }).passthrough();
 function stripCandidateRevisionSchema(database: DatabaseSync): void {
+  database.exec("DROP TABLE collaboration_turn_parts; DELETE FROM collaboration_schema_migrations WHERE version=41");
   const triggers = z.array(z.object({ name: z.string().regex(/^[a-z_]+$/u) })).parse(
     database.prepare("SELECT name FROM sqlite_schema WHERE type='trigger' AND name LIKE 'candidate_revision_%'").all());
   for (const { name } of triggers) database.exec(`DROP TRIGGER "${name}"`);
@@ -48,6 +52,9 @@ function setup(classify: (request: ConversationIntentRequest) => Promise<unknown
   const interpreted: string[] = [], requests: ConversationIntentRequest[] = [];
   const naturalIntake = new ModelNaturalIntakeInterpreter({ async complete(envelope) {
     const input = JSON.parse(envelope.user);
+    if (turnReviewEnvelope.safeParse(envelope.responseSchema).success) {
+      return { allIntentsCovered: true, scopesIndependent: true, constraintsPreserved: true };
+    }
     if ((envelope.responseSchema as { properties: Record<string, unknown> }).properties.intent) {
       requests.push(input); return classify(input);
     }
@@ -85,6 +92,228 @@ function job(db: DatabaseSync, source: string): ConversationJob {
 }
 
 describe("durable conversational ingress before Work Item mutation", () => {
+  it("keeps a current-discussion boundary separate from Owner controls and resumes that purpose after restart", async () => {
+    const h = setup(async input => {
+      if (["login", "payment"].includes(input.sourceEventId)) return decision(input, "new_request");
+      const login = input.candidates.find(c => c.title.includes("登录"))!.id;
+      if (input.sourceEventId === "scope") return { ...decision(input, "clarify"), parts: [
+        { ...decision(input, "discussion_only", login), text: "登录提示改成“请重新登录”，但本轮先只讨论，不修改代码", quote: "登录提示改成“请重新登录”，但本轮先只讨论，不修改代码" },
+        { ...decision(input, "status_query", input.candidates.find(c => c.title.includes("支付"))!.id), text: "支付进展如何", quote: "支付进展如何" },
+      ] };
+      return decision(input, "contribution", login);
+    });
+    try {
+      for (const [id, text] of [["login", "登录提示调整"], ["payment", "支付提示调整"]]) {
+        h.service.ingestDingTalkMessage(message(id, text)); await h.service.processNaturalIntake(); await deliver(h.db);
+      }
+      const before = taskState(h.db);
+      const scoped = message("scope", "登录提示改成“请重新登录”，但本轮先只讨论，不修改代码；支付进展如何？");
+      h.service.ingestDingTalkMessage(scoped); await h.service.processNaturalIntake(); await deliver(h.db);
+      const text = reply(h.db, "scope");
+      expect(text).toContain("登录"); expect(text).toContain("讨论"); expect(text).toContain("支付");
+      expect(text).not.toMatch(/负责人|审批|暂停|已修改|修改完成/u);
+      expect(taskState(h.db)).toEqual(before);
+      h.service.close(); const resumed = startCollaborationService(h.options);
+      try {
+        resumed.ingestDingTalkMessage(scoped); await resumed.processNaturalIntake();
+        resumed.ingestDingTalkMessage(message("assent", "对，就这样"));
+        expect(readConversationContext(h.db, job(h.db, "assent")).pendingQuestion).toMatchObject({ kind: "read_only", origin: "discussion", answerExpected: false });
+        await resumed.processNaturalIntake();
+        expect(job(h.db, "assent").proposal_json).toContain('"reason":"pending_read_only"');
+        expect(taskState(h.db)).toEqual(before);
+        expect(resumed.ownerBinding()).toBeNull();
+      } finally { resumed.close(); }
+    } finally { h.service.close(); h.db.close(); }
+  });
+  it("projects two independent modifications without sharing their requirement contexts", async () => {
+    const texts = ["登录增加超时提示", "支付增加退款提示"];
+    const contexts: NaturalIntakeRequest[] = [];
+    const h = setup(async input => input.sourceEventId !== "two-changes" ? decision(input, "new_request") : {
+      ...decision(input, "clarify"), parts: texts.map(text => ({ ...decision(input, "contribution", input.candidates.find(c => c.title.startsWith(text.slice(0, 2)))!.id), text, quote: text })),
+    }, request => {
+      contexts.push(request);
+      return { version: 1, sourceEventId: request.event.sourceEventId, baseRevision: request.snapshot.revision,
+        goal: { text: request.event.text, quote: request.event.text, confirmed: true },
+        acceptance: [{ description: request.event.text, observation: "页面提示与要求一致", quote: request.event.text }], answers: [], questions: [] };
+    });
+    try {
+      for (const [id, text] of [["login", "登录改提示"], ["payment", "支付改提示"]]) {
+        h.service.ingestDingTalkMessage(message(id, text)); await h.service.processNaturalIntake();
+      }
+      h.service.ingestDingTalkMessage(message("two-changes", texts.join("，"))); await h.service.processNaturalIntake();
+      // Each scheduler tick consumes one durable requirement job.
+      await h.service.processNaturalIntake();
+      expect(readLatestWorkItemSnapshot(h.db, item(h.db, "login")!)?.goal).toBe(texts[0]);
+      expect(readLatestWorkItemSnapshot(h.db, item(h.db, "payment")!)?.goal).toBe(texts[1]);
+      const derived = contexts.filter(request => request.event.sourceEventId.startsWith("turn:"));
+      expect(derived).toHaveLength(2);
+      expect(derived[0].history?.map(event => event.text)).toEqual(["登录改提示", texts[0]]);
+      expect(derived[1].history?.map(event => event.text)).toEqual(["支付改提示", texts[1]]);
+      expect(h.db.prepare("SELECT version FROM collaboration_work_items ORDER BY rowid").all()).toEqual([{ version: 2 }, { version: 2 }]);
+      const before = taskState(h.db);
+      h.service.ingestDingTalkMessage(message("two-changes", texts.join("，"))); await h.service.processNaturalIntake();
+      expect(taskState(h.db)).toEqual(before);
+    } finally { h.service.close(); h.db.close(); }
+  });
+  it("answers a query alongside a control request, refreshing progress at send without changing tasks or authority", async () => {
+    const h = setup(async input => input.sourceEventId === "new" ? decision(input, "new_request") : {
+      ...decision(input, "clarify"), parts: [
+        { ...decision(input, "control_request", input.candidates[0].id), text: "暂停登录修改", quote: "暂停登录修改" },
+        { ...decision(input, "status_query", input.candidates[0].id), text: "登录进展如何", quote: "登录进展如何" },
+      ],
+    });
+    try {
+      h.service.ingestDingTalkMessage(message("new", "登录提示调整")); await h.service.processNaturalIntake(); await deliver(h.db);
+      const before = taskState(h.db);
+      h.service.ingestDingTalkMessage(message("mixed-control", "暂停登录修改，登录进展如何？")); await h.service.processNaturalIntake();
+      expect(reply(h.db, "mixed-control")).toContain("负责人");
+      expect(reply(h.db, "mixed-control")).toContain("登录");
+      expect(taskState(h.db)).toEqual(before);
+      h.db.prepare("UPDATE collaboration_work_items SET control_state='paused' WHERE id=?").run(item(h.db, "new"));
+      await deliver(h.db);
+      expect(reply(h.db, "mixed-control")).toContain("已暂停");
+      expect(h.service.ownerBinding()).toBeNull();
+      expect(h.db.prepare("SELECT count(*) n FROM collaboration_turn_parts WHERE child_event_id IS NOT NULL").get()).toEqual({ n: 0 });
+    } finally { h.service.close(); h.db.close(); }
+  });
+
+  it("refreshes an independent query even after the modification branch has exhausted projection", async () => {
+    const h = setup(async input => decision(input, "new_request"));
+    const coordinator = new ConversationIngressCoordinator(h.db, (input, signal) => classifyConversationIntent({ async complete(envelope) {
+      if (turnReviewEnvelope.safeParse(envelope.responseSchema).success) return { allIntentsCovered: true, scopesIndependent: true, constraintsPreserved: true };
+      return { ...decision(input, "clarify"), parts: [
+        { ...decision(input, "new_request"), text: "新增登录提示", quote: "新增登录提示" },
+        { ...decision(input, "status_query", input.candidates[0].id), text: "支付进展如何", quote: "支付进展如何" },
+      ] };
+    } }, input, signal), () => { throw new Error("projection interrupted"); });
+    try {
+      h.service.ingestDingTalkMessage(message("payment", "支付提示调整")); await h.service.processNaturalIntake(); await deliver(h.db);
+      const id = item(h.db, "payment")!, snapshot = readLatestWorkItemSnapshot(h.db, id);
+      h.service.ingestDingTalkMessage(message("partial", "新增登录提示，支付进展如何"));
+      for (let i = 0; i < 3; i++) await coordinator.processOne(Date.now());
+      expect(job(h.db, "partial").status).toBe("failed");
+      h.db.prepare("UPDATE collaboration_work_items SET control_state='paused' WHERE id=?").run(id);
+      await deliver(h.db);
+      expect(reply(h.db, "partial")).toContain("已暂停");
+      expect(reply(h.db, "partial")).not.toContain("修改完成");
+      expect(readLatestWorkItemSnapshot(h.db, id)).toEqual(snapshot);
+    } finally { coordinator.close(); h.service.close(); h.db.close(); }
+  });
+
+  it("preserves the exact non-status clarification when refreshing a mixed reply", async () => {
+    const h = setup(async input => input.sourceEventId === "new" ? decision(input, "new_request") : {
+      ...decision(input, "clarify"), parts: [
+        { ...decision(input, "status_query"), text: "那个进展如何", quote: "那个进展如何" },
+        { ...decision(input, "status_query", input.candidates[0].id), text: "登录进展如何", quote: "登录进展如何" },
+      ],
+    });
+    try {
+      h.service.ingestDingTalkMessage(message("new", "登录提示调整")); await h.service.processNaturalIntake(); await deliver(h.db);
+      h.service.ingestDingTalkMessage(message("mixed-query", "那个进展如何，登录进展如何？")); await h.service.processNaturalIntake();
+      const clarification = reply(h.db, "mixed-query")!.split("\n\n")[0];
+      expect(clarification).toContain("登录提示调整");
+      h.db.prepare("UPDATE collaboration_work_items SET control_state='paused' WHERE id=?").run(item(h.db, "new"));
+      await deliver(h.db);
+      expect(reply(h.db, "mixed-query")!.split("\n\n")[0]).toBe(clarification);
+      expect(reply(h.db, "mixed-query")).toContain("已暂停");
+    } finally { h.service.close(); h.db.close(); }
+  });
+
+  it("stops a branch at its persisted attempt budget rather than projecting a fourth time", async () => {
+    const h = setup(async input => decision(input, "new_request"));
+    const coordinator = new ConversationIngressCoordinator(h.db, (input, signal) => classifyConversationIntent({ async complete(envelope) {
+      if (turnReviewEnvelope.safeParse(envelope.responseSchema).success) return { allIntentsCovered: true, scopesIndependent: true, constraintsPreserved: true };
+      return { ...decision(input, "clarify"), parts: ["新增登录提示", "新增支付提示"].map(text => ({ ...decision(input, "new_request"), text, quote: text })) };
+    } }, input, signal), () => { throw new Error("projection interrupted"); });
+    try {
+      h.service.ingestDingTalkMessage(message("two-new", "新增登录提示，新增支付提示")); await coordinator.processOne(Date.now());
+      const current = job(h.db, "two-new");
+      expect(current.status).toBe("routed");
+      h.db.prepare("UPDATE collaboration_turn_parts SET attempts=3 WHERE parent_event_id=? AND ordinal=0").run(current.id);
+      let calls = 0;
+      expect(() => projectConversationTurn(h.db, current, Date.now(), () => { calls++; })).toThrow("conversation_turn_projection_exhausted");
+      expect(calls).toBe(0);
+      expect(h.db.prepare("SELECT status FROM collaboration_turn_parts WHERE parent_event_id=? AND ordinal=0").get(current.id)).toEqual({ status: "failed" });
+      expect(() => projectConversationTurn(h.db, current, Date.now(), () => { calls++; })).toThrow("conversation_turn_projection_exhausted");
+      expect(calls).toBe(0);
+    } finally { coordinator.close(); h.service.close(); h.db.close(); }
+  });
+
+  it("recovers the remaining branch after interruption, retaining two distinct tasks and one visible source", async () => {
+    const h = setup(async input => decision(input, "new_request"));
+    const calls: string[] = [];
+    const coordinator = new ConversationIngressCoordinator(h.db, (input, signal) => classifyConversationIntent({ async complete(envelope) {
+      if (turnReviewEnvelope.safeParse(envelope.responseSchema).success) return { allIntentsCovered: true, scopesIndependent: true, constraintsPreserved: true };
+      return { ...decision(input, "clarify"), parts: ["新增登录提示", "新增支付提示"].map(text => ({ ...decision(input, "new_request"), text, quote: text })) };
+    } }, input, signal), (_id, source) => { calls.push(source); if (calls.length === 2) throw new Error("interrupted"); });
+    try {
+      h.service.ingestDingTalkMessage(message("two-new", "新增登录提示，新增支付提示")); await coordinator.processOne(Date.now());
+      expect(h.db.prepare("SELECT status,attempts FROM collaboration_turn_parts ORDER BY ordinal").all()).toEqual([
+        { status: "applied", attempts: 1 }, { status: "routed", attempts: 1 },
+      ]);
+      const before = h.db.prepare("SELECT id,title,version FROM collaboration_work_items ORDER BY rowid").all();
+      coordinator.close(); h.service.close(); const resumed = startCollaborationService(h.options);
+      try {
+        await resumed.processNaturalIntake();
+        expect(h.interpreted).toEqual([calls[1]]);
+        expect(h.db.prepare("SELECT status,attempts FROM collaboration_turn_parts ORDER BY ordinal").all()).toEqual([
+          { status: "applied", attempts: 1 }, { status: "applied", attempts: 2 },
+        ]);
+        expect(h.db.prepare("SELECT title FROM collaboration_work_items ORDER BY title").all()).toHaveLength(2);
+        expect(turnSourceOrigin(h.db, calls[0])).toBe("two-new");
+        resumed.ingestDingTalkMessage(message("later", "现在进展如何"));
+        const history = readConversationContext(h.db, job(h.db, "later")).history.filter(entry => entry.role === "user");
+        expect(history.map(entry => entry.text)).toEqual(["新增登录提示，新增支付提示", "现在进展如何"]);
+        expect(h.db.prepare("SELECT id,title,version FROM collaboration_work_items ORDER BY rowid").all()).toEqual(before);
+        h.db.prepare("UPDATE collaboration_external_events SET normalized_json=json_set(normalized_json,'$.text','篡改') WHERE source_event_id=?").run(calls[1]);
+        expect(() => turnSourceOrigin(h.db, calls[1])).toThrow("conversation_turn_source_invalid");
+      } finally { resumed.close(); }
+    } finally { coordinator.close(); h.service.close(); h.db.close(); }
+  });
+
+  it("applies only the requested contribution while answering another task in the same turn, once across restart", async () => {
+    const changed = "登录提示改成“请重新登录”";
+    const query = "支付那个进展怎么样";
+    const seen: string[] = [];
+    const h = setup(async input => {
+      if (input.sourceEventId !== "mixed") return decision(input, "new_request");
+      const login = input.candidates.find(c => c.title.includes("登录"))!;
+      const payment = input.candidates.find(c => c.title.includes("支付"))!;
+      return { ...decision(input, "clarify"), parts: [
+        { ...decision(input, "contribution", login.id), text: changed, quote: changed },
+        { ...decision(input, "status_query", payment.id), text: query, quote: query },
+      ] };
+    }, request => {
+      seen.push(request.event.text);
+      return { version: 1, sourceEventId: request.event.sourceEventId, baseRevision: request.snapshot.revision,
+        goal: { text: request.event.text, quote: request.event.text, confirmed: true },
+        acceptance: [{ description: request.event.text, observation: "核对对应页面提示", quote: request.event.text }], answers: [], questions: [] };
+    });
+    try {
+      h.service.ingestDingTalkMessage(message("login", "登录失败提示需要修改")); await h.service.processNaturalIntake();
+      h.service.ingestDingTalkMessage(message("payment", "支付失败状态需要修复")); await h.service.processNaturalIntake();
+      const loginId = item(h.db, "login")!, paymentId = item(h.db, "payment")!;
+      const paymentBefore = readLatestWorkItemSnapshot(h.db, paymentId);
+      const mixed = message("mixed", `${changed}，${query}？`);
+      h.service.ingestDingTalkMessage(mixed); await h.service.processNaturalIntake();
+      expect(readLatestWorkItemSnapshot(h.db, loginId)?.goal).toBe(changed);
+      expect(readLatestWorkItemSnapshot(h.db, paymentId)).toEqual(paymentBefore);
+      expect(seen).toEqual(["登录失败提示需要修改", "支付失败状态需要修复", changed]);
+      expect(reply(h.db, "mixed")).toContain("支付");
+      expect(reply(h.db, "mixed")).toContain("已记录");
+      expect(reply(h.db, "mixed")).not.toMatch(/修改完成|Work Item|WI-/u);
+      expect(h.db.prepare("SELECT count(*) AS n FROM collaboration_turn_parts WHERE parent_event_id=(SELECT id FROM collaboration_external_events WHERE source_event_id='mixed')").get()).toEqual({ n: 2 });
+      const before = taskState(h.db), outbox = h.service.pendingOutbox();
+      h.service.close(); const resumed = startCollaborationService(h.options);
+      try {
+        resumed.ingestDingTalkMessage(mixed); await resumed.processNaturalIntake();
+        expect(taskState(h.db)).toEqual(before);
+        expect(resumed.pendingOutbox()).toEqual(outbox);
+        expect(resumed.ownerBinding()).toBeNull();
+      } finally { resumed.close(); }
+    } finally { h.service.close(); h.db.close(); }
+  });
+
   it("retains constraints stated only before the item existed when implementing the selected scheme", async () => {
     const requests: NaturalIntakeRequest[] = [];
     const constraint = "只改提示文字，不改登录逻辑，也不要增加依赖";

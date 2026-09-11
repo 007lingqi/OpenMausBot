@@ -79,6 +79,22 @@ describe("explicit scheme implementation binding", () => {
 });
 
 describe("conversation intent before task mutation", () => {
+  it("allows a later explicit modification after discussion-only scope without interpreting assent as permission", async () => {
+    const pendingQuestion = { kind: "read_only" as const, origin: "discussion" as const, sourceEventId: "reply-login", workItemIds: ["WI-LOGIN"], text: "先讨论登录提示", answerExpected: false as const };
+    const text = "请修改登录提示为请重新登录";
+    expect(await classify(proposal("contribution", "WI-LOGIN", text), { ...request, text, pendingQuestion })).toMatchObject({ action: "contribute" });
+    expect(await classify(proposal("contribution", "WI-LOGIN", "对，就这样"), { ...request, text: "对，就这样", pendingQuestion })).toMatchObject({ action: "ask_context", reason: "pending_read_only" });
+    const newText = "请新增支付失败提示";
+    expect(await classify(proposal("new_request", null, newText), { ...request, text: newText, pendingQuestion })).toMatchObject({ action: "create_work" });
+  });
+  it("keeps discussion-only notes read-only without bypassing explicit references or accepting control fields", async () => {
+    const text = "这只是登录提示的新想法，本轮不修改";
+    expect(await classify(proposal("discussion_only", "WI-LOGIN", text), { ...request, text })).toMatchObject({ action: "keep_discussing" });
+    expect(await classify(proposal("discussion_only", "WI-LOGIN", text), { ...request, text, referencedWorkItemId: "missing" })).toMatchObject({ action: "ask_context", reason: "reference_unavailable" });
+    await expect(classify({ ...proposal("discussion_only", "WI-LOGIN", text), approved: true }, { ...request, text })).rejects.toThrow();
+    expect(await classify(proposal("control_request", "WI-LOGIN", "暂停正在执行的登录任务"), { ...request, text: "暂停正在执行的登录任务" }))
+      .toMatchObject({ action: "control_requires_authorization" });
+  });
   it.each(["选第一个和第二个", "不要第二个", "不是第二个", "按这个来"])("keeps ambiguous or negative choices unresolved: %s", async text => {
     const options = [{ title: "轻量版", description: "核心功能。", tradeoff: "范围较小。" },
       { title: "标准版", description: "权限与记录。", tradeoff: "投入较高。" }];

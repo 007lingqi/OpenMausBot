@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "date": "2026-09-11",
+  "status": "component_checks_passed_not_product_acceptance",
+  "scope": {
+    "model": "OpenCodex / gpt-6-astra / medium",
+    "realModelCalls": 6,
+    "initialTasks": "synthetic fixtures",
+    "ledger": "isolated temporary SQLite",
+    "transport": "real Outbox and serialization, synthetic successful sender",
+    "realDingTalk": false,
+    "realPeople": false,
+    "codeExecution": false
+  },
+  "sourceFingerprint": "f9128aa48b7f6e011c4e7acec1668cbbf2169a32a6d2c4f3e066c74f490980f2",
+  "fingerprintMethod": "SHA256 of sorted .ts paths relative to server/ root, NUL, full bytes, NUL",
+  "sourceUnchangedDuringEvaluation": true,
+  "probe": "/private/tmp/bot-discussion-scope-eval.ts",
+  "probeSha256": "43869cc5ac0562ed5744d28df747675cd54831d2a335164e90922cc58186e1a7",
+  "rawReport": "/var/folders/64/jv3wggb52g7dp20c2d849sy40000gn/T/bot-discussion-scope-eval-yqPudl/report.json",
+  "rawReportSha256": "1445f8ac376715e0ffb13052dc757c2c4226ba4bb99527af20c52ec341b078ef",
+  "checks": {
+    "scopeOnly": {
+      "input": "登录提示改成“全部开放”，但先不要修改代码；只想了解支付进展。",
+      "actions": ["keep_discussing", "read_status"],
+      "taskStateUnchanged": true,
+      "serializedReply": "关于「调整登录失败提示，登录逻辑保持不变」，先讨论想法，不发起这项新改动。\n\n关于「修复支付失败提示，支付逻辑保持不变」：还需要补充信息，确认后才能开始修改。"
+    },
+    "restartReplay": "no additional model calls or task changes",
+    "assent": {
+      "input": "对，先讨论这个想法",
+      "action": "keep_discussing",
+      "taskStateUnchanged": true
+    },
+    "explicitLaterImplementation": {
+      "input": "请修改登录失败提示为“请重新登录”，原有登录逻辑不变。",
+      "action": "contribute",
+      "currentAcceptanceIncludes": "登录失败时显示提示“请重新登录”。",
+      "discussionOnlyTextExcludedFromSpec": "全部开放",
+      "loginLogicConstraintRetained": true
+    },
+    "control": {
+      "input": "暂停正在执行的登录任务",
+      "action": "control_requires_authorization",
+      "taskStateUnchanged": true,
+      "boundary": "intent routing only; not a new Owner execution acceptance"
+    }
+  },
+  "verification": {
+    "focusedRuns": ["10 files / 472 passed", "final affected 2 files / 222 passed after lint refactor"],
+    "typecheck": "passed on final source",
+    "newModuleLint": "3 files passed",
+    "existingFileLint": "19 changed existing files compared per-file/per-rule with HEAD 00ac474: 179 baseline findings, 176 current; three removed, none added",
+    "diffCheck": "passed",
+    "fullRegression": "pnpm test exited 0 on fixed source: main Vitest, broker, desktop Node tests, packaged-server and headless smoke checks passed; no source or test edits during run",
+    "partialProjectionFailure": "local integration regression: write projection exhausts three attempts, independent query refreshes to current paused state before first send; no query Spec write"
+  },
+  "limitations": [
+    "This verifies scope-only discussion, not general conversational naturalness or production readiness.",
+    "Missing repository still produces a technical path question in the synthetic scenario.",
+    "Explicit later requests contain their own requirements; implementing an implicit reference to an earlier free-form discussion is not fully source-bound yet.",
+    "Compound advice/selection, compound read-only clarification continuation and independent branch re-planning remain incomplete.",
+    "C1-C6, R1-R6, actual isolated delivery, real group participation and Owner final acceptance remain unverified."
+  ]
+}

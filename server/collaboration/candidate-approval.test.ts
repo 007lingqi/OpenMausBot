@@ -615,7 +615,7 @@ describe("fixed approval presentation provenance", () => {
       for (const name of ["verification_sessions", "candidate_reviews", "candidate_recheck_attempts", "accept"]) {
         f.database.exec(`DROP TRIGGER IF EXISTS candidate_revision_blocks_${name}`);
       }
-      f.database.exec("DROP TABLE collaboration_candidate_revision_stages; DROP TABLE collaboration_candidate_revision_requests");
+      f.database.exec("DROP TABLE collaboration_turn_parts; DROP TABLE collaboration_candidate_revision_stages; DROP TABLE collaboration_candidate_revision_requests");
       f.database.exec("DROP TABLE IF EXISTS collaboration_candidate_result_deliveries; DROP TABLE IF EXISTS collaboration_candidate_result_bindings; DROP TABLE IF EXISTS collaboration_candidate_recheck_attempts; DROP TABLE collaboration_approval_presentations; DELETE FROM collaboration_schema_migrations WHERE version>=37; PRAGMA user_version=36");
       expect(applyCollaborationMigrations(f.database)).toEqual({ schemaVersion: COLLABORATION_SCHEMA_VERSION, appliedMigrations: COLLABORATION_SCHEMA_VERSION });
       expect(tables.map(table => f.database.prepare(`SELECT * FROM ${table}`).all())).toEqual(before);

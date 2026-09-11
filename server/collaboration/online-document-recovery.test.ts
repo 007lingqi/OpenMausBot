@@ -18,6 +18,7 @@ import { renderDingTalkSessionMessage } from '../integrations/dingtalk/session-m
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 function stripCandidateRevisionSchema(db: DatabaseSync): void {
+  db.exec("DROP TABLE collaboration_turn_parts; DELETE FROM collaboration_schema_migrations WHERE version=41");
   for (const row of db.prepare("SELECT name FROM sqlite_schema WHERE type='trigger' AND name LIKE 'candidate_revision_%'").all()) {
     const name = String(row.name);
     if (!/^candidate_revision_[a-z_]+$/u.test(name)) throw new Error("invalid candidate revision fixture trigger");

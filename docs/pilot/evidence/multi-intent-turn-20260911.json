@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "date": "2026-09-11",
+  "status": "component_checks_passed_not_product_acceptance",
+  "scope": {
+    "model": "OpenCodex / gpt-6-astra / medium",
+    "realModelCalls": 5,
+    "initialTasks": "synthetic fixtures",
+    "ledger": "isolated temporary SQLite",
+    "realDingTalk": false,
+    "realPeople": false,
+    "codeExecution": false,
+    "naturalnessAcceptance": "not_passed"
+  },
+  "sourceFingerprint": "464179982452edd9aef1974c0a0fe3bb4ea85c7d47c3827f1410e614d3c9895b",
+  "fingerprintMethod": "SHA256 of sorted server/**/*.ts relative names, NUL, full bytes, NUL",
+  "sourceUnchangedDuringEvaluation": true,
+  "probe": "/private/tmp/bot-multi-turn-eval.ts",
+  "probeSha256": "cc18c9ae13f9bee5289f7c7154679b8eca400feb73d4215ab07864c9d1d44526",
+  "rawReport": "/var/folders/64/jv3wggb52g7dp20c2d849sy40000gn/T/bot-multi-turn-eval-ORrbkM/report.json",
+  "rawReportSha256": "b93cae68424df0b75661c7249f87fa16b3d93fdbf8ac9e63d1ce72eed407b846",
+  "positive": {
+    "input": "登录失败的提示改成“请重新登录”，支付那个进展怎么样？",
+    "decisions": ["contribute:login", "read_status:payment"],
+    "paymentSnapshotUnchanged": true,
+    "loginAcceptanceAdded": {
+      "description": "登录失败时，提示文案为“请重新登录”。",
+      "observation": "触发登录失败后，核对页面显示的提示文案为“请重新登录”。"
+    },
+    "oldLoginLogicConstraintRetained": true,
+    "requirementModelInputExcludedPaymentQuery": true,
+    "restartReplayAddedNoModelCallsOrSnapshotChanges": true,
+    "serializedCombinedReply": "「调整登录失败提示，登录逻辑保持不变」：已记录这项需求，尚未完成修改。\n\n关于「修复支付失败提示，支付逻辑保持不变」：还需要补充信息，确认后才能开始修改。"
+  },
+  "negative": {
+    "input": "登录提示改成“全部开放”，但先不要修改代码；只想了解支付进展。",
+    "decisions": ["control_requires_authorization:login", "read_status:payment"],
+    "noRequirementWriteProposed": true,
+    "evaluatedBoundary": "real classifier and independent scope review only; not routed or sent",
+    "knownProblem": "Scope-only no-execution wording was classified as Owner control. Safety held, but this is not natural interaction acceptance."
+  },
+  "knownLimitations": [
+    "Compound advice/selection is explicitly clarified; delivered per-option continuation is not implemented for compound replies.",
+    "Version checks are atomic for the full turn, not independent branch re-planning.",
+    "Clarification continuation for compound read-only questions and partially failed projection status refresh still require work.",
+    "A missing repository fixture still produces a legacy technical repository-path question; project discovery and unified reply exit are incomplete.",
+    "Full C1-C6, R1-R6, actual delivery and Owner final acceptance remain unverified."
+  ],
+  "verification": {
+    "focusedRuns": ["5 files / 318 passed", "7 files / 251 passed"],
+    "typecheck": "passed",
+    "newModuleLint": "passed",
+    "existingFileLint": "172 findings; identical per-file/per-rule counts to HEAD 00ac474; not lint-clean",
+    "firstFullRegression": "8 failures in old schema downgrade fixtures; corrected without relaxing production migration guards",
+    "finalFullRegression": "pnpm test exited 0 on fixed source; main Vitest, broker, desktop Node tests, packaged-server and headless smoke checks passed"
+  }
+}

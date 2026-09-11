@@ -3,6 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { WorkItemSnapshot } from "./snapshot.ts";
 import type { NaturalIntakeEvent } from "./natural-intake.ts";
 import { redactSensitiveText } from "./sensitive-text.ts";
+import { turnSourceOrigin } from "./turn-sources.ts";
 
 const MAX_EVENTS = 12;
 const MAX_CHARACTERS = 24_000;
@@ -34,6 +35,7 @@ function isCovered(row: EventRow, revision: number): boolean {
 }
 
 export function readNaturalIntakeContext(db: DatabaseSync, snapshot: WorkItemSnapshot, sourceEventId: string) {
+  turnSourceOrigin(db, sourceEventId);
   const pinned = new Set([sourceEventId, ...snapshot.blockingAmbiguities.flatMap(q => q.respondent ? [q.respondent.sourceEventId] : [])]);
   const current = db.prepare("SELECT normalized_json FROM collaboration_external_events WHERE source='dingtalk' AND work_item_id=? AND source_event_id=?")
     .get(snapshot.workItemId, sourceEventId) as { normalized_json: string } | undefined;

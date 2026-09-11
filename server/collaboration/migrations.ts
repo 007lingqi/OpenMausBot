@@ -1,8 +1,9 @@
 import type { DatabaseSync } from "node:sqlite";
 
 import { OPENMAUSBOT_SOURCE_BASELINE } from "./config.ts";
+import { applyTurnPartsMigration } from "./turn-sources.ts";
 
-export const COLLABORATION_SCHEMA_VERSION = 40;
+export const COLLABORATION_SCHEMA_VERSION = 41;
 
 interface Migration {
   version: number;
@@ -1793,6 +1794,7 @@ const migrations: readonly Migration[] = [
         BEGIN SELECT RAISE(ABORT,'candidate superseded by revision'); END;`);
     },
   },
+  { version: 41, name: "source-bound-conversation-turns", checksum: "v41:immutable-parent-and-scoped-turn-parts", apply: applyTurnPartsMigration },
 ];
 
 export interface MigrationState {

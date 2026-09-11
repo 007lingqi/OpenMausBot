@@ -7,9 +7,10 @@ import { assertLedgerArmed } from "./restore-guard.ts";
 import { readLatestWorkItemSnapshot } from "./snapshot.ts";
 import { enqueueInboundCard } from "./outbox.ts";
 import { renderConversationReplyCard, renderPrimaryStatusCard } from "./message-renderer.ts";
+import { routeConversationTurn, projectConversationTurn } from "./conversation-turn.ts";
 
 type Classifier = NonNullable<NaturalIntakeInterpreter["classifyConversation"]>;
-const actions = new Set(["create_work", "contribute", "read_status", "explain_reply", "offer_advice", "select_option", "acknowledge", "ask_context", "control_requires_authorization"]);
+const actions = new Set(["create_work", "contribute", "read_status", "explain_reply", "offer_advice", "select_option", "acknowledge", "ask_context", "control_requires_authorization", "keep_discussing", "route_turn"]);
 
 /** Neither a model result nor a plugin implementation is a ledger authority. */
 function validateResult(request: ConversationIntentRequest, result: ConversationIntentDecision): ConversationIntentDecision {
@@ -74,6 +75,16 @@ export class ConversationIngressCoordinator {
           "WHERE j.event_id=? AND j.status='running' AND j.claim_token=? AND j.lease_until>? AND e.conversation_id=? AND e.principal_id=? " +
           "AND e.work_item_id IS NULL AND e.association_state='ambiguous'").get(job.id, token, now + Math.max(0, Date.now() - started), job.conversation_id, job.principal_id) as { normalized_json: string } | undefined;
         if (!current || conversationSourceHash(current.normalized_json) !== job.source_hash) throw new Error("conversation_claim_stale");
+        if (result.action === "route_turn") {
+          const summary = routeConversationTurn(this.db, job, request, result, now);
+          this.db.prepare("UPDATE collaboration_conversation_intents SET status='routed',proposal_json=?,claim_token=NULL,lease_until=NULL WHERE event_id=?")
+            .run(JSON.stringify(result), job.id);
+          this.supersedeProgress(job, now);
+          enqueueInboundCard(this.db, { sourceEventId: `conversation:${job.source_event_id}`, aggregateType: "association", aggregateId: job.id,
+            aggregateVersion: 1, now, card: renderConversationReplyCard(summary) });
+          this.db.exec("COMMIT");
+          job.proposal_json = JSON.stringify(result); job.status = "routed"; this.finishProjection(job, now); return;
+        }
         if (result.action === "select_option" || result.implementationSelection) {
           const fresh = readConversationContext(this.db, job);
           validateResult(fresh, result);
@@ -136,7 +147,8 @@ export class ConversationIngressCoordinator {
       "WHERE event_id=? AND status='routed' AND projection_attempts<3 AND (lease_until IS NULL OR lease_until<=?)").run(token, now + 120000, job.id, now);
     if (!claimed.changes) return;
     try {
-      this.project(job.target_work_item_id!, job.source_event_id, now);
+      if (job.proposal_json && JSON.parse(job.proposal_json).action === "route_turn") projectConversationTurn(this.db, job, now, this.project);
+      else this.project(job.target_work_item_id!, job.source_event_id, now);
       this.db.prepare("UPDATE collaboration_conversation_intents SET status='applied',claim_token=NULL,lease_until=NULL WHERE event_id=? AND status='routed' AND claim_token=?").run(job.id, token);
     } catch {
       this.db.prepare("UPDATE collaboration_conversation_intents SET status=CASE WHEN projection_attempts>=3 THEN 'failed' ELSE 'routed' END,claim_token=NULL,lease_until=NULL " +

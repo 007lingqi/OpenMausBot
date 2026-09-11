@@ -51,6 +51,7 @@ function hash(bytes: Uint8Array): string {
 }
 
 function stripCandidateRevisionSchema(database: DatabaseSync): void {
+  database.exec("DROP TABLE collaboration_turn_parts; DELETE FROM collaboration_schema_migrations WHERE version=41");
   const triggers = z.array(z.object({ name: z.string().regex(/^[a-z_]+$/u) })).parse(
     database.prepare("SELECT name FROM sqlite_schema WHERE type='trigger' AND name LIKE 'candidate_revision_%'").all());
   for (const { name } of triggers) {

@@ -25,6 +25,7 @@ import { FetchDingTalkInteractiveCardSender } from "../integrations/dingtalk/int
 import { renderDingTalkSessionMessage } from "../integrations/dingtalk/session-message.ts";
 import { resultDeliveryFixture } from "./outbox-result.test-fixtures.ts";
 import { readVerifiedCandidateResultReply } from "./candidate-result-evidence.ts";
+import { z } from "zod";
 
 const roots: string[] = [];
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -137,6 +138,35 @@ describe("actual verified-result delivery proofs", () => {
 });
 
 describe("production delivery group routing", () => {
+  it.each(["work_item", "plan"] as const)("routes a derived %s reply through the one real parent session", async aggregateType => {
+    const f = fixture({});
+    const service = startCollaborationService({ dataDirectory: f.root, planning: { planner: { propose: validProposal }, policy,
+      naturalIntake: new ModelNaturalIntakeInterpreter({ async complete(envelope) {
+        const input = JSON.parse(envelope.user);
+        if (z.object({ properties: z.object({ allIntentsCovered: z.object({}).passthrough() }).passthrough() }).passthrough()
+          .safeParse(envelope.responseSchema).success) return { allIntentsCovered: true, scopesIndependent: true, constraintsPreserved: true };
+        if (input.event) return { version: 1, sourceEventId: input.event.sourceEventId, baseRevision: input.snapshot.revision,
+          goal: null, acceptance: [], answers: [], questions: [{ key: "expected", question: "提示应显示什么？", blocksPlanning: true, quote: input.event.text }] };
+        const part = (text: string) => ({ version: 1, sourceEventId: input.sourceEventId, intent: "new_request", targetWorkItemId: null,
+          replySourceEventId: null, quote: text, confidence: "high", text });
+        return { version: 1, sourceEventId: input.sourceEventId, intent: "clarify", targetWorkItemId: null,
+          replySourceEventId: null, quote: input.text, confidence: "high", parts: [part("新增登录提示"), part("新增支付提示")] };
+      } }) } });
+    try {
+      service.ingestDingTalkMessage({ sourceEventId: "real-parent", transportMessageId: "real-parent", conversationId: "group-a", addressedToBot: true,
+        text: "新增登录提示，新增支付提示", sender: { senderId: "staff", senderCorpId: "corp", senderStaffId: "staff", displayName: "Test" } });
+      await service.processNaturalIntake();
+      const child = z.object({ source_event_id: z.string(), work_item_id: z.string() }).parse(f.db.prepare("SELECT e.source_event_id,e.work_item_id FROM collaboration_turn_parts p JOIN collaboration_external_events e ON e.id=p.child_event_id ORDER BY ordinal LIMIT 1").get());
+      expect(child).toBeDefined();
+      f.sessions.capture({ sourceEventId: "real-parent", webhookUrl: "https://oapi.dingtalk.com/robot/send?access_token=synthetic", expiresAt: Date.now() + 60000 });
+      const outgoing = { ...f.message("event-group-a"), id: "derived-reply", aggregateType, aggregateId: child.work_item_id,
+        dedupeKey: `dingtalk:event:${child.source_event_id}:ack` };
+      expect(await f.delivery.deliver(outgoing)).toMatchObject({ outcome: "sent" });
+      expect(f.fetcher.mock.calls.filter(([url]) => String(url).includes("/robot/send?")).length).toBe(1);
+      f.fetcher.mockImplementation(async () => new Response(JSON.stringify({ errcode: 40035 })));
+      expect(await f.delivery.deliver({ ...outgoing, id: "failed-reply" })).not.toMatchObject({ outcome: "sent" });
+    } finally { service.close(); f.db.close(); }
+  });
   it("delivers a natural approval reply to its persisted original group without an external requirement event", async () => {
     const f = fixture({ OMB_DINGTALK_ALLOWED_CONVERSATION_IDS: "group-a,group-b",
       OMB_DINGTALK_PROACTIVE_CONVERSATION_MAP: '{"group-a":"open-a","group-b":"open-b"}' });

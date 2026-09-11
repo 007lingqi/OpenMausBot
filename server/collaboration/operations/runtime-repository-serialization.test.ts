@@ -6,7 +6,6 @@ import { DatabaseSync } from "node:sqlite";
 import { Readable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { COLLABORATION_SCHEMA_VERSION } from "../migrations.ts";
 import { WorktreeManager } from "../worktree-manager.ts";
 import { CommandCleanupError } from "../execution-limits.ts";
 import { ExecutionLifecycle } from "../execution-lifecycle.ts";
@@ -777,6 +776,7 @@ describe("runtime repository single-writer scheduling", () => {
     const h = createHarness([createRepository(root, "schema-15-preparation")]);
     const db = new DatabaseSync(h.databaseFile);
     // Reconstruct the exact v15 delta in this disposable fixture only.
+    db.exec("DROP TABLE collaboration_turn_parts");
     // v40 adds triggers to older tables; remove those before dropping the tables they reference.
     const revisionTriggers = z.array(z.object({ name: z.string().regex(/^candidate_revision_[a-z_]+$/u) })).parse(
       db.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'candidate_revision_%'").all());
@@ -796,7 +796,7 @@ describe("runtime repository single-writer scheduling", () => {
     try {
       // v16–39 preserve this legacy reservation; v40 must not infer that an unknown writer has stopped.
       await expect(h.runtime.start()).rejects.toThrow("candidate_revision_migration_requires_quiescence");
-      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: COLLABORATION_SCHEMA_VERSION - 1 });
+      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 39 });
       expect(db.prepare("SELECT * FROM collaboration_execution_dispatches").get()).toEqual(original);
       expect(db.prepare("SELECT state FROM collaboration_execution_preparation_results").get()).toBeUndefined();
       expect(h.agent.startedWorkItems).toEqual([]);
