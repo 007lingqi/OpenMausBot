@@ -1002,10 +1002,15 @@ describe("durable conversational ingress before Work Item mutation", () => {
     } finally { h.service.close(); h.db.close(); }
   });
 
-  it("keeps a direct progress clarification read-only despite older requirement questions, including after restart", async () => {
+  it.each(["single", "compound", "discussion_and_query"])("keeps a %s progress clarification read-only despite older requirement questions, including after restart", async mode => {
     const h = setup(async input => {
       if (["login", "payment"].includes(input.sourceEventId)) return decision(input, "new_request");
-      if (input.sourceEventId === "query") return decision(input, "status_query");
+      if (input.sourceEventId === "query") return mode === "single" ? decision(input, "status_query") : {
+        ...decision(input, "clarify"), parts: [
+          { ...decision(input, mode === "compound" ? "status_query" : "discussion_only", mode === "compound" ? input.candidates.find(candidate => candidate.title.includes("支付"))!.id : null), text: mode === "compound" ? "支付进展如何" : "前面的先只讨论", quote: mode === "compound" ? "支付进展如何" : "前面的先只讨论" },
+          { ...decision(input, "status_query"), text: "现在进展怎么样？", quote: "现在进展怎么样？" },
+        ],
+      };
       const target = input.candidates.find(candidate => candidate.title.includes("登录"))!.id;
       return decision(input, input.sourceEventId === "answer" ? "contribution" : "status_query", target);
     });
@@ -1014,11 +1019,14 @@ describe("durable conversational ingress before Work Item mutation", () => {
         h.service.ingestDingTalkMessage(message(id, text)); await h.service.processNaturalIntake(); await deliver(h.db);
       }
       const before = taskState(h.db);
-      h.service.ingestDingTalkMessage(message("query", "现在进展怎么样？")); await h.service.processNaturalIntake(); await deliver(h.db);
+      h.service.ingestDingTalkMessage(message("query", mode === "single" ? "现在进展怎么样？" : `${mode === "compound" ? "支付进展如何" : "前面的先只讨论"}，现在进展怎么样？`)); await h.service.processNaturalIntake(); await deliver(h.db);
       h.service.close(); const restarted = startCollaborationService(h.options);
       try {
         restarted.ingestDingTalkMessage(message("answer", "登录那个"));
         expect(readConversationContext(h.db, job(h.db, "answer")).pendingQuestion?.kind).toBe("read_only");
+        expect(readConversationContext(h.db, job(h.db, "answer")).pendingQuestion?.answerExpected).not.toBe(false);
+        expect(readConversationContext(h.db, job(h.db, "answer")).pendingQuestion?.text).toContain("你想查看哪件事的进度");
+        expect(readConversationContext(h.db, job(h.db, "answer")).pendingQuestion?.text).not.toContain("不发起这项新改动");
         await restarted.processNaturalIntake(); await deliver(h.db);
         expect(job(h.db, "answer").proposal_json).toContain('"reason":"pending_read_only"');
         expect(item(h.db, "answer")).toBeNull(); expect(taskState(h.db)).toEqual(before);
@@ -1067,19 +1075,58 @@ describe("durable conversational ingress before Work Item mutation", () => {
     } finally { h.service.close(); h.db.close(); }
   });
 
-  it.each(["unsent", "sent_later", "other_speaker", "other_group"])("does not borrow a direct read-only question when it is %s", async mode => {
-    const h = setup(async input => input.sourceEventId === "query" ? decision(input, "status_query") : decision(input, "new_request"));
+  it.each(["single", "compound"].flatMap(kind => ["unsent", "sent_later", "other_speaker", "other_group", "intervening"].map(mode => [kind, mode])))("does not borrow a %s read-only question when it is %s", async (kind, mode) => {
+    const h = setup(async input => {
+      if (input.sourceEventId === "intervening") return decision(input, "acknowledgement");
+      if (input.sourceEventId !== "query") return decision(input, "new_request");
+      return kind === "single" ? decision(input, "status_query") : { ...decision(input, "clarify"), parts: [
+        { ...decision(input, "status_query", input.candidates.find(candidate => candidate.title.includes("支付"))!.id), text: "支付进展如何", quote: "支付进展如何" },
+        { ...decision(input, "status_query"), text: "现在进展怎么样？", quote: "现在进展怎么样？" },
+      ] };
+    });
     try {
       for (const id of ["login", "payment"]) {
         h.service.ingestDingTalkMessage(message(id, id === "login" ? "登录提示友好一点。" : "支付提示友好一点。"));
         await h.service.processNaturalIntake(); await deliver(h.db);
       }
-      h.service.ingestDingTalkMessage(message("query", "现在进展怎么样？")); await h.service.processNaturalIntake();
-      if (["other_speaker", "other_group"].includes(mode)) await deliver(h.db);
+      h.service.ingestDingTalkMessage(message("query", kind === "single" ? "现在进展怎么样？" : "支付进展如何，现在进展怎么样？")); await h.service.processNaturalIntake();
+      if (["other_speaker", "other_group", "intervening"].includes(mode)) await deliver(h.db);
+      if (mode === "intervening") {
+        h.service.ingestDingTalkMessage(message("intervening", "不用查了，谢谢")); await h.service.processNaturalIntake(); await deliver(h.db);
+      }
       h.service.ingestDingTalkMessage(message("answer", "登录那个", mode === "other_group" ? "different" : "group", mode === "other_speaker" ? "tester" : "product"));
       if (mode === "sent_later") await deliver(h.db);
       expect(readConversationContext(h.db, job(h.db, "answer")).pendingQuestion?.kind).not.toBe("read_only");
       expect(item(h.db, "answer")).toBeNull();
+    } finally { h.service.close(); h.db.close(); }
+  });
+
+  it("does not treat a clipped compound question as delivered evidence or permit its short answer to modify work", async () => {
+    const h = setup(async input => {
+      if (input.sourceEventId === "answer") return decision(input, "contribution", input.candidates[0].id);
+      if (input.sourceEventId !== "query") return decision(input, "new_request");
+      return { ...decision(input, "clarify"), parts: [
+        { ...decision(input, "status_query", input.candidates[0].id), text: "登录进展如何", quote: "登录进展如何" },
+        { ...decision(input, "status_query"), text: "还有那个呢", quote: "还有那个呢" },
+      ] };
+    });
+    try {
+      h.service.ingestDingTalkMessage(message("login", "登录提示调整")); await h.service.processNaturalIntake(); await deliver(h.db);
+      h.service.ingestDingTalkMessage(message("query", "登录进展如何，还有那个呢")); await h.service.processNaturalIntake();
+      // Simulate a delivered legacy/overlong combined presentation. Keep the
+      // persisted branch question intact, but outside the actual visible text.
+      const row = z.object({ id: z.string(), payload_json: z.string() }).parse(h.db.prepare("SELECT id,payload_json FROM collaboration_outbox WHERE source_event_id='conversation:query'").get());
+      const card = JSON.parse(row.payload_json); card.summary = "背景说明".repeat(300) + card.summary;
+      h.db.prepare("UPDATE collaboration_outbox SET payload_json=?,delivery_state='sent',sent_at=?,delivery_sequence=(SELECT COALESCE(MAX(delivery_sequence),0)+1 FROM collaboration_outbox) WHERE id=?")
+        .run(JSON.stringify(card), Date.now(), row.id);
+      expect(z.object({ text: z.string() }).parse(renderDingTalkSessionMessage(card).markdown).text).not.toContain("你想查看");
+      const before = taskState(h.db);
+      h.service.ingestDingTalkMessage(message("answer", "登录那个"));
+      const context = readConversationContext(h.db, job(h.db, "answer"));
+      expect(context.pendingQuestion?.sourceEventId).not.toBe(`outbox:${row.id}`);
+      expect(context.contextTruncated).toBe(true);
+      await h.service.processNaturalIntake();
+      expect(item(h.db, "answer")).toBeNull(); expect(taskState(h.db)).toEqual(before);
     } finally { h.service.close(); h.db.close(); }
   });
 

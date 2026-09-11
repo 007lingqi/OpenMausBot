@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
+import { z } from "zod";
 import type { ConversationIntentRequest, ConversationIntentDecision } from "./conversation-intent.ts";
 import { readLatestWorkItemSnapshot } from "./snapshot.ts";
 import { redactSensitiveText } from "./sensitive-text.ts";
@@ -21,6 +22,30 @@ export const conversationSourceHash = (value: string): string => createHash("sha
 type HistoryEntry = ConversationIntentRequest["history"][number] & { at: number; order: number; clipped: boolean };
 interface SentReply { id: string; payload_json: string; sent_at: number; delivery_sequence: number; work_item_id: string | null;
   principal_id: string | null; created_by: string | null; proposal_json: string | null; natural_approval_json: string | null }
+
+/** Recover a question's purpose only from its complete, delivered branch text.
+ * This is conversational context, never permission to execute an action. */
+function compoundReadOnlyQuestion(db: DatabaseSync, row: SentReply, proposal: ConversationIntentDecision,
+  card: InboundCard, candidates: string[]): ConversationIntentRequest["pendingQuestion"] {
+  if (proposal.action !== "route_turn" || card.type !== "command_status_card" || !card.summary ||
+    card.summary.trim().length > DINGTALK_CONVERSATION_TEXT_LIMIT) return null;
+  const questions = proposal.parts.filter(part => part.decision.action === "ask_context");
+  if (!questions.length || questions.some(part => part.decision.action !== "ask_context" ||
+    !(["status_query", "explanation", "advice"].includes(part.decision.intent) || part.decision.reason === "pending_read_only"))) return null;
+  const parts = z.array(z.object({ ordinal: z.number(), decision_json: z.string(), reply_text: z.string() })).parse(db.prepare(
+    "SELECT p.ordinal,p.decision_json,p.reply_text FROM collaboration_turn_parts p JOIN collaboration_outbox o ON o.aggregate_id=p.parent_event_id " +
+    "WHERE o.id=? AND o.aggregate_type='association' ORDER BY p.ordinal").all(row.id));
+  if (parts.length !== proposal.parts.length || parts.some((part, i) => part.ordinal !== i || part.decision_json !== JSON.stringify(proposal.parts[i].decision))) return null;
+  const rendered = z.object({ text: z.string() }).parse(renderDingTalkSessionMessage(card).markdown);
+  const texts = parts.filter((_, i) => proposal.parts[i].decision.action === "ask_context").map(part => part.reply_text);
+  if (texts.some(text => !text.trim() || !rendered.text.includes(text))) return null;
+  const ids = [...new Set(questions.flatMap(part => part.decision.target && candidates.includes(part.decision.target.id) ? [part.decision.target.id] : []))];
+  const prompt: NonNullable<ConversationIntentRequest["pendingQuestion"]> = { kind: "read_only", sourceEventId: `outbox:${row.id}`,
+    workItemIds: ids.length <= 3 ? ids : [], text: redactSensitiveText(texts.join("；")).slice(0, 500) };
+  const origins = questions.map(part => part.decision.action === "ask_context" ? part.decision.origin : undefined);
+  if (origins[0] && origins.every(origin => origin === origins[0])) prompt.origin = origins[0];
+  return prompt;
+}
 
 /** Addressing only: historical aliases are never the current sender's authority. */
 function conversationOwner(db: DatabaseSync, principalId: string): { id: string; generation: number } | undefined {
@@ -64,6 +89,8 @@ function pendingQuestion(db: DatabaseSync, job: ConversationJob, sent: SentReply
       if (questions.length) { kind = "requirement"; text = questions.map(question => question.question).join("；"); }
     } else if (card.type === "command_status_card" && card.command === "conversation" && row.principal_id === job.principal_id && row.proposal_json) {
       const proposal = JSON.parse(row.proposal_json) as ConversationIntentDecision;
+      const compoundQuestion = compoundReadOnlyQuestion(db, row, proposal, card, candidates);
+      if (compoundQuestion) return compoundQuestion;
       const boundaries = proposal.action === "route_turn" ? proposal.parts.filter(part => part.decision.action === "keep_discussing").map(part => part.decision)
         : proposal.action === "keep_discussing" ? [proposal] : [];
       if (boundaries.length) {
@@ -149,9 +176,12 @@ export function readConversationContext(db: DatabaseSync, job: ConversationJob):
     "WHERE COALESCE(w.conversation_id,e.conversation_id,a.conversation_id)=? AND o.delivery_state='sent' AND o.delivery_sequence<=? " +
     "ORDER BY o.delivery_sequence DESC LIMIT 13").all(job.conversation_id, job.context_outbox_sequence) as unknown as SentReply[];
   const assistantHistory: HistoryEntry[] = sent.map(row => {
-    const text = redactSensitiveText((renderDingTalkSessionMessage(JSON.parse(row.payload_json)).markdown as { text: string }).text);
+    const card = JSON.parse(row.payload_json);
+    const text = redactSensitiveText((renderDingTalkSessionMessage(card).markdown as { text: string }).text);
+    const conversation = z.object({ type: z.literal("command_status_card"), command: z.literal("conversation"), summary: z.string() }).safeParse(card);
+    const presentationClipped = conversation.success && conversation.data.summary.trim().length > DINGTALK_CONVERSATION_TEXT_LIMIT;
     return { sourceEventId: `outbox:${row.id}`, role: "assistant", principalId: null,
-      text: text.slice(0, 2000), workItemId: row.work_item_id, at: row.sent_at, order: row.delivery_sequence, clipped: text.length > 2000 };
+      text: text.slice(0, 2000), workItemId: row.work_item_id, at: row.sent_at, order: row.delivery_sequence, clipped: text.length > 2000 || presentationClipped };
   });
   const merged = [...userHistory, ...assistantHistory].sort((a, b) => a.at - b.at || a.order - b.order);
   const selected = merged.slice(-12);

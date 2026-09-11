@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "date": "2026-09-11",
+  "status": "component_checks_passed_not_product_acceptance",
+  "scope": {
+    "model": "OpenCodex / gpt-6-astra / medium",
+    "realModelCalls": 3,
+    "initialTasks": "three synthetic fixtures",
+    "ledger": "isolated temporary SQLite",
+    "transport": "real Outbox and serialization with synthetic successful sender",
+    "realDingTalk": false,
+    "realPeople": false,
+    "codeExecution": false
+  },
+  "sourceFingerprint": "433e1e08d52bf4483466bd2d9ce0efebbc9203bb08933df9058b9f6fb81422c7",
+  "fingerprintMethod": "SHA256 of sorted .ts paths relative to server/ root, NUL, full bytes, NUL",
+  "sourceUnchangedDuringEvaluation": true,
+  "probe": "/private/tmp/bot-compound-question-eval.ts",
+  "probeSha256": "e95fe81e2694fc3d5702aea8cbdb75165052bf9d0e2b86cf7c620bf5b5443c1a",
+  "rawReport": "/var/folders/64/jv3wggb52g7dp20c2d849sy40000gn/T/bot-compound-question-eval-XdWb65/report.json",
+  "rawReportSha256": "c5ef684bb7f7a61fe7eb31f93dacef88e2f9647845e30c50df638ebf15e66533",
+  "checks": {
+    "input": "登录那个先只讨论，不要修改；另外我想查一件事的进度。",
+    "actions": ["keep_discussing", "ask_context:status_query:missing_target"],
+    "reply": "关于「调整登录失败提示，登录逻辑保持不变」，先讨论想法，不发起这项新改动。\n\n你想查看哪件事的进度：「修复订单详情提示，订单逻辑保持不变」、「修复支付失败提示，支付逻辑保持不变」还是「调整登录失败提示，登录逻辑保持不变」？也可以说一下其他问题。",
+    "restartThenAnswer": "我问的是支付那个",
+    "answerAction": "read_status:payment",
+    "answerPendingPurpose": "read_only",
+    "answerReply": "关于「修复支付失败提示，支付逻辑保持不变」：还需要补充信息，确认后才能开始修改。",
+    "taskSpecOwnerAndExecutionStateUnchanged": true,
+    "replayAddedNoModelCallsOrTaskChanges": true
+  },
+  "failureHistory": [{
+    "rawReport": "/var/folders/64/jv3wggb52g7dp20c2d849sy40000gn/T/bot-compound-question-eval-mRgsmW/report.json",
+    "rawReportSha256": "bf94e3f1ba0beaec582ccf25aabe2d2b213b2a08970a8fda814d0511b6f3338f",
+    "result": "real classifier returned clarify/uncertain for an explicit progress query with unknown target; no task mutation, but query-purpose continuation was lost",
+    "fix": "separate known intent from unresolved target in classifier contract; retain status_query with null target, without guessing target or relaxing assertions"
+  }],
+  "verification": {
+    "focusedRuns": ["10 files / 481 passed", "final 3 conversation files / 243 passed after intent-contract fix"],
+    "typecheck": "passed on final source",
+    "staticChecks": "context 33 findings, ingress test 16, intent 2: no per-file/per-rule additions against checked baselines; not lint-clean",
+    "diffCheck": "passed",
+    "fullRegression": "not rerun on this batch; complete pnpm test passed at previous integrated commit 8bb78a5, retained only as historical and unchanged-scope evidence",
+    "negativeCases": ["unsent", "delivered after input", "other speaker", "other group", "intervening turn", "serialized question clipped; no requirement mutation"]
+  },
+  "limitations": [
+    "Only compound turns whose pending questions are all read-only are recovered by this path; mixed requirement/approval question continuation is incomplete.",
+    "Compound advice/selection, cross-person explicit reply continuation and independent branch re-planning remain incomplete.",
+    "A pure thank-you with a pending question can still become an unnecessary clarification; retained as a separate unresolved issue.",
+    "Long or clipped presentation recovery remains conservative, not a complete long-conversation UX solution.",
+    "No real DingTalk delivery, real group participation, isolated development delivery or Owner final acceptance is demonstrated."
+  ]
+}
