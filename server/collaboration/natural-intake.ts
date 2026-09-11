@@ -16,7 +16,8 @@ import { naturalJobStorage, materialInterpretationSourceCurrent, materialIntakeF
 import { classifyConversationIntent, type ConversationIntentRequest, type ConversationIntentDecision } from "./conversation-intent.ts";
 import { isBusinessQuestion, questionTransitions, readQuestionHistory, type QuestionHistory } from "./question-lifecycle.ts";
 import { implementationContextHash, readDiscussionImplementation, type DiscussionImplementationContext } from "./discussion-implementation.ts";
-import { factProposalSchema, readFactHistory, recordFacts, factGates, type FactHistory } from "./fact-ledger.ts";
+import { factProposalSchema, factCorrectionSchema, readFactHistory, recordFacts, factGates,
+  validateFactCorrections, correctedFactHistory, recordFactCorrections, retainedFactAcceptance, type FactHistory } from "./fact-ledger.ts";
 
 export interface NaturalIntakeEvent { sourceEventId: string; principalId: string; text: string }
 export interface NaturalIntakeRequest {
@@ -64,6 +65,7 @@ export class ModelNaturalIntakeInterpreter implements NaturalIntakeInterpreter {
       ? z.array(schema.shape.answers.element.extend({ questionId: z.enum(answerIds) })).max(3)
       : schema.shape.answers.max(0),
       facts: z.array(factProposalSchema).max(6),
+      factCorrections: z.array(factCorrectionSchema).max(6),
       questionUpdates: z.array(questionUpdateSchema.extend({ questionId: pendingId })).max(answerIds.length ? 3 : 0),
     });
     return this.model.complete({ signal, responseSchema: z.toJSONSchema(responseSchema), user: JSON.stringify(request), system: [
@@ -91,6 +93,7 @@ export class ModelNaturalIntakeInterpreter implements NaturalIntakeInterpreter {
       "questionHistory 是程序从已提交回执重建的问题状态，含来源。open 未回答、partial 部分回答、resolved 已解决、superseded 因更正被替代。不要再次提出已解决的问题；truncated=true 只表示较早已关闭问题未全部展示，不代表未解问题消失。",
       "facts 提取当前消息中会影响结果的业务要求或待确认假设，最多6条。key 是同一业务点的稳定英文标识，先查 factHistory 并复用相同业务点的 key，不能换 key 隐藏矛盾；label 用简短业务中文。requirement 的 value 必须逐字来自当前消息，不把推断当成已确认要求；assumption 标记尚需核实的推断，quote 仍须引用当前原文。事实不是权限、审批或测试证据。",
       "factHistory 保留不同人员的来源。不要因为最新发言、人数或机器人推断而删除旧说法。发现同一业务点不同说法需保留来源，不用 answers 或 questionUpdates 清除 fact- 系统分歧/假设门禁。facts 是补充结构化记录，不替代正常的目标与可观察验收条件。",
+      "value 使用原文中最小可比较取值，例如 CSV 或 Excel，不用整句措辞差别制造分歧。factCorrections 仅用于当前发言人明确更正自己的要求或核实自己的假设：factId 引用 factHistory.entries 中自己同 key 最新的事实，quote 引用当前明确更正且包含新值的原文；同时在 facts 提交同 key 的新 requirement，并更新目标与验收。不能更正别人、不能把普通补充或致谢当成撤回。其他人仍有不同说法时继续澄清。不更正时 factCorrections=[]。",
       "为事实分歧或假设提问时，questions.id 复用对应 fact.key（或该 key 加 -resolution），直接说明需要决定的业务选项；系统将问题文案与不可绕过的分歧门禁合为一项，不重复展示。",
       "questionUpdates：部分回答用 status=partial，quote 引用当前回答，并在 questions 用原 id 只追问剩余缺口；replacementQuestionId=null。用户明确更正使旧问题不适用时才用 superseded，quote 引用更正，将 replacementQuestionId 绑定本轮 questions 中不同的新问题完整 natural- 编号。不能用替代来跳过未回答的问题或系统门禁。没有状态变化时用空数组。",
       "questions 最多三个，只询问会改变结果的缺口；已回答的问题不要重问。给出相关角色，不伪造人员身份。",
@@ -114,6 +117,7 @@ const schema = z.object({
   answers: z.array(z.object({ questionId: text, quote }).strict()).max(3),
   questionUpdates: z.array(questionUpdateSchema).max(3).optional(),
   facts: z.array(factProposalSchema).max(6).optional(),
+  factCorrections: z.array(factCorrectionSchema).max(6).optional(),
   questions: z.array(z.object({ id: z.string().regex(/^[a-z][a-z0-9-]{0,48}$/), question: text,
     reason: text, role: z.enum(["requester", "product", "test", "development"]),
     respondent: z.object({ principalId: z.string().min(1).max(256), sourceEventId: z.string().min(1).max(256), quote }).strict().nullable(),
@@ -137,6 +141,7 @@ export function validateNaturalIntakeProposal(raw: unknown, request: NaturalInta
   if (new Set((result.facts ?? []).map(fact => fact.key)).size !== (result.facts ?? []).length) throw new Error("natural_fact_duplicate_key");
   if ((result.facts ?? []).some(fact => !request.event.text.includes(fact.quote) ||
     (fact.kind === "requirement" && !fact.quote.includes(fact.value)))) throw new Error("natural_fact_not_grounded");
+  validateFactCorrections(request, result);
   if (result.sourceEventId !== request.event.sourceEventId || result.baseRevision !== request.snapshot.revision) {
     throw new Error("natural_intake_source_or_revision_mismatch");
   }
@@ -186,11 +191,15 @@ export function validateNaturalIntakeProposal(raw: unknown, request: NaturalInta
 }
 
 export function naturalDefinitionPatch(request: NaturalIntakeRequest, proposal: NaturalIntakeProposal): WorkItemSnapshotPatch {
-  const gates = factGates(request, proposal.facts ?? [], proposal.questions);
+  const history = correctedFactHistory(request, proposal.factCorrections ?? []);
+  const gates = factGates({ ...request, factHistory: history }, proposal.facts ?? [], proposal.questions);
+  const correctedKeys = new Set((proposal.factCorrections ?? []).map(c => request.factHistory!.entries.find(f => f.id === c.factId)!.key));
+  const clearedGates = new Set(!request.contextTruncated && !history.truncated ? [...correctedKeys].flatMap(key =>
+    [`fact-conflict-${key}`, `fact-assumption-${key}`].filter(id => !gates.some(gate => gate.id === id))) : []);
   const mergedQuestionIds = new Set(gates.flatMap(gate => gate.replacesQuestionId ? [gate.replacesQuestionId] : []));
   const answered = new Set(proposal.answers.map(answer => answer.questionId));
   for (const update of proposal.questionUpdates ?? []) if (update.status === "superseded") answered.add(update.questionId);
-  const ambiguities = request.snapshot.blockingAmbiguities.filter(q => q.id !== "natural-input-pending" && !mergedQuestionIds.has(q.id) &&
+  const ambiguities = request.snapshot.blockingAmbiguities.filter(q => q.id !== "natural-input-pending" && !mergedQuestionIds.has(q.id) && !clearedGates.has(q.id) &&
     !(q.id === "natural-context-incomplete" && !request.contextTruncated) && !answered.has(q.id));
   for (const q of proposal.questions) {
     const id = `natural-${q.id}`;
@@ -214,13 +223,16 @@ export function naturalDefinitionPatch(request: NaturalIntakeRequest, proposal: 
   // Reordering does not resolve any gap; system/dependency gates still apply.
   const priority = new Map(proposal.questions.map((q, index) => [`natural-${q.id}`, index]));
   ambiguities.sort((a, b) => (priority.get(a.id) ?? priority.size) - (priority.get(b.id) ?? priority.size));
-  const acceptance = [...request.snapshot.acceptanceConditions];
-  const unsettledFacts = gates.length > 0 || ambiguities.some(q => /^fact-(conflict|assumption)-/u.test(q.id));
+  const unsettledFacts = history.truncated || gates.length > 0 || ambiguities.some(q => /^fact-(conflict|assumption)-/u.test(q.id));
+  const acceptance = unsettledFacts ? [...request.snapshot.acceptanceConditions] : retainedFactAcceptance(request, history);
   for (const item of unsettledFacts ? [] : proposal.acceptance) {
     const value = { description: redactSensitiveText(item.description), observation: redactSensitiveText(item.observation) };
     if (!acceptance.some(v => v.description === value.description && v.observation === value.observation)) acceptance.push(value);
   }
-  return { ...(proposal.goal && !unsettledFacts ? { goal: redactSensitiveText(proposal.goal.text), goalConfirmed: proposal.goal.confirmed } : {}),
+  const retiredGoal = history.retired?.some(f => f.bindings?.goal !== null && f.bindings?.goal === request.snapshot.goal) &&
+    !history.entries.some(f => f.bindings?.goal === request.snapshot.goal);
+  return { ...(proposal.goal && !unsettledFacts ? { goal: redactSensitiveText(proposal.goal.text), goalConfirmed: proposal.goal.confirmed }
+    : retiredGoal && !unsettledFacts ? { goalConfirmed: false } : {}),
     acceptanceConditions: acceptance, blockingAmbiguities: ambiguities };
 }
 
@@ -326,6 +338,7 @@ export class NaturalIntakeCoordinator {
         proposalJson: JSON.stringify({ ...sanitize(result) as Record<string, unknown>,
           questionTransitions: sanitize(questionTransitions(safeRequest, result)),
           factRecords: sanitize(recordFacts(safeRequest, result.facts ?? [])),
+          factCorrectionRecords: sanitize(recordFactCorrections(safeRequest, result.factCorrections ?? [])),
           implementationContext: safeRequest.implementationContext,
           eventEvidence: context.eventEvidence,
           attachmentContextHash: attachmentContext.fingerprint, attachmentEvidence: attachmentContext.attachments.map(attachmentReceipt), attachmentReplacements: attachmentContext.replacements,

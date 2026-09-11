@@ -1,0 +1,346 @@
+{
+  "version": 1,
+  "scope": {
+    "realModel": true,
+    "realDingTalk": false,
+    "execution": false,
+    "isolatedLedger": true
+  },
+  "model": "gpt-6-astra",
+  "reasoningEffort": "medium",
+  "startedAt": "2026-09-11T03:02:21.532Z",
+  "finishedAt": "2026-09-11T03:04:08.332Z",
+  "status": "checks_passed",
+  "sourceFingerprint": "5f3187d1692b32b35fe72eea580260a36e230c141403e214a85770f7639779f8",
+  "sourceUnchanged": true,
+  "modelCalls": 6,
+  "review": {
+    "status": "reviewed",
+    "checks": [
+      "Second speaker cannot overwrite the first requirement; CSV Spec remains while conflict is unresolved.",
+      "Original speaker correction references their own current source-bound fact.",
+      "After correction only Excel acceptance remains; conflict is absent.",
+      "Actual serialized clarification is one concrete business question; no duplicate template or false completion.",
+      "Final turn is silent preparation, not a completed implementation or a DingTalk delivery."
+    ],
+    "limits": [
+      "Synthetic identities and test sender only; no real DingTalk, execution, deployment or Owner sign-off.",
+      "Shared multi-fact acceptance corrections fail conservatively; natural recovery remains incomplete.",
+      "Generic evaluation checks do not all cover fact-prefixed questions; actual replies and snapshots were separately inspected."
+    ]
+  },
+  "turns": [
+    {
+      "scenario": "participant-format-correction",
+      "turn": 0,
+      "speaker": "product",
+      "text": "订单导出格式用 CSV。",
+      "action": "create_work",
+      "target": "WI-8C529794D2A0",
+      "replies": [],
+      "deliveryExpectation": "silent_preparation",
+      "replied": false,
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "deliveryPolicy": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true
+      },
+      "passed": true,
+      "snapshot": {
+        "work_item_id": "WI-8C529794D2A0",
+        "revision": 2,
+        "source_work_item_version": 1,
+        "goal": "订单导出格式用 CSV。",
+        "goal_confirmed": 1,
+        "repository": "/tmp/configured-repository",
+        "facts_json": "[\"订单导出格式用 CSV。\"]",
+        "assumptions_json": "[]",
+        "acceptance_json": "[{\"description\":\"订单导出的文件格式为 CSV。\",\"observation\":\"导出订单后，生成的文件为 CSV 格式。\"}]",
+        "blocking_ambiguities_json": "[]",
+        "created_at": 1789095776349
+      },
+      "intentStatus": "applied",
+      "naturalStatus": "applied"
+    },
+    {
+      "scenario": "participant-format-correction",
+      "turn": 1,
+      "speaker": "tester",
+      "text": "订单导出格式要用 Excel，不要 CSV。",
+      "action": "contribute",
+      "target": "WI-8C529794D2A0",
+      "replies": [
+        "此前要求 CSV，本次要求 Excel，订单导出最终采用哪种格式？"
+      ],
+      "deliveryExpectation": "reply_required",
+      "replied": true,
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "deliveryPolicy": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true,
+        "stageReplyDelivered": true,
+        "target": true
+      },
+      "passed": true,
+      "snapshot": {
+        "work_item_id": "WI-8C529794D2A0",
+        "revision": 4,
+        "source_work_item_version": 2,
+        "goal": "订单导出格式用 CSV。",
+        "goal_confirmed": 1,
+        "repository": "/tmp/configured-repository",
+        "facts_json": "[\"订单导出格式用 CSV。\",\"订单导出格式要用 Excel，不要 CSV。\"]",
+        "assumptions_json": "[]",
+        "acceptance_json": "[{\"description\":\"订单导出的文件格式为 CSV。\",\"observation\":\"导出订单后，生成的文件为 CSV 格式。\"}]",
+        "blocking_ambiguities_json": "[{\"id\":\"fact-conflict-order-export-format\",\"question\":\"此前要求 CSV，本次要求 Excel，订单导出最终采用哪种格式？\",\"dependsOn\":[],\"recommendedAnswer\":\"请相关同事澄清分歧，原始说法和来源均会保留。\",\"role\":\"product\"}]",
+        "created_at": 1789095813691
+      },
+      "intentStatus": "applied",
+      "naturalStatus": "applied"
+    },
+    {
+      "scenario": "participant-format-correction",
+      "turn": 2,
+      "speaker": "product",
+      "text": "更正我之前的要求：订单导出格式用 Excel，不要 CSV。",
+      "action": "contribute",
+      "target": "WI-8C529794D2A0",
+      "replies": [],
+      "deliveryExpectation": "silent_preparation",
+      "replied": false,
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "deliveryPolicy": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true,
+        "target": true
+      },
+      "passed": true,
+      "snapshot": {
+        "work_item_id": "WI-8C529794D2A0",
+        "revision": 6,
+        "source_work_item_version": 3,
+        "goal": "订单导出格式用 Excel，不要 CSV。",
+        "goal_confirmed": 1,
+        "repository": "/tmp/configured-repository",
+        "facts_json": "[\"订单导出格式用 CSV。\",\"订单导出格式要用 Excel，不要 CSV。\",\"更正我之前的要求：订单导出格式用 Excel，不要 CSV。\"]",
+        "assumptions_json": "[]",
+        "acceptance_json": "[{\"description\":\"订单导出采用 Excel 格式，不采用 CSV 格式。\",\"observation\":\"导出订单后，生成的文件为 Excel 格式，而非 CSV 格式。\"}]",
+        "blocking_ambiguities_json": "[]",
+        "created_at": 1789095842424
+      },
+      "intentStatus": "applied",
+      "naturalStatus": "applied"
+    }
+  ],
+  "proposals": [
+    {
+      "turn": 0,
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "participant-format-correction:0",
+        "baseRevision": 1,
+        "goal": {
+          "text": "订单导出格式用 CSV。",
+          "confirmed": true,
+          "quote": "订单导出格式用 CSV。"
+        },
+        "acceptance": [
+          {
+            "description": "订单导出的文件格式为 CSV。",
+            "observation": "导出订单后，生成的文件为 CSV 格式。",
+            "quote": "订单导出格式用 CSV。"
+          }
+        ],
+        "answers": [],
+        "questionUpdates": [],
+        "facts": [
+          {
+            "key": "order-export-format",
+            "label": "订单导出格式",
+            "value": "CSV",
+            "kind": "requirement",
+            "quote": "订单导出格式用 CSV。"
+          }
+        ],
+        "factCorrections": [],
+        "questions": []
+      }
+    },
+    {
+      "turn": 1,
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "participant-format-correction:1",
+        "baseRevision": 3,
+        "goal": {
+          "text": "订单导出格式要用 Excel，不要 CSV。",
+          "confirmed": true,
+          "quote": "订单导出格式要用 Excel，不要 CSV。"
+        },
+        "acceptance": [
+          {
+            "description": "订单导出文件使用 Excel 格式，而非 CSV 格式。",
+            "observation": "导出订单后，生成的文件为 Excel 格式，不是 CSV 格式。",
+            "quote": "订单导出格式要用 Excel，不要 CSV。"
+          }
+        ],
+        "answers": [],
+        "questionUpdates": [],
+        "facts": [
+          {
+            "key": "order-export-format",
+            "label": "订单导出格式",
+            "value": "Excel",
+            "kind": "requirement",
+            "quote": "订单导出格式要用 Excel，不要 CSV。"
+          }
+        ],
+        "factCorrections": [],
+        "questions": [
+          {
+            "id": "order-export-format",
+            "question": "此前要求 CSV，本次要求 Excel，订单导出最终采用哪种格式？",
+            "reason": "两位参与者对同一导出格式提出不同要求，当前发言不能撤回另一位参与者的要求，需要明确最终选择。",
+            "role": "product",
+            "respondent": null
+          }
+        ]
+      }
+    },
+    {
+      "turn": 2,
+      "status": "completed",
+      "response": {
+        "version": 1,
+        "sourceEventId": "participant-format-correction:2",
+        "baseRevision": 5,
+        "goal": {
+          "text": "订单导出格式用 Excel，不要 CSV。",
+          "confirmed": true,
+          "quote": "更正我之前的要求：订单导出格式用 Excel，不要 CSV。"
+        },
+        "acceptance": [
+          {
+            "description": "订单导出采用 Excel 格式，不采用 CSV 格式。",
+            "observation": "导出订单后，生成的文件为 Excel 格式，而非 CSV 格式。",
+            "quote": "订单导出格式用 Excel，不要 CSV。"
+          }
+        ],
+        "answers": [],
+        "questionUpdates": [],
+        "facts": [
+          {
+            "key": "order-export-format",
+            "label": "订单导出格式",
+            "value": "Excel",
+            "kind": "requirement",
+            "quote": "更正我之前的要求：订单导出格式用 Excel，不要 CSV。"
+          }
+        ],
+        "factCorrections": [
+          {
+            "factId": "0cc9d860002e72d5052cbbd14e2c3e8aa2a61e8b007aba72ee70e3bc8f48b649",
+            "quote": "更正我之前的要求：订单导出格式用 Excel，不要 CSV。"
+          }
+        ],
+        "questions": []
+      }
+    }
+  ],
+  "receipts": [
+    {
+      "sourceEventId": "participant-format-correction:0",
+      "revision": 2,
+      "factRecords": [
+        {
+          "key": "order-export-format",
+          "label": "订单导出格式",
+          "value": "CSV",
+          "kind": "requirement",
+          "quote": "订单导出格式用 CSV。",
+          "id": "0cc9d860002e72d5052cbbd14e2c3e8aa2a61e8b007aba72ee70e3bc8f48b649",
+          "sourceEventId": "participant-format-correction:0",
+          "principalId": "731461b2-ffdd-4a6a-bd0b-889e0ee35c47",
+          "revision": 2
+        }
+      ],
+      "factCorrectionRecords": []
+    },
+    {
+      "sourceEventId": "participant-format-correction:1",
+      "revision": 4,
+      "factRecords": [
+        {
+          "key": "order-export-format",
+          "label": "订单导出格式",
+          "value": "Excel",
+          "kind": "requirement",
+          "quote": "订单导出格式要用 Excel，不要 CSV。",
+          "id": "d0788589730287a18e072c483f9d8a190caaec46f52b70eb21f5019bc1a206bc",
+          "sourceEventId": "participant-format-correction:1",
+          "principalId": "7e28fd20-a87b-4218-8f3c-6c0eeb957f9e",
+          "revision": 4
+        }
+      ],
+      "factCorrectionRecords": []
+    },
+    {
+      "sourceEventId": "participant-format-correction:2",
+      "revision": 6,
+      "factRecords": [
+        {
+          "key": "order-export-format",
+          "label": "订单导出格式",
+          "value": "Excel",
+          "kind": "requirement",
+          "quote": "更正我之前的要求：订单导出格式用 Excel，不要 CSV。",
+          "id": "96c04f930d161406af450c49bb9ba0fc24b962cbc0d26793f5e6de1da19d640d",
+          "sourceEventId": "participant-format-correction:2",
+          "principalId": "731461b2-ffdd-4a6a-bd0b-889e0ee35c47",
+          "revision": 6
+        }
+      ],
+      "factCorrectionRecords": [
+        {
+          "factId": "0cc9d860002e72d5052cbbd14e2c3e8aa2a61e8b007aba72ee70e3bc8f48b649",
+          "quote": "更正我之前的要求：订单导出格式用 Excel，不要 CSV。",
+          "sourceEventId": "participant-format-correction:2",
+          "principalId": "731461b2-ffdd-4a6a-bd0b-889e0ee35c47",
+          "revision": 6
+        }
+      ]
+    }
+  ]
+}

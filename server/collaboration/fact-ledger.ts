@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import type { NaturalIntakeRequest, NaturalIntakeProposal } from "./natural-intake.ts";
-import type { BlockingAmbiguity } from "./snapshot.ts";
+import type { BlockingAmbiguity, AcceptanceCondition } from "./snapshot.ts";
 
 export const factProposalSchema = z.object({ key: z.string().regex(/^[a-z][a-z0-9-]{0,39}$/u),
   label: z.string().trim().min(1).max(60), value: z.string().trim().min(1).max(500),
@@ -10,37 +10,113 @@ export const factProposalSchema = z.object({ key: z.string().regex(/^[a-z][a-z0-
 export type FactProposal = z.infer<typeof factProposalSchema>;
 const recordSchema = factProposalSchema.extend({ id: z.string(), sourceEventId: z.string(), principalId: z.string(), revision: z.number().int().positive() }).strict();
 export type RecordedFact = z.infer<typeof recordSchema>;
-export interface FactHistory { entries: RecordedFact[]; truncated: boolean }
+export const factCorrectionSchema = z.object({ factId: z.string().regex(/^[a-f0-9]{64}$/u), quote: z.string().min(1).max(2000) }).strict();
+export type FactCorrection = z.infer<typeof factCorrectionSchema>;
+const correctionRecordSchema = factCorrectionSchema.extend({ sourceEventId: z.string(), principalId: z.string(), revision: z.number().int().positive() }).strict();
+interface BoundFact extends RecordedFact { bindings?: { acceptance: AcceptanceCondition[]; goal: string | null; ambiguous?: boolean } }
+export interface FactHistory { entries: BoundFact[]; retired?: BoundFact[]; truncated: boolean }
 const hash = (text: string): string => createHash("sha256").update(text).digest("hex");
 const factId = (sourceEventId: string, fact: FactProposal): string => hash(JSON.stringify([sourceEventId, fact.key, fact.kind, fact.value]));
-const rowSchema = z.object({ value: z.string(), source_event_id: z.string(), principal_id: z.string(),
-  normalized_json: z.string(), proposal_json: z.string(), result_revision: z.number() });
+const rowSchema = z.object({ source_event_id: z.string(), principal_id: z.string(), normalized_json: z.string(),
+  proposal_json: z.string(), result_revision: z.number(), acceptance_json: z.string(), goal: z.string().nullable() });
+const conditionSchema = z.object({ description: z.string(), observation: z.string() });
+const receiptSchema = z.object({ factRecords: z.array(recordSchema).optional(), factCorrectionRecords: z.array(correctionRecordSchema).optional(),
+  acceptance: z.array(conditionSchema.extend({ quote: z.string() })), goal: z.object({ text: z.string(), quote: z.string() }).nullable(),
+  eventEvidence: z.object({ normalizedHash: z.string() }) });
+const sameCondition = (a: AcceptanceCondition, b: AcceptanceCondition): boolean => a.description === b.description && a.observation === b.observation;
 
 /** Reconstruct source-bound observations from immutable Spec receipts. This is a
  * read projection, not a competing mutable authority or a vote/approval system. */
 export function readFactHistory(db: DatabaseSync, workItemId: string, revision: number): FactHistory {
-  const entries: RecordedFact[] = [], seen = new Set<string>();
-  let characters = 0, truncated = false;
-  const rows = db.prepare("SELECT f.value,j.source_event_id,e.principal_id,e.normalized_json,j.proposal_json,j.result_revision " +
+  const active = new Map<string, BoundFact>(), retired: BoundFact[] = [];
+  const rows = db.prepare("SELECT j.source_event_id,e.principal_id,e.normalized_json,j.proposal_json,j.result_revision,s.acceptance_json,s.goal " +
     "FROM collaboration_natural_all_jobs j JOIN collaboration_external_events e ON e.source='dingtalk' AND e.source_event_id=j.source_event_id AND e.work_item_id=j.work_item_id " +
-    "JOIN json_each(j.proposal_json,'$.factRecords') f WHERE j.work_item_id=? AND j.status='applied' AND j.result_revision<=? ORDER BY j.result_revision DESC")
+    "JOIN collaboration_work_item_snapshots s ON s.work_item_id=j.work_item_id AND s.revision=j.result_revision " +
+    "WHERE j.work_item_id=? AND j.status='applied' AND j.result_revision<=? " +
+    "AND (json_array_length(j.proposal_json,'$.factRecords')>0 OR json_array_length(j.proposal_json,'$.factCorrectionRecords')>0) ORDER BY j.result_revision")
     .iterate(workItemId, revision);
   for (const raw of rows) {
-    const row = rowSchema.parse(raw), fact = recordSchema.parse(JSON.parse(row.value));
-    const evidence = z.object({ eventEvidence: z.object({ normalizedHash: z.string() }) }).parse(JSON.parse(row.proposal_json));
+    const row = rowSchema.parse(raw), receipt = receiptSchema.parse(JSON.parse(row.proposal_json));
     const event = z.object({ text: z.string() }).parse(JSON.parse(row.normalized_json));
-    if (fact.id !== factId(row.source_event_id, fact) || fact.sourceEventId !== row.source_event_id || fact.principalId !== row.principal_id ||
-      fact.revision !== row.result_revision || evidence.eventEvidence.normalizedHash !== hash(row.normalized_json) || !event.text.includes(fact.quote)) {
-      throw new Error("natural_fact_source_invalid");
+    if (receipt.eventEvidence.normalizedHash !== hash(row.normalized_json)) throw new Error("natural_fact_source_invalid");
+    const facts = receipt.factRecords ?? [];
+    for (const fact of facts) {
+      if (fact.id !== factId(row.source_event_id, fact) || fact.sourceEventId !== row.source_event_id || fact.principalId !== row.principal_id ||
+        fact.revision !== row.result_revision || !event.text.includes(fact.quote) || fact.kind === "requirement" && !fact.quote.includes(fact.value)) throw new Error("natural_fact_source_invalid");
     }
+    for (const correction of receipt.factCorrectionRecords ?? []) {
+      const prior = active.get(correction.factId);
+      if (!prior || prior.principalId !== row.principal_id || correction.principalId !== row.principal_id || correction.sourceEventId !== row.source_event_id ||
+        correction.revision !== row.result_revision || !event.text.includes(correction.quote) ||
+        !facts.some(f => f.key === prior.key && f.kind === "requirement" && correction.quote.includes(f.value)) ||
+        [...active.values()].some(f => f.key === prior.key && f.principalId === prior.principalId && f.revision > prior.revision)) throw new Error("natural_fact_correction_source_invalid");
+      for (const [id, fact] of active) if (fact.principalId === prior.principalId && fact.key === prior.key) { retired.push(fact); active.delete(id); }
+    }
+    const applied = z.array(conditionSchema).parse(JSON.parse(row.acceptance_json));
+    for (const fact of facts) {
+      const matches = (quote: string) => facts.filter(candidate => candidate.quote.includes(quote) || quote.includes(candidate.quote));
+      const acceptance = receipt.acceptance.filter(condition => applied.some(value => sameCondition(value, condition)) &&
+        matches(condition.quote).length === 1 && matches(condition.quote)[0].id === fact.id).map(({ description, observation }) => ({ description, observation }));
+      const goal = receipt.goal && row.goal === receipt.goal.text && matches(receipt.goal.quote).length === 1 && matches(receipt.goal.quote)[0].id === fact.id ? row.goal : null;
+      const ambiguous = receipt.acceptance.some(condition => applied.some(value => sameCondition(value, condition)) &&
+        matches(condition.quote).length > 1 && matches(condition.quote).some(candidate => candidate.id === fact.id)) ||
+        !!(receipt.goal && row.goal === receipt.goal.text && matches(receipt.goal.quote).length > 1 && matches(receipt.goal.quote).some(candidate => candidate.id === fact.id));
+      active.set(fact.id, { ...fact, bindings: { acceptance, goal, ambiguous } });
+    }
+  }
+  const current = z.object({ acceptance_json: z.string(), goal: z.string().nullable() }).parse(db.prepare("SELECT acceptance_json,goal FROM collaboration_work_item_snapshots WHERE work_item_id=? AND revision=?").get(workItemId, revision));
+  const conditions = z.array(conditionSchema).parse(JSON.parse(current.acceptance_json));
+  const neededRetired = retired.filter(fact => fact.bindings?.goal === current.goal && current.goal !== null ||
+    fact.bindings?.acceptance.some(binding => conditions.some(condition => sameCondition(binding, condition))));
+  // Repeated observations may omit acceptance already in the Spec. Compact the
+  // observation, not its still-live provenance, or a later correction loses it.
+  const compact = new Map<string, BoundFact>();
+  for (const fact of [...active.values()].reverse()) {
     const key = JSON.stringify([fact.key, fact.kind, fact.value, fact.principalId]);
-    if (seen.has(key)) continue;
-    seen.add(key);
+    const latest = compact.get(key);
+    if (!latest) { compact.set(key, { ...fact, bindings: { ...fact.bindings, acceptance: [...(fact.bindings?.acceptance ?? [])], goal: fact.bindings?.goal ?? null } }); continue; }
+    for (const condition of fact.bindings?.acceptance ?? []) if (!latest.bindings!.acceptance.some(c => sameCondition(c, condition))) latest.bindings!.acceptance.push(condition);
+    if (fact.bindings?.goal === current.goal) latest.bindings!.goal = current.goal;
+    if (fact.bindings?.ambiguous) latest.bindings!.ambiguous = true;
+  }
+  const entries: BoundFact[] = [], retiredEntries: BoundFact[] = [];
+  let characters = 0, truncated = false;
+  for (const fact of compact.values()) {
     const size = JSON.stringify(fact).length;
     if (entries.length >= 50 || characters + size > 12000) { truncated = true; continue; }
     characters += size; entries.push(fact);
   }
-  return { entries: entries.reverse(), truncated };
+  for (const fact of neededRetired) {
+    const size = JSON.stringify(fact).length;
+    if (retiredEntries.length >= 50 || characters + size > 16000) { truncated = true; continue; }
+    characters += size; retiredEntries.push(fact);
+  }
+  return { entries: entries.reverse(), retired: retiredEntries, truncated };
+}
+
+export function validateFactCorrections(request: NaturalIntakeRequest, proposal: NaturalIntakeProposal): void {
+  const keys = new Set<string>();
+  for (const correction of proposal.factCorrections ?? []) {
+    const fact = request.factHistory?.entries.find(fact => fact.id === correction.factId);
+    if (!fact || request.contextTruncated || request.factHistory?.truncated || fact.principalId !== request.event.principalId || !request.event.text.includes(correction.quote) ||
+      !proposal.facts?.some(replacement => replacement.key === fact.key && replacement.kind === "requirement" && correction.quote.includes(replacement.value)) || keys.has(fact.key)) throw new Error("natural_fact_correction_invalid");
+    if (request.factHistory!.entries.some(other => other.key === fact.key && other.principalId === fact.principalId && other.revision > fact.revision)) throw new Error("natural_fact_correction_stale");
+    if (request.factHistory!.entries.some(other => other.key === fact.key && other.principalId === fact.principalId && other.bindings?.ambiguous)) throw new Error("natural_fact_correction_scope_ambiguous");
+    keys.add(fact.key);
+  }
+}
+export function correctedFactHistory(request: NaturalIntakeRequest, corrections: FactCorrection[]): FactHistory {
+  const history = request.factHistory ?? { entries: [], truncated: false };
+  const keys = new Set(corrections.map(c => history.entries.find(f => f.id === c.factId)!.key));
+  const removed = history.entries.filter(f => keys.has(f.key) && f.principalId === request.event.principalId);
+  return { entries: history.entries.filter(f => !removed.includes(f)), retired: [...(history.retired ?? []), ...removed], truncated: history.truncated };
+}
+export function recordFactCorrections(request: NaturalIntakeRequest, corrections: FactCorrection[]) {
+  return corrections.map(c => ({ ...c, sourceEventId: request.event.sourceEventId, principalId: request.event.principalId, revision: request.snapshot.revision + 1 }));
+}
+export function retainedFactAcceptance(request: NaturalIntakeRequest, history: FactHistory): AcceptanceCondition[] {
+  return request.snapshot.acceptanceConditions.filter(condition => !history.retired?.some(f => f.bindings?.acceptance.some(c => sameCondition(c, condition))) ||
+    history.entries.some(f => f.bindings?.acceptance.some(c => sameCondition(c, condition))));
 }
 
 export function recordFacts(request: NaturalIntakeRequest, facts: FactProposal[]): RecordedFact[] {

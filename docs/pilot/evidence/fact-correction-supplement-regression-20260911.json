@@ -1,0 +1,238 @@
+{
+  "version": 1,
+  "scope": {
+    "realModel": true,
+    "realDingTalk": false,
+    "execution": false,
+    "isolatedLedger": true
+  },
+  "model": "gpt-6-astra",
+  "reasoningEffort": "medium",
+  "startedAt": "2026-09-11T03:09:19.849Z",
+  "finishedAt": "2026-09-11T03:10:19.365Z",
+  "status": "checks_passed",
+  "sourceFingerprint": "5f3187d1692b32b35fe72eea580260a36e230c141403e214a85770f7639779f8",
+  "sourceUnchanged": true,
+  "modelCalls": 5,
+  "review": {
+    "status": "reviewed",
+    "checks": [
+      "Ordinary tester timeout supplementation preserves original username/password acceptance and adds timeout coverage.",
+      "No fact conflict or correction is introduced by the supplement.",
+      "Another speaker status query does not mutate the Spec or falsely claim code completion."
+    ],
+    "limits": [
+      "Synthetic participants, fake sender, no execution or real DingTalk.",
+      "This is ordinary supplementation, not proof of composite multi-fact correction support."
+    ]
+  },
+  "turns": [
+    {
+      "scenario": "multiple-participants",
+      "turn": 0,
+      "speaker": "product",
+      "text": "登录失败时保留用户名，密码必须清空。",
+      "action": "create_work",
+      "target": "WI-CAAFF16F9138",
+      "replies": [],
+      "deliveryExpectation": "silent_preparation",
+      "replied": false,
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "deliveryPolicy": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true
+      },
+      "passed": true,
+      "snapshot": {
+        "work_item_id": "WI-CAAFF16F9138",
+        "revision": 2,
+        "source_work_item_version": 1,
+        "goal": "登录失败时保留用户名，密码必须清空。",
+        "goal_confirmed": 1,
+        "repository": "/tmp/configured-repository",
+        "facts_json": "[\"登录失败时保留用户名，密码必须清空。\"]",
+        "assumptions_json": "[]",
+        "acceptance_json": "[{\"description\":\"登录失败后，用户名输入框保留用户已输入的用户名。\",\"observation\":\"登录失败后查看用户名输入框，其内容与提交登录前一致。\"},{\"description\":\"登录失败后，密码输入框内容清空。\",\"observation\":\"登录失败后查看密码输入框，其内容为空。\"}]",
+        "blocking_ambiguities_json": "[]",
+        "created_at": 1789096174501
+      },
+      "intentStatus": "applied",
+      "naturalStatus": "applied"
+    },
+    {
+      "scenario": "multiple-participants",
+      "turn": 1,
+      "speaker": "tester",
+      "text": "测试补充：登录接口超时时也要保留用户名、清空密码；我会负责核对超时场景。",
+      "action": "contribute",
+      "target": "WI-CAAFF16F9138",
+      "replies": [],
+      "deliveryExpectation": "silent_preparation",
+      "replied": false,
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "deliveryPolicy": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true,
+        "target": true
+      },
+      "passed": true,
+      "snapshot": {
+        "work_item_id": "WI-CAAFF16F9138",
+        "revision": 4,
+        "source_work_item_version": 2,
+        "goal": "登录失败时保留用户名，密码必须清空。",
+        "goal_confirmed": 1,
+        "repository": "/tmp/configured-repository",
+        "facts_json": "[\"登录失败时保留用户名，密码必须清空。\",\"测试补充：登录接口超时时也要保留用户名、清空密码；我会负责核对超时场景。\"]",
+        "assumptions_json": "[]",
+        "acceptance_json": "[{\"description\":\"登录失败后，用户名输入框保留用户已输入的用户名。\",\"observation\":\"登录失败后查看用户名输入框，其内容与提交登录前一致。\"},{\"description\":\"登录失败后，密码输入框内容清空。\",\"observation\":\"登录失败后查看密码输入框，其内容为空。\"},{\"description\":\"登录接口超时后，保留已输入的用户名并清空密码。\",\"observation\":\"登录接口超时后，用户名输入框内容与提交登录前一致，密码输入框为空。\"}]",
+        "blocking_ambiguities_json": "[]",
+        "created_at": 1789096209244
+      },
+      "intentStatus": "applied",
+      "naturalStatus": "applied"
+    },
+    {
+      "scenario": "multiple-participants",
+      "turn": 2,
+      "speaker": "developer",
+      "text": "登录那项现在到哪一步了？",
+      "action": "read_status",
+      "target": "WI-CAAFF16F9138",
+      "replies": [
+        "关于「登录失败时保留用户名，密码必须清空」：修改方案已整理好，等待开始执行。"
+      ],
+      "deliveryExpectation": "reply_required",
+      "replied": true,
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "deliveryPolicy": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true,
+        "unchangedRequirements": true,
+        "target": true
+      },
+      "passed": true,
+      "snapshot": {
+        "work_item_id": "WI-CAAFF16F9138",
+        "revision": 4,
+        "source_work_item_version": 2,
+        "goal": "登录失败时保留用户名，密码必须清空。",
+        "goal_confirmed": 1,
+        "repository": "/tmp/configured-repository",
+        "facts_json": "[\"登录失败时保留用户名，密码必须清空。\",\"测试补充：登录接口超时时也要保留用户名、清空密码；我会负责核对超时场景。\"]",
+        "assumptions_json": "[]",
+        "acceptance_json": "[{\"description\":\"登录失败后，用户名输入框保留用户已输入的用户名。\",\"observation\":\"登录失败后查看用户名输入框，其内容与提交登录前一致。\"},{\"description\":\"登录失败后，密码输入框内容清空。\",\"observation\":\"登录失败后查看密码输入框，其内容为空。\"},{\"description\":\"登录接口超时后，保留已输入的用户名并清空密码。\",\"observation\":\"登录接口超时后，用户名输入框内容与提交登录前一致，密码输入框为空。\"}]",
+        "blocking_ambiguities_json": "[]",
+        "created_at": 1789096209244
+      },
+      "intentStatus": "applied",
+      "naturalStatus": null
+    }
+  ],
+  "proposals": [
+    {
+      "turn": 0,
+      "response": {
+        "version": 1,
+        "sourceEventId": "multiple-participants:0",
+        "baseRevision": 1,
+        "goal": {
+          "text": "登录失败时保留用户名，密码必须清空。",
+          "confirmed": true,
+          "quote": "登录失败时保留用户名，密码必须清空。"
+        },
+        "acceptance": [
+          {
+            "description": "登录失败后，用户名输入框保留用户已输入的用户名。",
+            "observation": "登录失败后查看用户名输入框，其内容与提交登录前一致。",
+            "quote": "登录失败时保留用户名，密码必须清空。"
+          },
+          {
+            "description": "登录失败后，密码输入框内容清空。",
+            "observation": "登录失败后查看密码输入框，其内容为空。",
+            "quote": "登录失败时保留用户名，密码必须清空。"
+          }
+        ],
+        "answers": [],
+        "questionUpdates": [],
+        "facts": [
+          {
+            "key": "login-failure-username",
+            "label": "登录失败后的用户名",
+            "value": "保留用户名",
+            "kind": "requirement",
+            "quote": "登录失败时保留用户名，密码必须清空。"
+          },
+          {
+            "key": "login-failure-password",
+            "label": "登录失败后的密码",
+            "value": "密码必须清空",
+            "kind": "requirement",
+            "quote": "登录失败时保留用户名，密码必须清空。"
+          }
+        ],
+        "factCorrections": [],
+        "questions": []
+      }
+    },
+    {
+      "turn": 1,
+      "response": {
+        "version": 1,
+        "sourceEventId": "multiple-participants:1",
+        "baseRevision": 3,
+        "goal": null,
+        "acceptance": [
+          {
+            "description": "登录接口超时后，保留已输入的用户名并清空密码。",
+            "observation": "登录接口超时后，用户名输入框内容与提交登录前一致，密码输入框为空。",
+            "quote": "登录接口超时时也要保留用户名、清空密码"
+          }
+        ],
+        "answers": [],
+        "questionUpdates": [],
+        "facts": [
+          {
+            "key": "login-timeout-inputs",
+            "label": "登录超时后的输入保留规则",
+            "value": "保留用户名、清空密码",
+            "kind": "requirement",
+            "quote": "登录接口超时时也要保留用户名、清空密码"
+          }
+        ],
+        "factCorrections": [],
+        "questions": []
+      }
+    }
+  ]
+}

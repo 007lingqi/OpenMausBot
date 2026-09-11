@@ -11,7 +11,7 @@ import { renderDingTalkSessionMessage } from "../integrations/dingtalk/session-m
 import { ModelNaturalIntakeInterpreter, validateNaturalIntakeProposal, type NaturalIntakeRequest, type NaturalIntakeInterpreter } from "./natural-intake.ts";
 import { readNaturalIntakeContext } from "./natural-intake-context.ts";
 import { readQuestionHistory } from "./question-lifecycle.ts";
-import { readFactHistory, factGates } from "./fact-ledger.ts";
+import { readFactHistory, factGates, recordFacts } from "./fact-ledger.ts";
 
 const scratch: string[] = [];
 afterEach(() => { for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true }); });
@@ -43,6 +43,118 @@ function lifecycleRequest(text: string, ids: string[] = []): NaturalIntakeReques
 }
 
 describe("durable source-bound natural requirement intake", () => {
+  it("keeps acceptance provenance through repeated facts and a partially resolved three-person conflict", async () => {
+    const h = harness({ async interpret(request) {
+      const id = request.event.sourceEventId;
+      const value = id.endsWith("correct") || id === "third" ? "Excel" : "CSV";
+      const own = request.factHistory?.entries.filter(f => f.principalId === request.event.principalId).at(-1);
+      return { ...proposal(request),
+        ...(id === "first" ? { goal: { text: request.event.text, confirmed: true, quote: request.event.text } } : {}),
+        acceptance: id === "repeat" ? [] : [{ description: `导出${value}`, observation: `文件为${value}`, quote: value },
+          ...(id === "first" ? [{ description: "登录不变", observation: "原登录测试通过", quote: "登录不变" }] : [])],
+        facts: [{ key: "format", label: "格式", value, kind: "requirement", quote: value }],
+        factCorrections: id.endsWith("correct") ? [{ factId: own!.id, quote: request.event.text }] : [] };
+    } });
+    try {
+      const first = h.service.ingestDingTalkMessage(message("first", "导出CSV，登录不变")); await h.service.processNaturalIntake();
+      const send = async (id: string, text: string, author = "tester") => {
+        h.service.ingestDingTalkMessage({ ...message(id, text, "first"),
+          sender: { senderCorpId: "corp", senderStaffId: author, senderId: author, displayName: author } });
+        await h.service.processNaturalIntake();
+        return readLatestWorkItemSnapshot(h.db, first.workItemId!)!;
+      };
+      await send("repeat", "再次确认CSV");
+      await send("second", "导出CSV", "second");
+      await send("third", "导出Excel", "third");
+      const partial = await send("tester-correct", "更正我的要求：导出Excel");
+      expect(partial.blockingAmbiguities.some(q => q.id === "fact-conflict-format")).toBe(true);
+      expect(partial.acceptanceConditions.map(c => c.description)).toEqual(["导出CSV", "登录不变"]);
+      const final = await send("second-correct", "更正我的要求：导出Excel", "second");
+      expect(final.blockingAmbiguities.some(q => q.id === "fact-conflict-format")).toBe(false);
+      expect(final.acceptanceConditions.map(c => c.description)).toEqual(["登录不变", "导出Excel"]);
+      expect(final.goalConfirmed).toBe(false);
+      expect(readFactHistory(h.db, first.workItemId!, final.revision).entries.map(f => f.value)).toEqual(["Excel", "Excel", "Excel"]);
+    } finally { h.service.close(); h.db.close(); }
+  });
+
+  it("rejects cross-author, stale, ungrounded, duplicate and incomplete fact corrections", () => {
+    const request = lifecycleRequest("更正：使用Excel");
+    const old = recordFacts(request, [{ key: "format", label: "格式", value: "CSV", kind: "requirement", quote: "CSV" }])[0];
+    request.factHistory = { entries: [old], truncated: false };
+    const raw = { ...proposal(request), facts: [{ key: "format", label: "格式", value: "Excel", kind: "requirement", quote: request.event.text }],
+      factCorrections: [{ factId: old.id, quote: request.event.text }] };
+    expect(() => validateNaturalIntakeProposal(raw, request)).not.toThrow();
+    for (const invalid of [
+      { ...raw, facts: [] },
+      { ...raw, facts: [{ ...raw.facts[0], key: "different" }] },
+      { ...raw, facts: [{ ...raw.facts[0], kind: "assumption" }] },
+      { ...raw, factCorrections: [{ factId: "a".repeat(64), quote: request.event.text }] },
+      { ...raw, factCorrections: [{ factId: old.id, quote: "谢谢" }] },
+      { ...raw, factCorrections: [...raw.factCorrections, ...raw.factCorrections] },
+      { ...raw, factCorrectionRecords: [] },
+    ]) expect(() => validateNaturalIntakeProposal(invalid, request)).toThrow();
+    expect(() => validateNaturalIntakeProposal(raw, { ...request, factHistory: { entries: [old], truncated: true } })).toThrow();
+    expect(() => validateNaturalIntakeProposal(raw, { ...request, contextTruncated: true })).toThrow();
+    expect(() => validateNaturalIntakeProposal(raw, { ...request, event: { ...request.event, principalId: "someone-else" } })).toThrow();
+    expect(() => validateNaturalIntakeProposal(raw, { ...request, factHistory: { entries: [old, { ...old, id: "b".repeat(64), revision: old.revision + 1 }], truncated: false } }))
+      .toThrow("natural_fact_correction_stale");
+  });
+
+  it("does not resolve a correction when a shared acceptance quote cannot be safely separated", async () => {
+    const h = harness({ async interpret(request) {
+      const correcting = request.event.sourceEventId === "ambiguous-correct";
+      const quote = request.event.text;
+      return { ...proposal(request), goal: { text: quote, confirmed: true, quote },
+        acceptance: [{ description: quote, observation: "检查文件格式和用户范围", quote }],
+        facts: [{ key: "format", label: "格式", value: correcting ? "Excel" : "CSV", kind: "requirement", quote },
+          ...(!correcting ? [{ key: "access", label: "范围", value: "内部员工", kind: "requirement", quote }] : [])],
+        factCorrections: correcting ? [{ factId: request.factHistory!.entries.find(f => f.key === "format")!.id, quote }] : [] };
+    } });
+    try {
+      const first = h.service.ingestDingTalkMessage(message("ambiguous-first", "给内部员工导出CSV")); await h.service.processNaturalIntake();
+      h.service.ingestDingTalkMessage(message("ambiguous-correct", "更正：导出Excel", "ambiguous-first"));
+      const before = readLatestWorkItemSnapshot(h.db, first.workItemId!)!;
+      await h.service.processNaturalIntake();
+      expect(readLatestWorkItemSnapshot(h.db, first.workItemId!)?.revision).toBe(before.revision);
+      expect(h.db.prepare("SELECT error_code FROM collaboration_natural_intake_jobs WHERE source_event_id=?").get("ambiguous-correct"))
+        .toMatchObject({ error_code: "natural_intake_unavailable" });
+    } finally { h.service.close(); h.db.close(); }
+  });
+
+  it.each([false, true])("lets the original author correct their position and replaces only its sourced acceptance (repeat=%s)", async (repeat) => {
+    const h = harness({ async interpret(request) {
+      const value = request.event.sourceEventId.startsWith("format-first") ? "CSV" : "Excel";
+      const own = request.factHistory?.entries.find(fact => fact.key === "format" && fact.principalId === request.event.principalId);
+      return { ...proposal(request), goal: { text: request.event.text, confirmed: true, quote: request.event.text },
+        acceptance: request.event.sourceEventId === "format-first-repeat" ? [] : [{ description: `订单导出为${value}`, observation: `导出文件为${value}`, quote: value }],
+        facts: [{ key: "format", label: "导出格式", value, kind: "requirement", quote: request.event.text }],
+        ...(request.event.sourceEventId === "format-correct" ? { factCorrections: [{ factId: own?.id ?? "missing", quote: request.event.text }] } : {}) };
+    } });
+    try {
+      const first = h.service.ingestDingTalkMessage(message("format-first", "订单导出为CSV")); await h.service.processNaturalIntake();
+      if (repeat) {
+        h.service.ingestDingTalkMessage(message("format-first-repeat", "再次确认CSV", "format-first")); await h.service.processNaturalIntake();
+      }
+      h.service.ingestDingTalkMessage({ ...message("format-second", "订单导出为Excel", "format-first"),
+        sender: { senderCorpId: "corp", senderStaffId: "other", senderId: "other", displayName: "产品小王" } });
+      await h.service.processNaturalIntake();
+      expect(readLatestWorkItemSnapshot(h.db, first.workItemId!)?.blockingAmbiguities.some(q => q.id === "fact-conflict-format")).toBe(true);
+      h.service.close(); const resumed = startCollaborationService(h.options);
+      try {
+        const correction = message("format-correct", "更正我之前的要求，订单导出为Excel", "format-first");
+        resumed.ingestDingTalkMessage(correction); await resumed.processNaturalIntake();
+        const snapshot = readLatestWorkItemSnapshot(h.db, first.workItemId!)!;
+        expect(snapshot.blockingAmbiguities.some(q => q.id === "fact-conflict-format")).toBe(false);
+        expect(snapshot.acceptanceConditions).toEqual([{ description: "订单导出为Excel", observation: "导出文件为Excel" }]);
+        expect(snapshot.goal).toBe(correction.text);
+        const history = readFactHistory(h.db, first.workItemId!, snapshot.revision);
+        expect(history.entries.map(fact => fact.value)).toEqual(["Excel", "Excel"]);
+        resumed.ingestDingTalkMessage(correction); await resumed.processNaturalIntake();
+        expect(readLatestWorkItemSnapshot(h.db, first.workItemId!)?.revision).toBe(snapshot.revision);
+      } finally { resumed.close(); }
+    } finally { h.service.close(); h.db.close(); }
+  });
+
   it("requires the facts field in the strict model output schema while accepting legacy receipts without it", async () => {
     const request = lifecycleRequest("订单导出使用CSV");
     let schema: { required: string[]; properties: Record<string, unknown> } | undefined;
