@@ -76,6 +76,11 @@ export class ConversationIngressCoordinator {
           "AND e.work_item_id IS NULL AND e.association_state='ambiguous'").get(job.id, token, now + Math.max(0, Date.now() - started), job.conversation_id, job.principal_id) as { normalized_json: string } | undefined;
         if (!current || conversationSourceHash(current.normalized_json) !== job.source_hash) throw new Error("conversation_claim_stale");
         if (result.action === "route_turn") {
+          if (result.parts.some(part => ["offer_advice", "select_option"].includes(part.decision.action) || part.decision.implementationSelection)) {
+            const fresh = readConversationContext(this.db, job);
+            validateResult(fresh, result);
+            if (JSON.stringify(fresh.discussionOptions) !== JSON.stringify(request.discussionOptions)) throw new Error("conversation_selection_stale");
+          }
           const summary = routeConversationTurn(this.db, job, request, result, now);
           this.db.prepare("UPDATE collaboration_conversation_intents SET status='routed',proposal_json=?,claim_token=NULL,lease_until=NULL WHERE event_id=?")
             .run(JSON.stringify(result), job.id);

@@ -32,7 +32,10 @@ describe("source-bound multi-intent decisions", () => {
       { ...single("请实现标准版", "contribution", "WI-LOGIN"), text: "请实现标准版", choice: { sourceEventId: "offer", optionIndex: 1 } },
       proposal().parts[1],
     ] };
-    expect(await classifyConversationIntent(model(raw), request, new AbortController().signal)).toMatchObject({ action: "ask_context", reason: "compound_discussion" });
+    expect(await classifyConversationIntent(model(raw), request, new AbortController().signal)).toMatchObject({ action: "route_turn", parts: [
+      { decision: { action: "contribute", implementationSelection: { option: { title: "标准版" }, presentation: { sourceEventId: "offer" } } } },
+      { decision: { action: "read_status", target: { id: "WI-PAY" } } },
+    ] });
   });
   it("preserves a reference-conflict clarification instead of rejecting the complete turn", async () => {
     const request = { ...input, referencedWorkItemId: "WI-LOGIN" };

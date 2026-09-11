@@ -11,6 +11,7 @@ import type { NaturalApprovalOutcome } from "./natural-approval.ts";
 import { readApprovalPresentation } from "./approval-presentation.ts";
 import { explainHistoricalProgress } from "./conversation-explanation.ts";
 import { discussionOptionsSchema, renderAdviceDiscussion, renderDiscussionSelection, type DiscussionOptions } from "./discussion-options.ts";
+import { readDiscussionPresentation } from "./discussion-presentation.ts";
 
 export interface ConversationJob {
   id: string; source_event_id: string; conversation_id: string; principal_id: string; normalized_json: string;
@@ -89,6 +90,17 @@ function pendingQuestion(db: DatabaseSync, job: ConversationJob, sent: SentReply
       if (questions.length) { kind = "requirement"; text = questions.map(question => question.question).join("；"); }
     } else if (card.type === "command_status_card" && card.command === "conversation" && row.principal_id === job.principal_id && row.proposal_json) {
       const proposal = JSON.parse(row.proposal_json) as ConversationIntentDecision;
+      if (proposal.action === "route_turn") {
+        const presentation = readDiscussionPresentation(db, row.id, row.payload_json, row.proposal_json);
+        if (presentation) {
+          const offered = presentation.decision;
+          const prompt: NonNullable<ConversationIntentRequest["pendingQuestion"]> = { kind: "read_only", origin: "advice", sourceEventId: `outbox:${row.id}`,
+            workItemIds: offered.target ? [offered.target.id] : [],
+            text: redactSensitiveText(offered.action === "select_option" ? offered.selection.option.title : offered.advice.question ?? offered.advice.summary).slice(0, 500) };
+          if (offered.action === "select_option" || offered.advice.question === null) prompt.answerExpected = false;
+          return prompt;
+        }
+      }
       const compoundQuestion = compoundReadOnlyQuestion(db, row, proposal, card, candidates);
       if (compoundQuestion) return compoundQuestion;
       const boundaries = proposal.action === "route_turn" ? proposal.parts.filter(part => part.decision.action === "keep_discussing").map(part => part.decision)
@@ -198,12 +210,9 @@ export function readConversationContext(db: DatabaseSync, job: ConversationJob):
   let discussionOptions: DiscussionOptions | null = null;
   const offerRow = question?.origin === "advice" ? sent.find(row => `outbox:${row.id}` === question.sourceEventId) : undefined;
   if (offerRow?.proposal_json) {
-    const proposal = JSON.parse(offerRow.proposal_json) as ConversationIntentDecision;
-    const card = JSON.parse(offerRow.payload_json) as InboundCard;
-    const expected = proposal.action === "offer_advice" ? renderAdviceDiscussion(proposal.advice)
-      : proposal.action === "select_option" ? renderDiscussionSelection(proposal.selection) : null;
-    if (expected && expected.trim().length <= DINGTALK_CONVERSATION_TEXT_LIMIT && card.type === "command_status_card" && card.command === "conversation" && card.summary === expected &&
-      (proposal.action === "offer_advice" || proposal.action === "select_option")) {
+    const presentation = readDiscussionPresentation(db, offerRow.id, offerRow.payload_json, offerRow.proposal_json);
+    if (presentation) {
+      const proposal = presentation.decision;
       discussionOptions = discussionOptionsSchema.parse({ sourceEventId: `outbox:${offerRow.id}`,
         kind: proposal.action === "select_option" ? "selection" : "offer",
         presentationHash: conversationSourceHash(offerRow.payload_json), workItemId: proposal.target?.id ?? null,

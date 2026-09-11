@@ -214,10 +214,9 @@ function validate(request: ConversationIntentRequest, raw: unknown): Conversatio
     return { text, decision: validateSingle({ ...request, text }, part) };
   });
   if (!/^[\s，,；;。.!！?？]*$/u.test(request.text.slice(cursor))) throw new Error("conversation_turn_partition_incomplete");
-  // Compound presentations do not yet have a delivered per-option receipt.
-  // Do not emit options we cannot subsequently bind, or discard a selected
-  // scheme while projecting only its short implementation utterance.
-  if (decisions.some(part => ["offer_advice", "select_option"].includes(part.decision.action) || part.decision.implementationSelection)) return {
+  // A reply currently exposes one scheme menu/selection. Multiple independent
+  // menus need a scoped-choice protocol; do not conflate their option indices.
+  if (decisions.filter(part => ["offer_advice", "select_option"].includes(part.decision.action) || part.decision.implementationSelection).length > 1) return {
     sourceEventId: request.sourceEventId, intent: "clarify", quote: request.text, target: null, reply: null,
     action: "ask_context", reason: "compound_discussion",
   };

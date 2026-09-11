@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
-import { discussionOptionSchema, discussionSelectionSchema, renderAdviceDiscussion, renderDiscussionSelection, type DiscussionSelection } from "./discussion-options.ts";
+import type { DiscussionSelection } from "./discussion-options.ts";
+import { discussionDecisionSchema, discussionTurnSchema, readDiscussionPresentation } from "./discussion-presentation.ts";
 
 const MAX_SOURCES = 24;
 const MAX_CHARACTERS = 24_000;
@@ -12,12 +13,6 @@ const eventSchema = z.object({ source_event_id: z.string(), principal_id: z.stri
   proposal_json: z.string().nullable() });
 const replySchema = z.object({ payload_json: z.string(), source_event_id: z.string(), proposal_json: z.string(),
   context_outbox_sequence: z.number(), event_order: z.number() });
-const adviceSchema = z.object({ action: z.literal("offer_advice"), advice: z.object({
-  summary: z.string(), question: z.string().nullable(), options: z.array(discussionOptionSchema).min(1).max(3),
-  basisSourceEventIds: z.array(z.string()).min(1).max(13),
-}) });
-const selectionSchema = z.object({ action: z.literal("select_option"), selection: discussionSelectionSchema });
-const discussionSchema = z.discriminatedUnion("action", [adviceSchema, selectionSchema]);
 export interface DiscussionSource {
   sourceEventId: string;
   role: "user" | "assistant";
@@ -47,7 +42,7 @@ export function readDiscussionSources(db: DatabaseSync, input: {
     if (sources.length >= MAX_SOURCES || characters + source.text.length > MAX_CHARACTERS) { incomplete = true; return; }
     sources.push(source); characters += source.text.length;
   };
-  function visitEvent(id: string, beforeOrder: number): void {
+  function visitEvent(id: string, beforeOrder: number, partIndex: number | null = null): void {
     const raw = db.prepare("SELECT e.source_event_id,e.principal_id,e.normalized_json,e.rowid AS event_order,j.context_outbox_sequence,j.source_hash,j.proposal_json " +
       "FROM collaboration_external_events e LEFT JOIN collaboration_conversation_intents j ON j.event_id=e.id AND j.status='applied' " +
       "WHERE e.source='dingtalk' AND e.source_event_id=? AND e.conversation_id=? AND e.rowid<=? " +
@@ -56,11 +51,17 @@ export function readDiscussionSources(db: DatabaseSync, input: {
     if (!raw) { incomplete = true; return; }
     const row = eventSchema.parse(raw);
     if (row.source_hash !== null && hash(row.normalized_json) !== row.source_hash) throw new Error("discussion_history_source_changed");
+    const eventText = z.object({ text: z.string() }).parse(JSON.parse(row.normalized_json)).text;
+    const rawProposal = row.proposal_json ? JSON.parse(row.proposal_json) : null;
+    const turn = discussionTurnSchema.safeParse(rawProposal);
+    if (turn.success && (partIndex === null || !turn.data.parts[partIndex])) { incomplete = true; return; }
+    const part = turn.success && partIndex !== null ? turn.data.parts[partIndex] : null;
+    if (part && !eventText.includes(part.text)) throw new Error("discussion_history_source_changed");
     if (!reserve(`user:${id}`)) return;
     add({ sourceEventId: id, role: "user", principalId: row.principal_id,
-      text: z.object({ text: z.string() }).parse(JSON.parse(row.normalized_json)).text, contentHash: hash(row.normalized_json), eventOrder: row.event_order });
+      text: part?.text ?? eventText, contentHash: hash(part ? row.normalized_json + "\0" + partIndex + "\0" + part.text : row.normalized_json), eventOrder: row.event_order });
     if (!row.proposal_json) return;
-    const proposal = discussionSchema.safeParse(JSON.parse(row.proposal_json));
+    const proposal = discussionDecisionSchema.safeParse(part ? part.decision : rawProposal);
     if (!proposal.success) return;
     if (proposal.data.action === "select_option") {
       visitReply(proposal.data.selection.presentation.sourceEventId, row.context_outbox_sequence ?? 0,
@@ -81,17 +82,16 @@ export function readDiscussionSources(db: DatabaseSync, input: {
     if (!raw) { incomplete = true; return; }
     const row = replySchema.parse(raw);
     if (expectedHash && hash(row.payload_json) !== expectedHash) throw new Error("discussion_history_presentation_changed");
-    const proposal = discussionSchema.safeParse(JSON.parse(row.proposal_json));
-    if (!proposal.success) { incomplete = true; return; }
-    const expected = proposal.data.action === "offer_advice" ? renderAdviceDiscussion(proposal.data.advice) : renderDiscussionSelection(proposal.data.selection);
-    const card = z.object({ type: z.literal("command_status_card"), command: z.literal("conversation"), summary: z.string() }).parse(JSON.parse(row.payload_json));
-    if (card.summary !== expected) throw new Error("discussion_history_presentation_changed");
+    const presentation = readDiscussionPresentation(db, id.slice("outbox:".length), row.payload_json, row.proposal_json);
+    if (!presentation) { incomplete = true; return; }
+    const proposal = presentation.decision;
+    if (proposal.target && proposal.target.id !== input.workItemId) { incomplete = true; return; }
     if (!reserve(`assistant:${id}`)) return;
     // Do not pass unselected option descriptions as extra acceptance sources.
     add({ sourceEventId: id, role: "assistant", principalId: null,
-      text: proposal.data.action === "offer_advice" ? proposal.data.advice.summary : expected,
+      text: proposal.action === "offer_advice" ? proposal.advice.summary : presentation.text,
       contentHash: hash(row.payload_json + "\0" + row.proposal_json), eventOrder: row.event_order });
-    visitEvent(row.source_event_id, beforeOrder);
+    visitEvent(row.source_event_id, beforeOrder, presentation.partIndex);
   }
   visitReply(input.selection.presentation.sourceEventId, input.outboxSequence, input.selection.presentation.presentationHash, before);
   return { sources: sources.sort((a, b) => a.eventOrder - b.eventOrder || Number(a.role === "assistant") - Number(b.role === "assistant")), incomplete };

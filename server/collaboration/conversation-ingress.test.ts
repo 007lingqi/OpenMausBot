@@ -92,6 +92,96 @@ function job(db: DatabaseSync, source: string): ConversationJob {
 }
 
 describe("durable conversational ingress before Work Item mutation", () => {
+  it.each([false, true])("continues a compound delivered scheme through choice and source-bound implementation (direct=%s)", async direct => {
+    const requests: NaturalIntakeRequest[] = [];
+    const adviceText = "给后台两个方案，只改提示文字，不改登录逻辑";
+    const queryText = "支付进展如何";
+    const implementationText = direct ? "选第二个，请开始修改" : "请实现刚才选择的方案";
+    const h = setup(async input => {
+      if (input.sourceEventId === "payment") return decision(input, "new_request");
+      const payment = input.candidates.find(candidate => candidate.title.includes("支付"))!.id;
+      const text = input.sourceEventId === "consult" ? adviceText : input.sourceEventId === "choose" ? "选第二个" : implementationText;
+      const branch = input.sourceEventId === "consult" ? adviceDecision({ ...input, text }) : {
+        ...decision({ ...input, text }, input.sourceEventId === "choose" ? "select_option" : "new_request"),
+        choice: { sourceEventId: input.discussionOptions?.sourceEventId ?? "missing", optionIndex: input.sourceEventId === "choose" || direct ? 2 : 1 },
+      };
+      return { ...decision(input, "clarify"), parts: [{ ...branch, text, quote: text },
+        { ...decision(input, "status_query", payment), text: queryText, quote: queryText }] };
+    }, request => {
+      if (request.event.sourceEventId === "payment") return { version: 1, sourceEventId: request.event.sourceEventId,
+        baseRevision: request.snapshot.revision, goal: null, acceptance: [], answers: [], questions: [] };
+      requests.push(request);
+      const selected = request.implementationContext?.selection.option;
+      return { version: 1, sourceEventId: request.event.sourceEventId, baseRevision: request.snapshot.revision,
+        goal: selected ? { text: selected.description, quote: request.event.text, confirmed: true } : null,
+        acceptance: selected ? [{ description: selected.description, observation: "界面覆盖权限与操作记录", quote: selected.description }] : [],
+        answers: [], questions: [] };
+    });
+    try {
+      h.service.ingestDingTalkMessage(message("payment", "支付提示调整")); await h.service.processNaturalIntake(); await deliver(h.db);
+      const paymentId = item(h.db, "payment")!, paymentBefore = readLatestWorkItemSnapshot(h.db, paymentId), before = taskState(h.db);
+      h.service.ingestDingTalkMessage(message("consult", `${adviceText}，${queryText}`)); await h.service.processNaturalIntake(); await deliver(h.db);
+      expect(reply(h.db, "consult")).toContain("标准版"); expect(reply(h.db, "consult")).toContain("支付");
+      expect(taskState(h.db)).toEqual(before);
+      if (!direct) {
+        h.service.ingestDingTalkMessage(message("choose", `选第二个，${queryText}`)); await h.service.processNaturalIntake(); await deliver(h.db);
+        expect(reply(h.db, "choose")).toContain("已选「标准版」"); expect(reply(h.db, "choose")).not.toContain("轻量版");
+        expect(taskState(h.db)).toEqual(before);
+      }
+      h.service.close(); const resumed = startCollaborationService(h.options);
+      try {
+        const event = message("implement", `${implementationText}，${queryText}`);
+        resumed.ingestDingTalkMessage(event); await resumed.processNaturalIntake(); await deliver(h.db);
+        expect(job(h.db, "implement").status).toBe("applied"); expect(requests).toHaveLength(1);
+        const request = requests[0];
+        expect(request.event.text).toBe(implementationText);
+        expect(request.implementationContext?.selection.option.title).toBe("标准版");
+        expect(request.implementationContext?.discussionContextIncomplete).toBe(false);
+        const sources = request.implementationContext?.discussionSources ?? [];
+        expect(sources.some(source => source.text === adviceText)).toBe(true);
+        expect(sources.some(source => source.text.includes(queryText))).toBe(false);
+        expect(readLatestWorkItemSnapshot(h.db, request.snapshot.workItemId)).toMatchObject({ goal: "兼顾权限和操作记录。", goalConfirmed: true,
+          acceptanceConditions: [expect.objectContaining({ description: "兼顾权限和操作记录。" })] });
+        expect(readLatestWorkItemSnapshot(h.db, paymentId)).toEqual(paymentBefore);
+        expect(h.db.prepare("SELECT count(*) n FROM collaboration_work_items").get()).toEqual({ n: 2 });
+        expect(h.db.prepare("SELECT count(*) n FROM collaboration_runs").get()).toEqual({ n: 0 });
+        const done = taskState(h.db), outboxCount = h.db.prepare("SELECT count(*) n FROM collaboration_outbox").get();
+        resumed.ingestDingTalkMessage(event); await resumed.processNaturalIntake();
+        expect(taskState(h.db)).toEqual(done); expect(requests).toHaveLength(1);
+        expect(h.db.prepare("SELECT count(*) n FROM collaboration_outbox").get()).toEqual(outboxCount);
+      } finally { resumed.close(); }
+    } finally { h.service.close(); h.db.close(); }
+  });
+
+  it.each(["unsent", "late", "other_sender", "other_group", "changed", "clipped", "stale_target", "during_classification"])("does not implement a compound scheme with %s presentation evidence", async mode => {
+    const h = setup(async input => {
+      if (input.sourceEventId === "seed") return decision(input, "new_request");
+      const target = input.candidates[0]?.id ?? null;
+      const text = input.sourceEventId === "consult" ? "给登录提示两个方案" : "选第二个，请开始修改";
+      const part = input.sourceEventId === "consult" ? adviceDecision({ ...input, text }, target) : {
+        ...decision({ ...input, text }, "contribution", target), choice: { sourceEventId: input.discussionOptions?.sourceEventId ?? "missing", optionIndex: 2 },
+      };
+      if (input.sourceEventId === "choose" && mode === "during_classification") h.db.prepare("UPDATE collaboration_outbox SET payload_json=json_set(payload_json,'$.summary','展示已改变') WHERE source_event_id='conversation:consult'").run();
+      return { ...decision(input, "clarify"), parts: [{ ...part, text, quote: text },
+        { ...decision(input, "status_query", target), text: "登录进展如何", quote: "登录进展如何" }] };
+    });
+    try {
+      h.service.ingestDingTalkMessage(message("seed", "登录提示调整")); await h.service.processNaturalIntake(); await deliver(h.db);
+      h.service.ingestDingTalkMessage(message("consult", "给登录提示两个方案，登录进展如何")); await h.service.processNaturalIntake();
+      if (!["unsent", "late"].includes(mode)) await deliver(h.db);
+      if (["changed", "clipped"].includes(mode)) h.db.prepare("UPDATE collaboration_outbox SET payload_json=json_set(payload_json,'$.summary',?) WHERE source_event_id='conversation:consult'")
+        .run(mode === "changed" ? "展示已改变" : "背景说明".repeat(300));
+      if (mode === "stale_target") h.db.prepare("UPDATE collaboration_work_items SET version=version+1 WHERE id=?").run(item(h.db, "seed"));
+      const before = taskState(h.db), interpreted = [...h.interpreted];
+      h.service.ingestDingTalkMessage(message("choose", "选第二个，请开始修改，登录进展如何", mode === "other_group" ? "elsewhere" : "group", mode === "other_sender" ? "tester" : "product"));
+      if (mode === "late") await deliver(h.db);
+      await h.service.processNaturalIntake();
+      expect(taskState(h.db)).toEqual(before); expect(h.interpreted).toEqual(interpreted);
+      expect(h.db.prepare("SELECT count(*) n FROM collaboration_turn_parts WHERE child_event_id IS NOT NULL").get()).toEqual({ n: 0 });
+      expect(reply(h.db, "choose") ?? "").not.toMatch(/已选|修改完成/u);
+    } finally { h.service.close(); h.db.close(); }
+  });
+
   it("keeps a current-discussion boundary separate from Owner controls and resumes that purpose after restart", async () => {
     const h = setup(async input => {
       if (["login", "payment"].includes(input.sourceEventId)) return decision(input, "new_request");
@@ -394,14 +484,18 @@ describe("durable conversational ingress before Work Item mutation", () => {
     } finally { h.service.close(); h.db.close(); }
   });
 
-  it("does not import another item's discussion through a cited user event with no direct work item link", async () => {
+  it.each(["single_user", "compound_reply"])("does not import another item's discussion through a cited %s with no direct work item link", async mode => {
     let captured: NaturalIntakeRequest | undefined;
     const h = setup(async input => {
       if (input.sourceEventId === "other-task") return decision(input, "new_request");
       if (input.sourceEventId === "implement") return { ...decision(input, "new_request"),
         choice: { sourceEventId: input.discussionOptions!.sourceEventId, optionIndex: 2 } };
       const result = adviceDecision(input, input.sourceEventId === "other-advice" ? input.candidates[0].id : null);
-      if (input.sourceEventId === "consult") result.advice.basisSourceEventIds = ["other-advice", "consult"];
+      if (input.sourceEventId === "consult") result.advice.basisSourceEventIds = [mode === "single_user" ? "other-advice" : input.history.find(entry => entry.role === "assistant" && entry.text.includes("轻量版"))!.sourceEventId, "consult"];
+      if (input.sourceEventId === "other-advice" && mode === "compound_reply") return { ...decision(input, "clarify"), parts: [
+        { ...result, text: "支付那个必须添加退款按钮，给两个方案", quote: "支付那个必须添加退款按钮，给两个方案" },
+        { ...decision(input, "status_query", input.candidates[0].id), text: "支付进度如何", quote: "支付进度如何" },
+      ] };
       return result;
     }, request => {
       captured = request;
@@ -409,7 +503,7 @@ describe("durable conversational ingress before Work Item mutation", () => {
         goal: null, acceptance: [], answers: [], questions: [] };
     });
     try {
-      for (const [id, text] of [["other-task", "请修改支付提示"], ["other-advice", "支付那个必须添加退款按钮，给两个方案"],
+      for (const [id, text] of [["other-task", "请修改支付提示"], ["other-advice", `支付那个必须添加退款按钮，给两个方案${mode === "compound_reply" ? "；支付进度如何" : ""}`],
         ["consult", "另一个登录提示问题先给我两个方案"], ["implement", "选第二个，请开始修改"]]) {
         h.service.ingestDingTalkMessage(message(id, text)); await h.service.processNaturalIntake(); await deliver(h.db);
       }
