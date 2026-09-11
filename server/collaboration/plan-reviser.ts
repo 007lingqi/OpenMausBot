@@ -151,7 +151,7 @@ export class PlanningCoordinator {
     if (version.user_version < 3) throw new Error("Collaboration planning schema is not installed");
     this.naturalIntake = options.naturalIntake ? new NaturalIntakeCoordinator(this.database, options.naturalIntake,
       options.policy.allowedRepositories, (workItemId, patch, now, natural) =>
-        this.reviseDefinition(workItemId, patch, now, { natural }) !== null) : null;
+        this.reviseDefinition(workItemId, patch, now, { natural, contextSummary:natural.contextSummary }) !== null) : null;
     this.naturalAssociation = options.naturalIntake?.associate ? new NaturalAssociationCoordinator(this.database,
       options.naturalIntake.associate.bind(options.naturalIntake), (workItemId, sourceEventId, now) => {
         this.observeAcceptedEvent(workItemId, "", now, sourceEventId);

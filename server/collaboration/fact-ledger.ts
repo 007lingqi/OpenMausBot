@@ -13,17 +13,101 @@ export type RecordedFact = z.infer<typeof recordSchema>;
 export const factCorrectionSchema = z.object({ factId: z.string().regex(/^[a-f0-9]{64}$/u), quote: z.string().min(1).max(2000) }).strict();
 export type FactCorrection = z.infer<typeof factCorrectionSchema>;
 const correctionRecordSchema = factCorrectionSchema.extend({ sourceEventId: z.string(), principalId: z.string(), revision: z.number().int().positive() }).strict();
-interface BoundFact extends RecordedFact { bindings?: { acceptance: AcceptanceCondition[]; goal: string | null; ambiguous?: boolean } }
+interface BoundFact extends RecordedFact { bindings?: { acceptance: AcceptanceCondition[]; goal: string | null; ambiguous?: boolean;
+  sharedAcceptance?: AcceptanceCondition[]; sharedGoal?: string | null } }
 export interface FactHistory { entries: BoundFact[]; retired?: BoundFact[]; truncated: boolean }
 const hash = (text: string): string => createHash("sha256").update(text).digest("hex");
 const factId = (sourceEventId: string, fact: FactProposal): string => hash(JSON.stringify([sourceEventId, fact.key, fact.kind, fact.value]));
 const rowSchema = z.object({ source_event_id: z.string(), principal_id: z.string(), normalized_json: z.string(),
   proposal_json: z.string(), result_revision: z.number(), acceptance_json: z.string(), goal: z.string().nullable() });
 const conditionSchema = z.object({ description: z.string(), observation: z.string() });
+const sharedRewritesSchema = z.object({ acceptance: z.array(z.object({ before: conditionSchema, after: conditionSchema }).strict()),
+  goal: z.object({ before: z.string(), after: z.string() }).strict().nullable() }).strict();
+type SharedSpecRewrites = z.infer<typeof sharedRewritesSchema>;
 const receiptSchema = z.object({ factRecords: z.array(recordSchema).optional(), factCorrectionRecords: z.array(correctionRecordSchema).optional(),
+  sharedSpecRewrites: sharedRewritesSchema.optional(),
   acceptance: z.array(conditionSchema.extend({ quote: z.string() })), goal: z.object({ text: z.string(), quote: z.string() }).nullable(),
   eventEvidence: z.object({ normalizedHash: z.string() }) });
 const sameCondition = (a: AcceptanceCondition, b: AcceptanceCondition): boolean => a.description === b.description && a.observation === b.observation;
+
+/** Literal, simultaneous edits only: every other character stays unchanged.
+ * Paraphrases and overlapping/multiple occurrences need a separate clarification,
+ * not a guessed rewrite of a compound acceptance condition. */
+function rewriteSharedText(parts: string[], related: BoundFact[], active: BoundFact[], retired: BoundFact[]): string[] {
+  const replacements = new Map<string,string>();
+  for (const fact of related.filter(f => retired.includes(f))) {
+    const latest = active.filter(f => f.principalId === fact.principalId && f.key === fact.key).sort((a,b)=>b.revision-a.revision)[0];
+    if (!latest || latest.kind !== "requirement") throw Error("natural_fact_correction_scope_ambiguous");
+    if (latest.value === fact.value) continue;
+    if (replacements.has(fact.value) && replacements.get(fact.value) !== latest.value ||
+      related.some(other => other.key !== fact.key && other.value.includes(fact.value))) throw Error("natural_fact_correction_scope_ambiguous");
+    replacements.set(fact.value,latest.value);
+  }
+  const edits = parts.map(part => [...replacements].flatMap(([before,after]) => {
+    const start=part.indexOf(before);if(start<0)return [];
+    if(part.indexOf(before,start+before.length)>=0)throw Error("natural_fact_correction_scope_ambiguous");
+    if(/[A-Za-z0-9_]/u.test(before[0])&&/[A-Za-z0-9_]/u.test(part[start-1]??"")||
+      /[A-Za-z0-9_]/u.test(before.at(-1)??"")&&/[A-Za-z0-9_]/u.test(part[start+before.length]??""))throw Error("natural_fact_correction_scope_ambiguous");
+    return [{start,end:start+before.length,before,after}];
+  }).sort((a,b)=>a.start-b.start));
+  for(const before of replacements.keys())if(!edits.some(list=>list.some(edit=>edit.before===before)))throw Error("natural_fact_correction_scope_ambiguous");
+  return parts.map((part,index)=>{
+    let result="",cursor=0;
+    for(const edit of edits[index]){
+      if(edit.start<cursor)throw Error("natural_fact_correction_scope_ambiguous");
+      result+=part.slice(cursor,edit.start)+edit.after;cursor=edit.end;
+    }
+    result+=part.slice(cursor);
+    if(result.length>2000)throw Error("natural_fact_correction_scope_ambiguous");
+    return result;
+  });
+}
+
+export function sharedFactSpecRewrites(request: NaturalIntakeRequest, proposal: NaturalIntakeProposal): SharedSpecRewrites {
+  const history=correctedFactHistory(request,proposal.factCorrections??[]);
+  const active:BoundFact[]=[...history.entries,...recordFacts(request,proposal.facts??[])];
+  const retired=history.retired??[], all=[...active,...retired];
+  const result:SharedSpecRewrites={acceptance:[],goal:null};
+  for(const before of request.snapshot.acceptanceConditions){
+    const related=all.filter(f=>f.bindings?.sharedAcceptance?.some(c=>sameCondition(c,before)));
+    if(!related.some(f=>retired.includes(f)))continue;
+    const [description,observation]=rewriteSharedText([before.description,before.observation],related,active,retired);
+    if(description!==before.description||observation!==before.observation)result.acceptance.push({before,after:{description,observation}});
+  }
+  const before=request.snapshot.goal;
+  if(before){
+    const related=all.filter(f=>f.bindings?.sharedGoal===before);
+    if(related.some(f=>retired.includes(f))){
+      const [after]=rewriteSharedText([before],related,active,retired);
+      if(after!==before)result.goal={before,after};
+    }
+  }
+  return result;
+}
+
+function restoreSharedRewrites(rewrites:SharedSpecRewrites,active:Map<string,BoundFact>,retired:BoundFact[],applied:AcceptanceCondition[],goal:string|null):void {
+  const all=[...active.values(),...retired];
+  const transfer=(related:BoundFact[],update:(bindings:NonNullable<BoundFact['bindings']>)=>void)=>{
+    for(const fact of related){
+      const target=active.has(fact.id)?fact:[...active.values()].filter(f=>f.principalId===fact.principalId&&f.key===fact.key).sort((a,b)=>b.revision-a.revision)[0];
+      if(!target)throw Error("natural_fact_rewrite_source_invalid");
+      target.bindings??={acceptance:[],goal:null};update(target.bindings);target.bindings.ambiguous=true;
+    }
+  };
+  for(const {before,after} of rewrites.acceptance){
+    const related=all.filter(f=>f.bindings?.sharedAcceptance?.some(c=>sameCondition(c,before)));
+    const [description,observation]=rewriteSharedText([before.description,before.observation],related,[...active.values()],retired);
+    if(!related.length||!sameCondition(after,{description,observation})||!applied.some(c=>sameCondition(c,after))||applied.some(c=>sameCondition(c,before)))throw Error("natural_fact_rewrite_source_invalid");
+    for(const fact of related)fact.bindings!.sharedAcceptance=fact.bindings!.sharedAcceptance!.filter(c=>!sameCondition(c,before));
+    transfer(related,bindings=>{bindings.sharedAcceptance??=[];if(!bindings.sharedAcceptance.some(c=>sameCondition(c,after)))bindings.sharedAcceptance.push(after);});
+  }
+  if(rewrites.goal){
+    const {before,after}=rewrites.goal,related=all.filter(f=>f.bindings?.sharedGoal===before);
+    if(!related.length||rewriteSharedText([before],related,[...active.values()],retired)[0]!==after||goal!==after)throw Error("natural_fact_rewrite_source_invalid");
+    for(const fact of related)fact.bindings!.sharedGoal=null;
+    transfer(related,bindings=>{bindings.sharedGoal=after;});
+  }
+}
 
 /** Reconstruct source-bound observations from immutable Spec receipts. This is a
  * read projection, not a competing mutable authority or a vote/approval system. */
@@ -61,13 +145,18 @@ export function readFactHistory(db: DatabaseSync, workItemId: string, revision: 
       const ambiguous = receipt.acceptance.some(condition => applied.some(value => sameCondition(value, condition)) &&
         matches(condition.quote).length > 1 && matches(condition.quote).some(candidate => candidate.id === fact.id)) ||
         !!(receipt.goal && row.goal === receipt.goal.text && matches(receipt.goal.quote).length > 1 && matches(receipt.goal.quote).some(candidate => candidate.id === fact.id));
-      active.set(fact.id, { ...fact, bindings: { acceptance, goal, ambiguous } });
+      const sharedAcceptance=receipt.acceptance.filter(condition=>applied.some(value=>sameCondition(value,condition))&&
+        matches(condition.quote).length>1&&matches(condition.quote).some(candidate=>candidate.id===fact.id)).map(({description,observation})=>({description,observation}));
+      const sharedGoal=receipt.goal&&row.goal===receipt.goal.text&&matches(receipt.goal.quote).length>1&&matches(receipt.goal.quote).some(candidate=>candidate.id===fact.id)?row.goal:null;
+      active.set(fact.id, { ...fact, bindings: { acceptance, goal, ambiguous,sharedAcceptance,sharedGoal } });
     }
+    if(receipt.sharedSpecRewrites)restoreSharedRewrites(receipt.sharedSpecRewrites,active,retired,applied,row.goal);
   }
   const current = z.object({ acceptance_json: z.string(), goal: z.string().nullable() }).parse(db.prepare("SELECT acceptance_json,goal FROM collaboration_work_item_snapshots WHERE work_item_id=? AND revision=?").get(workItemId, revision));
   const conditions = z.array(conditionSchema).parse(JSON.parse(current.acceptance_json));
   const neededRetired = retired.filter(fact => fact.bindings?.goal === current.goal && current.goal !== null ||
-    fact.bindings?.acceptance.some(binding => conditions.some(condition => sameCondition(binding, condition))));
+    fact.bindings?.sharedGoal === current.goal && current.goal !== null ||
+    [...(fact.bindings?.acceptance??[]),...(fact.bindings?.sharedAcceptance??[])].some(binding => conditions.some(condition => sameCondition(binding, condition))));
   // Repeated observations may omit acceptance already in the Spec. Compact the
   // observation, not its still-live provenance, or a later correction loses it.
   const compact = new Map<string, BoundFact>();
@@ -78,6 +167,9 @@ export function readFactHistory(db: DatabaseSync, workItemId: string, revision: 
     for (const condition of fact.bindings?.acceptance ?? []) if (!latest.bindings!.acceptance.some(c => sameCondition(c, condition))) latest.bindings!.acceptance.push(condition);
     if (fact.bindings?.goal === current.goal) latest.bindings!.goal = current.goal;
     if (fact.bindings?.ambiguous) latest.bindings!.ambiguous = true;
+    latest.bindings!.sharedAcceptance??=[];
+    for(const condition of fact.bindings?.sharedAcceptance??[])if(!latest.bindings!.sharedAcceptance.some(c=>sameCondition(c,condition)))latest.bindings!.sharedAcceptance.push(condition);
+    if(fact.bindings?.sharedGoal===current.goal)latest.bindings!.sharedGoal=current.goal;
   }
   const entries: BoundFact[] = [], retiredEntries: BoundFact[] = [];
   let characters = 0, truncated = false;
@@ -101,7 +193,6 @@ export function validateFactCorrections(request: NaturalIntakeRequest, proposal:
     if (!fact || request.contextTruncated || request.factHistory?.truncated || fact.principalId !== request.event.principalId || !request.event.text.includes(correction.quote) ||
       !proposal.facts?.some(replacement => replacement.key === fact.key && replacement.kind === "requirement" && correction.quote.includes(replacement.value)) || keys.has(fact.key)) throw new Error("natural_fact_correction_invalid");
     if (request.factHistory!.entries.some(other => other.key === fact.key && other.principalId === fact.principalId && other.revision > fact.revision)) throw new Error("natural_fact_correction_stale");
-    if (request.factHistory!.entries.some(other => other.key === fact.key && other.principalId === fact.principalId && other.bindings?.ambiguous)) throw new Error("natural_fact_correction_scope_ambiguous");
     keys.add(fact.key);
   }
 }

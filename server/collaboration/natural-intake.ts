@@ -17,7 +17,7 @@ import { classifyConversationIntent, type ConversationIntentRequest, type Conver
 import { isBusinessQuestion, questionTransitions, readQuestionHistory, type QuestionHistory } from "./question-lifecycle.ts";
 import { implementationContextHash, readDiscussionImplementation, type DiscussionImplementationContext } from "./discussion-implementation.ts";
 import { factProposalSchema, factCorrectionSchema, readFactHistory, recordFacts, factGates,
-  validateFactCorrections, correctedFactHistory, recordFactCorrections, retainedFactAcceptance, type FactHistory } from "./fact-ledger.ts";
+  validateFactCorrections, correctedFactHistory, recordFactCorrections, retainedFactAcceptance, sharedFactSpecRewrites, type FactHistory } from "./fact-ledger.ts";
 
 export interface NaturalIntakeEvent { sourceEventId: string; principalId: string; text: string }
 export interface NaturalIntakeRequest {
@@ -94,6 +94,7 @@ export class ModelNaturalIntakeInterpreter implements NaturalIntakeInterpreter {
       "facts 提取当前消息中会影响结果的业务要求或待确认假设，最多6条。key 是同一业务点的稳定英文标识，先查 factHistory 并复用相同业务点的 key，不能换 key 隐藏矛盾；label 用简短业务中文。requirement 的 value 必须逐字来自当前消息，不把推断当成已确认要求；assumption 标记尚需核实的推断，quote 仍须引用当前原文。事实不是权限、审批或测试证据。",
       "factHistory 保留不同人员的来源。不要因为最新发言、人数或机器人推断而删除旧说法。发现同一业务点不同说法需保留来源，不用 answers 或 questionUpdates 清除 fact- 系统分歧/假设门禁。facts 是补充结构化记录，不替代正常的目标与可观察验收条件。",
       "value 使用原文中最小可比较取值，例如 CSV 或 Excel，不用整句措辞差别制造分歧。factCorrections 仅用于当前发言人明确更正自己的要求或核实自己的假设：factId 引用 factHistory.entries 中自己同 key 最新的事实，quote 引用当前明确更正且包含新值的原文；同时在 facts 提交同 key 的新 requirement，并更新目标与验收。不能更正别人、不能把普通补充或致谢当成撤回。其他人仍有不同说法时继续澄清。不更正时 factCorrections=[]。",
+      "验收条件只写修改后的当前结果，不加‘替代原要求’等历史比较说明，也不把同一个结果再添加一条。更正格式不意味着删掉原使用人群、字段、异常处理等未变要求。factHistory.bindings 中的 sharedAcceptance/sharedGoal 仅表示共用来源，不是业务冲突；程序会保留其中未被更正的原文并重新绑定来源，不能因此重复追问已明确的人群。未明确的真实缺口仍须保留。",
       "为事实分歧或假设提问时，questions.id 复用对应 fact.key（或该 key 加 -resolution），直接说明需要决定的业务选项；系统将问题文案与不可绕过的分歧门禁合为一项，不重复展示。",
       "questionUpdates：部分回答用 status=partial，quote 引用当前回答，并在 questions 用原 id 只追问剩余缺口；replacementQuestionId=null。用户明确更正使旧问题不适用时才用 superseded，quote 引用更正，将 replacementQuestionId 绑定本轮 questions 中不同的新问题完整 natural- 编号。不能用替代来跳过未回答的问题或系统门禁。没有状态变化时用空数组。",
       "questions 最多三个，只询问会改变结果的缺口；已回答的问题不要重问。给出相关角色，不伪造人员身份。",
@@ -191,6 +192,10 @@ export function validateNaturalIntakeProposal(raw: unknown, request: NaturalInta
 }
 
 export function naturalDefinitionPatch(request: NaturalIntakeRequest, proposal: NaturalIntakeProposal): WorkItemSnapshotPatch {
+  return naturalDefinitionProjection(request,proposal).patch;
+}
+
+function naturalDefinitionProjection(request: NaturalIntakeRequest, proposal: NaturalIntakeProposal) {
   const history = correctedFactHistory(request, proposal.factCorrections ?? []);
   const gates = factGates({ ...request, factHistory: history }, proposal.facts ?? [], proposal.questions);
   const correctedKeys = new Set((proposal.factCorrections ?? []).map(c => request.factHistory!.entries.find(f => f.id === c.factId)!.key));
@@ -224,16 +229,35 @@ export function naturalDefinitionPatch(request: NaturalIntakeRequest, proposal: 
   const priority = new Map(proposal.questions.map((q, index) => [`natural-${q.id}`, index]));
   ambiguities.sort((a, b) => (priority.get(a.id) ?? priority.size) - (priority.get(b.id) ?? priority.size));
   const unsettledFacts = history.truncated || gates.length > 0 || ambiguities.some(q => /^fact-(conflict|assumption)-/u.test(q.id));
-  const acceptance = unsettledFacts ? [...request.snapshot.acceptanceConditions] : retainedFactAcceptance(request, history);
+  const sharedSpecRewrites=unsettledFacts?{acceptance:[],goal:null}:sharedFactSpecRewrites(request,proposal);
+  const retained = unsettledFacts ? [...request.snapshot.acceptanceConditions] : retainedFactAcceptance(request, history);
+  // A repeated confirmation can give the same condition both unique and shared
+  // provenance. Rewrite it before retiring the unique source, not after deletion.
+  const acceptance=request.snapshot.acceptanceConditions.flatMap(condition=>{
+    const rewrite=sharedSpecRewrites.acceptance.find(r=>r.before.description===condition.description&&r.before.observation===condition.observation);
+    return rewrite?[rewrite.after]:retained.includes(condition)?[condition]:[];
+  });
   for (const item of unsettledFacts ? [] : proposal.acceptance) {
     const value = { description: redactSensitiveText(item.description), observation: redactSensitiveText(item.observation) };
     if (!acceptance.some(v => v.description === value.description && v.observation === value.observation)) acceptance.push(value);
   }
   const retiredGoal = history.retired?.some(f => f.bindings?.goal !== null && f.bindings?.goal === request.snapshot.goal) &&
     !history.entries.some(f => f.bindings?.goal === request.snapshot.goal);
-  return { ...(proposal.goal && !unsettledFacts ? { goal: redactSensitiveText(proposal.goal.text), goalConfirmed: proposal.goal.confirmed }
+  const patch:WorkItemSnapshotPatch = { ...(sharedSpecRewrites.goal ? {goal:sharedSpecRewrites.goal.after,goalConfirmed:request.snapshot.goalConfirmed}
+    : proposal.goal && !unsettledFacts ? { goal: redactSensitiveText(proposal.goal.text), goalConfirmed: proposal.goal.confirmed }
     : retiredGoal && !unsettledFacts ? { goalConfirmed: false } : {}),
     acceptanceConditions: acceptance, blockingAmbiguities: ambiguities };
+  const corrections=(proposal.factCorrections??[]).flatMap(correction=>{
+    const prior=request.factHistory!.entries.find(f=>f.id===correction.factId)!;
+    const replacement=proposal.facts!.find(f=>f.key===prior.key&&f.kind==="requirement")!;
+    return prior.value===replacement.value?[]:[`需求中的“${prior.label}”已更正为“${replacement.value}”。`];
+  });
+  let contextSummary:string|undefined;
+  if(corrections.length){
+    const detailed=corrections.join("");
+    contextSummary=unsettledFacts?"已记录你的需求更正，仍有关键要求需要确认。":detailed.length<=400?detailed:"已更新本次更正的需求，未涉及的要求保留。";
+  }
+  return {patch,sharedSpecRewrites,contextSummary};
 }
 
 export interface NaturalProjection {
@@ -241,6 +265,8 @@ export interface NaturalProjection {
   attachmentContextHash: string;
   implementationContextHash?: string;
   materialJobId?: string;
+  /** Program-derived acknowledgement, committed with the same Spec and reply. */
+  contextSummary?: string;
 }
 
 /** Claims and results survive restart; a lease prevents concurrent interpreters applying the same input. */
@@ -330,8 +356,10 @@ export class NaturalIntakeCoordinator {
       // Full ID lookup is independent of the bounded historical presentation.
       validateNaturalIntakeProposal(result, { ...safeRequest,
         questionHistory: readQuestionHistory(this.db, latest, result.questions.map(q => `natural-${q.id}`)) });
-      const applied = this.apply(job.work_item_id, naturalDefinitionPatch(safeRequest, result), now + Math.max(0, Date.now() - startedAt), {
+      const {patch,sharedSpecRewrites,contextSummary}=naturalDefinitionProjection(safeRequest,result);
+      const applied = this.apply(job.work_item_id, patch, now + Math.max(0, Date.now() - startedAt), {
         sourceEventId: job.source_event_id, expectedRevision: latest.revision, claimToken,
+        contextSummary,
         ...(job.job_kind === "material" ? { materialJobId: job.job_key } : {}),
         attachmentContextHash: attachmentContext.fingerprint,
         implementationContextHash: implementationContextHash(request.implementationContext ?? null),
@@ -339,6 +367,7 @@ export class NaturalIntakeCoordinator {
           questionTransitions: sanitize(questionTransitions(safeRequest, result)),
           factRecords: sanitize(recordFacts(safeRequest, result.facts ?? [])),
           factCorrectionRecords: sanitize(recordFactCorrections(safeRequest, result.factCorrections ?? [])),
+          sharedSpecRewrites: sanitize(sharedSpecRewrites),
           implementationContext: safeRequest.implementationContext,
           eventEvidence: context.eventEvidence,
           attachmentContextHash: attachmentContext.fingerprint, attachmentEvidence: attachmentContext.attachments.map(attachmentReceipt), attachmentReplacements: attachmentContext.replacements,

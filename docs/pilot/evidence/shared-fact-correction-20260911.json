@@ -1,0 +1,451 @@
+{
+  "version": 1,
+  "scope": {
+    "realModel": true,
+    "realDingTalk": false,
+    "execution": false,
+    "isolatedLedger": true
+  },
+  "model": "gpt-6-astra",
+  "reasoningEffort": "medium",
+  "startedAt": "2026-09-11T04:27:33.224Z",
+  "finishedAt": "2026-09-11T04:28:12.182Z",
+  "status": "checks_passed",
+  "sourceFingerprint": "3a97ea6f253a0e9e843c101a290c42d3be052f28fe61e0faf94c75dcde5b5f46",
+  "sourceUnchanged": true,
+  "modelCalls": 4,
+  "turns": [
+    {
+      "scenario": "shared-format-correction",
+      "turn": 0,
+      "speaker": "product",
+      "text": "给内部员工导出 CSV。",
+      "action": "create_work",
+      "target": "WI-C6533FA69941",
+      "replies": [
+        "@product，要导出哪些业务数据和字段？"
+      ],
+      "deliveryExpectation": "reply_required",
+      "replied": true,
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "deliveryPolicy": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true,
+        "stageReplyDelivered": true
+      },
+      "passed": true,
+      "snapshot": {
+        "work_item_id": "WI-C6533FA69941",
+        "revision": 2,
+        "source_work_item_version": 1,
+        "goal": "给内部员工导出 CSV。",
+        "goal_confirmed": 1,
+        "repository": "/tmp/configured-repository",
+        "facts_json": "[\"给内部员工导出 CSV。\"]",
+        "assumptions_json": "[]",
+        "acceptance_json": "[{\"description\":\"内部员工能够获得 CSV 格式的导出文件。\",\"observation\":\"内部员工使用导出功能后，获得 CSV 格式文件。\"}]",
+        "blocking_ambiguities_json": "[{\"id\":\"natural-export-content\",\"question\":\"要导出哪些业务数据和字段？\",\"dependsOn\":[],\"recommendedAnswer\":\"请提出问题的同事补充：已明确使用人群和文件格式，但尚未明确导出文件的内容。\",\"role\":\"requester\"}]",
+        "created_at": 1789100865499
+      },
+      "intentStatus": "applied",
+      "naturalStatus": "applied"
+    },
+    {
+      "scenario": "shared-format-correction",
+      "turn": 1,
+      "speaker": "product",
+      "text": "更正我之前说的格式：导出 Excel。其他要求不变。",
+      "action": "contribute",
+      "target": "WI-C6533FA69941",
+      "replies": [
+        "需求中的“导出格式”已更正为“Excel”。\n\n@product，要导出哪些业务数据和字段？"
+      ],
+      "deliveryExpectation": "reply_required",
+      "replied": true,
+      "checks": {
+        "action": true,
+        "items": true,
+        "replayIdempotent": true,
+        "deliveryPolicy": true,
+        "noFalseCompletion": true,
+        "noExecution": true,
+        "questionLimit": true,
+        "noTechnicalFormat": true,
+        "interpreted": true,
+        "noRedundantGoalQuestion": true,
+        "noRedundantReceipt": true,
+        "directBusinessQuestions": true,
+        "conciseBusinessQuestions": true,
+        "stageReplyDelivered": true,
+        "target": true
+      },
+      "passed": true,
+      "snapshot": {
+        "work_item_id": "WI-C6533FA69941",
+        "revision": 4,
+        "source_work_item_version": 2,
+        "goal": "给内部员工导出 Excel。",
+        "goal_confirmed": 1,
+        "repository": "/tmp/configured-repository",
+        "facts_json": "[\"给内部员工导出 CSV。\",\"更正我之前说的格式：导出 Excel。其他要求不变。\"]",
+        "assumptions_json": "[]",
+        "acceptance_json": "[{\"description\":\"内部员工能够获得 Excel 格式的导出文件。\",\"observation\":\"内部员工使用导出功能后，获得 Excel 格式文件。\"}]",
+        "blocking_ambiguities_json": "[{\"id\":\"natural-export-content\",\"question\":\"要导出哪些业务数据和字段？\",\"dependsOn\":[],\"recommendedAnswer\":\"请提出问题的同事补充：使用人群仍为内部员工，格式已更正为 Excel，导出内容尚未明确。\",\"role\":\"requester\"}]",
+        "created_at": 1789100886865
+      },
+      "intentStatus": "applied",
+      "naturalStatus": "applied"
+    }
+  ],
+  "requirements": [
+    {
+      "scenario": "shared-format-correction",
+      "turn": 0,
+      "phase": "requirements",
+      "status": "completed",
+      "request": {
+        "event": {
+          "sourceEventId": "shared-format-correction:0",
+          "principalId": "7c26dbc3-2498-4ed7-8967-4e644dcf9f86",
+          "text": "给内部员工导出 CSV。"
+        },
+        "snapshot": {
+          "workItemId": "WI-C6533FA69941",
+          "revision": 1,
+          "sourceWorkItemVersion": 1,
+          "goal": "给内部员工导出 CSV。",
+          "goalConfirmed": false,
+          "repository": "/tmp/configured-repository",
+          "assumptions": [],
+          "acceptanceConditions": [],
+          "blockingAmbiguities": [
+            {
+              "id": "natural-input-pending",
+              "question": "我正在结合前面的沟通整理这条补充。",
+              "dependsOn": [],
+              "recommendedAnswer": "暂时不需要填写格式或编号；有新信息直接补充即可。"
+            }
+          ],
+          "createdAt": 1789100853285
+        },
+        "implementationContext": null,
+        "attachments": [],
+        "attachmentsIncomplete": false,
+        "onlineDocuments": {
+          "sources": [],
+          "totalSources": 0,
+          "incomplete": false,
+          "truncated": false,
+          "fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "attachmentReplacements": [],
+        "history": [
+          {
+            "sourceEventId": "shared-format-correction:0",
+            "principalId": "7c26dbc3-2498-4ed7-8967-4e644dcf9f86",
+            "text": "给内部员工导出 CSV。"
+          }
+        ],
+        "questions": [
+          {
+            "id": "goal",
+            "title": "确认目标",
+            "question": "这项工作必须产生什么明确的业务或用户结果？",
+            "recommendedAnswer": "确认当前目标：“给内部员工导出 CSV。”，或给出修订后的单一目标。",
+            "blocker": "goal",
+            "role": "requester"
+          },
+          {
+            "id": "natural-input-pending",
+            "title": "消除阻塞歧义",
+            "question": "我正在结合前面的沟通整理这条补充。",
+            "recommendedAnswer": "暂时不需要填写格式或编号；有新信息直接补充即可。",
+            "blocker": "blocking_ambiguity"
+          }
+        ],
+        "questionHistory": {
+          "entries": [],
+          "truncated": false
+        },
+        "factHistory": {
+          "entries": [],
+          "retired": [],
+          "truncated": false
+        },
+        "contextTruncated": false
+      },
+      "response": {
+        "version": 1,
+        "sourceEventId": "shared-format-correction:0",
+        "baseRevision": 1,
+        "goal": {
+          "text": "给内部员工导出 CSV。",
+          "confirmed": true,
+          "quote": "给内部员工导出 CSV。"
+        },
+        "acceptance": [
+          {
+            "description": "内部员工能够获得 CSV 格式的导出文件。",
+            "observation": "内部员工使用导出功能后，获得 CSV 格式文件。",
+            "quote": "给内部员工导出 CSV。"
+          }
+        ],
+        "answers": [],
+        "questionUpdates": [],
+        "facts": [
+          {
+            "key": "export-audience",
+            "label": "使用人群",
+            "value": "内部员工",
+            "kind": "requirement",
+            "quote": "给内部员工导出 CSV。"
+          },
+          {
+            "key": "export-format",
+            "label": "导出格式",
+            "value": "CSV",
+            "kind": "requirement",
+            "quote": "给内部员工导出 CSV。"
+          }
+        ],
+        "factCorrections": [],
+        "questions": [
+          {
+            "id": "export-content",
+            "question": "要导出哪些业务数据和字段？",
+            "reason": "已明确使用人群和文件格式，但尚未明确导出文件的内容。",
+            "role": "requester",
+            "respondent": null
+          }
+        ]
+      }
+    },
+    {
+      "scenario": "shared-format-correction",
+      "turn": 1,
+      "phase": "requirements",
+      "status": "completed",
+      "request": {
+        "event": {
+          "sourceEventId": "shared-format-correction:1",
+          "principalId": "7c26dbc3-2498-4ed7-8967-4e644dcf9f86",
+          "text": "更正我之前说的格式：导出 Excel。其他要求不变。"
+        },
+        "snapshot": {
+          "workItemId": "WI-C6533FA69941",
+          "revision": 3,
+          "sourceWorkItemVersion": 2,
+          "goal": "给内部员工导出 CSV。",
+          "goalConfirmed": true,
+          "repository": "/tmp/configured-repository",
+          "assumptions": [],
+          "acceptanceConditions": [
+            {
+              "description": "内部员工能够获得 CSV 格式的导出文件。",
+              "observation": "内部员工使用导出功能后，获得 CSV 格式文件。"
+            }
+          ],
+          "blockingAmbiguities": [
+            {
+              "id": "natural-export-content",
+              "question": "要导出哪些业务数据和字段？",
+              "dependsOn": [],
+              "recommendedAnswer": "请提出问题的同事补充：已明确使用人群和文件格式，但尚未明确导出文件的内容。",
+              "role": "requester"
+            },
+            {
+              "id": "natural-input-pending",
+              "question": "我正在结合前面的沟通整理这条补充。",
+              "dependsOn": [],
+              "recommendedAnswer": "暂时不需要填写格式或编号；有新信息直接补充即可。"
+            }
+          ],
+          "createdAt": 1789100871856
+        },
+        "implementationContext": null,
+        "attachments": [],
+        "attachmentsIncomplete": false,
+        "onlineDocuments": {
+          "sources": [],
+          "totalSources": 0,
+          "incomplete": false,
+          "truncated": false,
+          "fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "attachmentReplacements": [],
+        "history": [
+          {
+            "sourceEventId": "shared-format-correction:0",
+            "principalId": "7c26dbc3-2498-4ed7-8967-4e644dcf9f86",
+            "text": "给内部员工导出 CSV。"
+          },
+          {
+            "sourceEventId": "shared-format-correction:1",
+            "principalId": "7c26dbc3-2498-4ed7-8967-4e644dcf9f86",
+            "text": "更正我之前说的格式：导出 Excel。其他要求不变。"
+          }
+        ],
+        "questions": [
+          {
+            "id": "natural-export-content",
+            "title": "消除阻塞歧义",
+            "question": "要导出哪些业务数据和字段？",
+            "recommendedAnswer": "请提出问题的同事补充：已明确使用人群和文件格式，但尚未明确导出文件的内容。",
+            "blocker": "blocking_ambiguity",
+            "role": "requester",
+            "showRecommendedAnswer": false
+          },
+          {
+            "id": "natural-input-pending",
+            "title": "消除阻塞歧义",
+            "question": "我正在结合前面的沟通整理这条补充。",
+            "recommendedAnswer": "暂时不需要填写格式或编号；有新信息直接补充即可。",
+            "blocker": "blocking_ambiguity"
+          }
+        ],
+        "questionHistory": {
+          "entries": [
+            {
+              "questionId": "natural-export-content",
+              "status": "open",
+              "question": "要导出哪些业务数据和字段？",
+              "sourceEventId": "shared-format-correction:0",
+              "principalId": "7c26dbc3-2498-4ed7-8967-4e644dcf9f86",
+              "quote": null,
+              "replacementQuestionId": null
+            }
+          ],
+          "truncated": false
+        },
+        "factHistory": {
+          "entries": [
+            {
+              "key": "export-audience",
+              "label": "使用人群",
+              "value": "内部员工",
+              "kind": "requirement",
+              "quote": "给内部员工导出 CSV。",
+              "id": "f209521137eea9069eee54b5bacdd4aa18435ecf32b5821faafa39cd18a8db8d",
+              "sourceEventId": "shared-format-correction:0",
+              "principalId": "7c26dbc3-2498-4ed7-8967-4e644dcf9f86",
+              "revision": 2,
+              "bindings": {
+                "acceptance": [],
+                "goal": null,
+                "ambiguous": true,
+                "sharedAcceptance": [
+                  {
+                    "description": "内部员工能够获得 CSV 格式的导出文件。",
+                    "observation": "内部员工使用导出功能后，获得 CSV 格式文件。"
+                  }
+                ],
+                "sharedGoal": "给内部员工导出 CSV。"
+              }
+            },
+            {
+              "key": "export-format",
+              "label": "导出格式",
+              "value": "CSV",
+              "kind": "requirement",
+              "quote": "给内部员工导出 CSV。",
+              "id": "a72d9adf95ff466ca66d0d0842afd29ce14d9ebcef9a0b7ef35e263fbccbb40d",
+              "sourceEventId": "shared-format-correction:0",
+              "principalId": "7c26dbc3-2498-4ed7-8967-4e644dcf9f86",
+              "revision": 2,
+              "bindings": {
+                "acceptance": [],
+                "goal": null,
+                "ambiguous": true,
+                "sharedAcceptance": [
+                  {
+                    "description": "内部员工能够获得 CSV 格式的导出文件。",
+                    "observation": "内部员工使用导出功能后，获得 CSV 格式文件。"
+                  }
+                ],
+                "sharedGoal": "给内部员工导出 CSV。"
+              }
+            }
+          ],
+          "retired": [],
+          "truncated": false
+        },
+        "contextTruncated": false
+      },
+      "response": {
+        "version": 1,
+        "sourceEventId": "shared-format-correction:1",
+        "baseRevision": 3,
+        "goal": {
+          "text": "导出 Excel。",
+          "confirmed": true,
+          "quote": "更正我之前说的格式：导出 Excel。其他要求不变。"
+        },
+        "acceptance": [
+          {
+            "description": "内部员工能够获得 Excel 格式的导出文件。",
+            "observation": "内部员工使用导出功能后，获得 Excel 格式文件。",
+            "quote": "更正我之前说的格式：导出 Excel。其他要求不变。"
+          }
+        ],
+        "answers": [],
+        "questionUpdates": [],
+        "facts": [
+          {
+            "key": "export-format",
+            "label": "导出格式",
+            "value": "Excel",
+            "kind": "requirement",
+            "quote": "更正我之前说的格式：导出 Excel。"
+          }
+        ],
+        "factCorrections": [
+          {
+            "factId": "a72d9adf95ff466ca66d0d0842afd29ce14d9ebcef9a0b7ef35e263fbccbb40d",
+            "quote": "更正我之前说的格式：导出 Excel。其他要求不变。"
+          }
+        ],
+        "questions": [
+          {
+            "id": "export-content",
+            "question": "要导出哪些业务数据和字段？",
+            "reason": "使用人群仍为内部员工，格式已更正为 Excel，导出内容尚未明确。",
+            "role": "requester",
+            "respondent": null
+          }
+        ]
+      }
+    }
+  ],
+  "review": {
+    "reviewer": "implementation-agent",
+    "status": "actual-serialized-output-inspected",
+    "checks": [
+      "Current goal and acceptance retain the original internal-employee scope and require Excel, not CSV.",
+      "The requirement receipt contains a shared source for both audience and format; the original author corrects only format.",
+      "The final reply acknowledges the committed requirement correction, then asks only about still-unspecified business data and fields.",
+      "No code completion, deployment, true DingTalk delivery or Owner acceptance is claimed."
+    ],
+    "limits": [
+      "Synthetic participants and sender; no actual code modification or independent delivery verification.",
+      "Literal source-bound replacements only. Non-literal paraphrases, ambiguous repeated/overlapping values and pure withdrawals still need recoverable semantic clarification.",
+      "Same-scene restart/replay and three-person partial resolution are covered by local service tests, not this two-turn model evaluation."
+    ]
+  },
+  "history": [
+    "Initial two-turn model output preserved scope but repeated an obsolete-format comparison in acceptance. The additional probe assertion forbidding all CSV mentions failed; that does not prove CSV was still an active requirement.",
+    "The original probe also incorrectly expected no open questions even though export data/fields were never supplied; it was corrected to retain genuine unresolved questions.",
+    "A current-outcome prompt removed the historical comparison; actual reply inspection then found correction acknowledgement missing.",
+    "A program-derived acknowledgement was added and verified through the actual serializer. Final source-stable evaluation is recorded here.",
+    "One model launch permission review timed out; the single permitted retry succeeded. No online configuration or permission rule was changed."
+  ]
+}
